@@ -32,25 +32,23 @@
 static SPipe *currentPipe;
 static SPipe *listPipe;
 
-static bool TGProxySecretIsHexString(NSString *string)
+static bool OGCompatIsHexSecret(NSString *candidate)
 {
-    if (![string isKindOfClass:[NSString class]] || string.length == 0 || string.length % 2 != 0)
+    if (![candidate isKindOfClass:[NSString class]] || candidate.length == 0 || candidate.length % 2 != 0)
         return false;
-    
-    NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
-    return [string rangeOfCharacterFromSet:[hexSet invertedSet]].location == NSNotFound;
+
+    NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"] invertedSet];
+    return [candidate rangeOfCharacterFromSet:nonHex].location == NSNotFound;
 }
 
-static NSData *TGProxySecretData(NSString *secret)
+static NSData *OGCompatSecretBytes(NSString *secret)
 {
-    if (!TGProxySecretIsHexString(secret))
-    {
-        if ([secret isKindOfClass:[NSString class]] && secret.length != 0)
-            TGLog(@"AUTH ignoring non-hex proxy secret length=%d", (int)secret.length);
-        return nil;
-    }
-    
-    return [NSData dataWithHexString:secret];
+    if (OGCompatIsHexSecret(secret))
+        return [NSData dataWithHexString:secret];
+
+    if ([secret isKindOfClass:[NSString class]] && secret.length != 0)
+        TGLog(@"AUTH ignoring non-hex proxy secret length=%d", (int)secret.length);
+    return nil;
 }
 
 + (void)load
@@ -138,7 +136,7 @@ static NSData *TGProxySecretData(NSString *secret)
     if (availability != nil)
         return [SSignal single:availability];
     
-    MTSocksProxySettings *settings = [[MTSocksProxySettings alloc] initWithIp:proxy.server port:proxy.port username:proxy.username password:proxy.password secret:TGProxySecretData(proxy.secret)];
+    MTSocksProxySettings *settings = [[MTSocksProxySettings alloc] initWithIp:proxy.server port:proxy.port username:proxy.username password:proxy.password secret:OGCompatSecretBytes(proxy.secret)];
     
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -230,7 +228,7 @@ static NSData *TGProxySecretData(NSString *secret)
     }
     [TGDatabaseInstance() setCustomProperty:@"socksProxyData" value:data];
     
-    MTSocksProxySettings *settings = [[MTSocksProxySettings alloc] initWithIp:proxy.server port:(uint16_t)proxy.port username:proxy.username password:proxy.password secret:TGProxySecretData(proxy.secret)];
+    MTSocksProxySettings *settings = [[MTSocksProxySettings alloc] initWithIp:proxy.server port:(uint16_t)proxy.port username:proxy.username password:proxy.password secret:OGCompatSecretBytes(proxy.secret)];
     if ([[TGTelegramNetworking instance] onegramCoreMode] == OGOnegramCoreModeNone) {
         [[[TGTelegramNetworking instance] context] updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *apiEnvironment) {
             return [apiEnvironment withUpdatedSocksProxySettings:inactive ? nil : settings];
@@ -246,15 +244,12 @@ static NSData *TGProxySecretData(NSString *secret)
 
 + (void)saveProxy:(TGProxyItem *)proxy
 {
-    NSArray *proxies = [[self loadStoredProxies] mutableCopy];
+    NSMutableArray *remaining = [[self loadStoredProxies] mutableCopy];
     
-    NSUInteger existingIndex = [proxies indexOfObject:proxy];
-    if (existingIndex != NSNotFound)
-        [(NSMutableArray *)proxies removeObject:proxy];
+    if ([remaining indexOfObject:proxy] != NSNotFound)
+        [remaining removeObject:proxy];
     
-    proxies = [@[proxy] arrayByAddingObjectsFromArray:proxies];
-    
-    [self storeProxies:proxies];
+    [self storeProxies:[@[proxy] arrayByAddingObjectsFromArray:remaining]];
 }
 
 + (void)storeProxies:(NSArray *)proxies

@@ -6,7 +6,7 @@
 
 @interface TGAudioMediaAttachment (TG)
 
-@property (nonatomic, strong) TGMediaOriginInfo *ios6OriginInfo;
+@property (nonatomic, strong) TGMediaOriginInfo *downloadOriginInfo;
 
 - (NSString *)localFilePath;
  

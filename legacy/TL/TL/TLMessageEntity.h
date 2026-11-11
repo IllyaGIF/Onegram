@@ -109,4 +109,10 @@
 
 @end
 
+@interface TLMessageEntity$messageEntityCustomEmoji : TLMessageEntity
+
+@property (nonatomic) int64_t document_id;
+
+@end
+
 #endif

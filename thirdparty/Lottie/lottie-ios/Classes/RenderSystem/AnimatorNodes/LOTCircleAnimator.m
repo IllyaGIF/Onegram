@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTCircleAnimator.m
 //  Lottie
@@ -18,8 +18,8 @@ const CGFloat kLOTEllipseControlPointPercentage = 0.55228;
   BOOL _reversed;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  shapeCircle:(LOTShapeCircle *)shapeCircle {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  shapeCircle:(LOTShapeCircle *_Nonnull)shapeCircle {
   self = [super initWithInputNode:inputNode keyName:shapeCircle.keyname];
   if (self) {
     _centerInterpolator = [[LOTPointInterpolator alloc] initWithKeyframes:shapeCircle.position.keyframes];

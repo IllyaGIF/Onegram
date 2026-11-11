@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeRepeater.h
 //  Lottie
@@ -17,14 +17,14 @@
 - (instancetype)initWithJSON:(NSDictionary *)jsonDictionary;
 
 @property (nonatomic, readonly) NSString *keyname;
-@property (nonatomic, readonly) LOTKeyframeGroup *copies;
-@property (nonatomic, readonly) LOTKeyframeGroup *offset;
-@property (nonatomic, readonly) LOTKeyframeGroup *anchorPoint;
-@property (nonatomic, readonly) LOTKeyframeGroup *scale;
-@property (nonatomic, readonly) LOTKeyframeGroup *position;
-@property (nonatomic, readonly) LOTKeyframeGroup *rotation;
-@property (nonatomic, readonly) LOTKeyframeGroup *startOpacity;
-@property (nonatomic, readonly) LOTKeyframeGroup *endOpacity;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable copies;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable offset;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable anchorPoint;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable scale;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable position;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable rotation;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable startOpacity;
+@property (nonatomic, readonly) LOTKeyframeGroup *_Nullable endOpacity;
 
 @end
 

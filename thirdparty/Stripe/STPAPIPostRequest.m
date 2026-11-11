@@ -25,7 +25,7 @@
     request.HTTPMethod = @"POST";
     request.HTTPBody = postData;
     
-    [[apiClient.urlSession dataTaskWithRequest:request completionHandler:^(NSData * body, NSURLResponse * response, NSError * error) {
+    [[apiClient.urlSession dataTaskWithRequest:request completionHandler:^(NSData * _Nullable body, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSDictionary *jsonDictionary = body ? [NSJSONSerialization JSONObjectWithData:body options:0 error:NULL] : nil;
         id<STPAPIResponseDecodable> responseObject = [serializer decodedObjectFromAPIResponse:jsonDictionary];
         NSError *returnedError = [NSError stp_errorFromStripeResponse:jsonDictionary] ?: error;

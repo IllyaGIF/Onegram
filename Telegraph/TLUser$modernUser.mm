@@ -2,64 +2,137 @@
 
 #import "TLMetaClassStore.h"
 
-static int64_t TGModernUserReadEmojiStatusDocumentId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static const int32_t TGModernUserEmojiStatusEmpty = (int32_t)0x2de11aae;
+static const int32_t TGModernUserEmojiStatus = (int32_t)0xe7ff068a;
+static const int32_t TGModernUserEmojiStatusCollectible = (int32_t)0x7184603b;
+
+static inline void OGModernUserDiscardInt32(NSInputStream *is)
 {
-    if (signature == (int32_t)0x2de11aae)
-        return 0;
-    if (signature == (int32_t)0xe7ff068a)
-    {
-        int32_t flags = [is readInt32];
-        int64_t documentId = [is readInt64];
-        if (flags & (1 << 0))
-            [is readInt32];
-        return documentId;
-    }
-    if (signature == (int32_t)0x7184603b)
-    {
-        int32_t flags = [is readInt32];
-        [is readInt64];
-        int64_t documentId = [is readInt64];
-        [is readString];
-        [is readString];
-        [is readInt64];
-        [is readInt32]; [is readInt32]; [is readInt32]; [is readInt32];
-        if (flags & (1 << 0))
-            [is readInt32];
-        return documentId;
-    }
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    return 0;
+    (void)[is readInt32];
 }
 
-static int32_t TGModernUserReadPeerColorId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline void OGModernUserDiscardInt64(NSInputStream *is)
 {
-    if (signature == (int32_t)0xb54b5acf)
-    {
-        int32_t flags = [is readInt32];
-        int32_t colorId = -1;
-        if (flags & (1 << 0))
-            colorId = [is readInt32];
-        if (flags & (1 << 1))
-            [is readInt64];
-        return colorId;
-    }
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    return -1;
+    (void)[is readInt64];
 }
 
-static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline void OGModernUserDiscardString(NSInputStream *is)
 {
-    int32_t vectorMarker = [is readInt32];
-    if (vectorMarker != 0x1cb5c415)
+    (void)[is readString];
+}
+
+static inline void OGModernUserConstructQuiet(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+}
+
+static int64_t TGModernUserParseEmojiStatus(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    switch (signature)
+    {
+        case TGModernUserEmojiStatusEmpty:
+            return 0;
+        case TGModernUserEmojiStatus:
+        {
+            bool hasUntil = ([is readInt32] & 1) != 0;
+            int64_t documentId = [is readInt64];
+            if (hasUntil)
+                OGModernUserDiscardInt32(is);
+            return documentId;
+        }
+        case TGModernUserEmojiStatusCollectible:
+        {
+            bool hasUntil = ([is readInt32] & 1) != 0;
+            OGModernUserDiscardInt64(is);
+            int64_t documentId = [is readInt64];
+            OGModernUserDiscardString(is);
+            OGModernUserDiscardString(is);
+            OGModernUserDiscardInt64(is);
+            for (int colorIndex = 0; colorIndex < 4; colorIndex++)
+                OGModernUserDiscardInt32(is);
+            if (hasUntil)
+                OGModernUserDiscardInt32(is);
+            return documentId;
+        }
+        default:
+            OGModernUserConstructQuiet(is, signature, environment, error);
+            return 0;
+    }
+}
+
+static const int32_t OGModernUserPeerColorSignature = (int32_t)0xb54b5acf;
+static const int32_t OGModernUserVectorSignature = (int32_t)0x1cb5c415;
+
+static bool OGModernUserHasModernLayout(int32_t signature)
+{
+    static const uint32_t knownSignatures[] = {
+        0x4b46c37e, 0xb1b8cc83, 0x31774388, 0x020b1422, 0x83314fca,
+        0x215c4438, 0x2813e6db, 0x1afeb7ac, 0xd0a1d008, 0xd7c0ff9c
+    };
+    for (size_t index = 0; index < sizeof(knownSignatures) / sizeof(knownSignatures[0]); index++)
+    {
+        if ((int32_t)knownSignatures[index] == signature)
+            return true;
+    }
+    return false;
+}
+
+static int32_t OGModernUserPeerColorId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    if (signature != OGModernUserPeerColorSignature)
+    {
+        OGModernUserConstructQuiet(is, signature, environment, error);
+        return -1;
+    }
+    
+    int32_t colorFlags = [is readInt32];
+    int32_t colorId = (colorFlags & (1 << 0)) ? [is readInt32] : -1;
+    if (colorFlags & (1 << 1))
+        OGModernUserDiscardInt64(is);
+    return colorId;
+}
+
+static void OGModernUserSkipVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    if ([is readInt32] != OGModernUserVectorSignature)
         return;
     
     int32_t count = [is readInt32];
-    for (int32_t i = 0; i < count; i++)
+    while (count-- > 0)
     {
-        TLMetaClassStore::constructObject(is, [is readInt32], environment, nil, error);
+        int32_t elementSignature = [is readInt32];
+        TLMetaClassStore::constructObject(is, elementSignature, environment, nil, error);
         if (error != nil && *error != nil)
             return;
     }
+}
+
+static bool OGModernUserFailed(__autoreleasing NSError **error)
+{
+    return error != nil && *error != nil;
+}
+
+static id<TLObject> OGModernUserReadBoxed(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error, int32_t *signatureOut)
+{
+    int32_t boxedSignature = [is readInt32];
+    if (signatureOut != NULL)
+        *signatureOut = boxedSignature;
+    return TLMetaClassStore::constructObject(is, boxedSignature, environment, nil, error);
+}
+
+static bool OGModernUserReadColor(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error, int64_t userId, NSString *label, int32_t *colorId)
+{
+    int32_t colorSignature = [is readInt32];
+    if (colorSignature == 0)
+        return true;
+    
+    *colorId = OGModernUserPeerColorId(is, colorSignature, environment, error);
+    if (OGModernUserFailed(error))
+    {
+        TGLog(@"AUTH modernUser id=%lld %@ failed sig=0x%x error=%@", (long long)userId, label, colorSignature, *error);
+        return false;
+    }
+    return true;
 }
 
 @implementation TLUser$modernUser
@@ -76,52 +149,39 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
     object.profileColorId = -1;
     
     object.flags = [is readInt32];
-    int32_t flags2 = 0;
-    bool hasModernFlags2 = signature == (int32_t)0x4b46c37e || signature == (int32_t)0xb1b8cc83 || signature == (int32_t)0x31774388 || signature == (int32_t)0x020b1422 || signature == (int32_t)0x83314fca || signature == (int32_t)0x215c4438 || signature == (int32_t)0x2813e6db || signature == (int32_t)0x1afeb7ac || signature == (int32_t)0xd0a1d008 || signature == (int32_t)0xd7c0ff9c;
-    bool isModernLongUser = signature == (int32_t)0x4b46c37e || signature == (int32_t)0xb1b8cc83 || signature == (int32_t)0x31774388 || signature == (int32_t)0x020b1422 || signature == (int32_t)0x83314fca || signature == (int32_t)0x215c4438 || signature == (int32_t)0x2813e6db || signature == (int32_t)0x1afeb7ac || signature == (int32_t)0xd0a1d008 || signature == (int32_t)0xd7c0ff9c;
-    if (hasModernFlags2)
-        flags2 = [is readInt32];
+    const bool modernLayout = OGModernUserHasModernLayout(signature);
+    int32_t flags2 = modernLayout ? [is readInt32] : 0;
     
-    object.n_id = isModernLongUser ? [is readInt64] : [is readInt32];
+    object.n_id = modernLayout ? [is readInt64] : [is readInt32];
     
     if (object.flags & (1 << 0))
         object.access_hash = [is readInt64];
     
     if (object.flags & (1 << 1))
-    {
         object.first_name = [is readString];
-    }
     if (object.flags & (1 << 2))
-    {
         object.last_name = [is readString];
-    }
-    
     if (object.flags & (1 << 3))
-    {
         object.username = [is readString];
-    }
-    
     if (object.flags & (1 << 4))
-    {
         object.phone = [is readString];
-    }
     
     if (object.flags & (1 << 5))
     {
-        int32_t signature = [is readInt32];
-        object.photo = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-        if (error != nil && *error != nil) {
-            TGLog(@"AUTH modernUser id=%lld photo failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
+        int32_t photoSignature = 0;
+        object.photo = OGModernUserReadBoxed(is, environment, error, &photoSignature);
+        if (OGModernUserFailed(error)) {
+            TGLog(@"AUTH modernUser id=%lld photo failed sig=0x%x error=%@", (long long)object.n_id, photoSignature, *error);
             return nil;
         }
     }
     
     if (object.flags & (1 << 6))
     {
-        int32_t signature = [is readInt32];
-        object.status = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-        if (error != nil && *error != nil) {
-            TGLog(@"AUTH modernUser id=%lld status failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
+        int32_t statusSignature = 0;
+        object.status = OGModernUserReadBoxed(is, environment, error, &statusSignature);
+        if (OGModernUserFailed(error)) {
+            TGLog(@"AUTH modernUser id=%lld status failed sig=0x%x error=%@", (long long)object.n_id, statusSignature, *error);
             return nil;
         }
     }
@@ -129,121 +189,94 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
     if (object.flags & (1 << 14))
         object.bot_info_version = [is readInt32];
     
-    if (object.flags & (1 << 18))
+    if ((object.flags >> 18) & 1)
     {
-        if (isModernLongUser)
+        if (modernLayout)
         {
-            TGModernUserSkipObjectVector(is, environment, error);
-            if (error != nil && *error != nil)
+            OGModernUserSkipVector(is, environment, error);
+            if (OGModernUserFailed(error))
                 return nil;
         }
         else
             object.restriction_reason = [is readString];
     }
     
-    if (object.flags & (1 << 19)) {
+    if (object.flags & (1 << 19))
         object.inlineBotPlaceholder = [is readString];
-    }
     
-    if (object.flags & (1 << 22)) {
+    if (object.flags & (1 << 22))
         __unused NSString *langCode = [is readString];
-    }
     
-    if (hasModernFlags2 && (object.flags & (1 << 30)))
+    if (modernLayout && (object.flags & (1 << 30)))
     {
-        int32_t signature = [is readInt32];
-        object.emojiStatusDocumentId = TGModernUserReadEmojiStatusDocumentId(is, signature, environment, error);
-        if (error != nil && *error != nil)
+        int32_t emojiSignature = [is readInt32];
+        object.emojiStatusDocumentId = TGModernUserParseEmojiStatus(is, emojiSignature, environment, error);
+        if (OGModernUserFailed(error))
         {
-            TGLog(@"AUTH modernUser id=%lld emoji_status failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
+            TGLog(@"AUTH modernUser id=%lld emoji_status failed sig=0x%x error=%@", (long long)object.n_id, emojiSignature, *error);
             return nil;
         }
     }
     
-    if (hasModernFlags2 && (flags2 & (1 << 0)))
+    if (modernLayout && (flags2 & (1 << 0)))
     {
-        TGModernUserSkipObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
+        OGModernUserSkipVector(is, environment, error);
+        if (OGModernUserFailed(error))
             return nil;
     }
-    bool codexReadModernStoriesMaxId = false;
-    if (signature == (int32_t)0x31774388)
-        codexReadModernStoriesMaxId = hasModernFlags2 && (flags2 & (1 << 5));
-    else if (signature == (int32_t)0x215c4438)
-    {
-        bool hasNewStoriesMaxId = (flags2 & (1 << 5));
-        codexReadModernStoriesMaxId = hasNewStoriesMaxId;
-    }
-    else
-        codexReadModernStoriesMaxId = hasModernFlags2 && (flags2 & (1 << 5));
     
-    if (codexReadModernStoriesMaxId)
+    if (modernLayout && (flags2 & (1 << 5)))
     {
-        if (signature == (int32_t)0x2813e6db || signature == (int32_t)0x1afeb7ac || signature == (int32_t)0xd0a1d008)
+        switch ((uint32_t)signature)
         {
-            int32_t recentStorySignature = [is readInt32];
-            TLMetaClassStore::constructObject(is, recentStorySignature, environment, nil, error);
-            if (error != nil && *error != nil)
+            case 0x2813e6db:
+            case 0x1afeb7ac:
+            case 0xd0a1d008:
+            case 0x31774388:
+            case 0xb1b8cc83:
             {
-                TGLog(@"AUTH modernUser id=%lld recent_story failed sig=0x%x error=%@", (long long)object.n_id, recentStorySignature, *error);
-                return nil;
-            }
-        }
-        else
-        {
-            if (signature == (int32_t)0x31774388 || signature == (int32_t)0xb1b8cc83)
-            {
-                int32_t recentStorySignature = [is readInt32];
-                TLMetaClassStore::constructObject(is, recentStorySignature, environment, nil, error);
-                if (error != nil && *error != nil)
+                int32_t storySignature = 0;
+                OGModernUserReadBoxed(is, environment, error, &storySignature);
+                if (OGModernUserFailed(error))
                 {
-                    TGLog(@"AUTH modernUser id=%lld recent_story failed sig=0x%x error=%@", (long long)object.n_id, recentStorySignature, *error);
+                    TGLog(@"AUTH modernUser id=%lld recent_story failed sig=0x%x error=%@", (long long)object.n_id, storySignature, *error);
                     return nil;
                 }
+                break;
             }
-            else
-            {
-                int32_t storiesMaxId = [is readInt32];
-            }
+            default:
+                OGModernUserDiscardInt32(is);
+                break;
         }
     }
-    if (hasModernFlags2 && (flags2 & (1 << 8)))
+    
+    if (modernLayout && (flags2 & (1 << 8)))
     {
-        int32_t signature = [is readInt32];
-        if (signature != 0)
-        {
-            object.nameColorId = TGModernUserReadPeerColorId(is, signature, environment, error);
-            if (error != nil && *error != nil)
-            {
-                TGLog(@"AUTH modernUser id=%lld color failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
-                return nil;
-            }
-        }
+        int32_t nameColorId = object.nameColorId;
+        if (!OGModernUserReadColor(is, environment, error, object.n_id, @"color", &nameColorId))
+            return nil;
+        object.nameColorId = nameColorId;
     }
-    if (hasModernFlags2 && (flags2 & (1 << 9)))
+    
+    if (modernLayout && (flags2 & (1 << 9)))
     {
-        int32_t signature = [is readInt32];
-        if (signature == 0)
-        {
-        }
-        else
-        {
-            object.profileColorId = TGModernUserReadPeerColorId(is, signature, environment, error);
-            if (error != nil && *error != nil)
-            {
-                TGLog(@"AUTH modernUser id=%lld profile_color failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
-                return nil;
-            }
-        }
+        int32_t profileColorId = object.profileColorId;
+        if (!OGModernUserReadColor(is, environment, error, object.n_id, @"profile_color", &profileColorId))
+            return nil;
+        object.profileColorId = profileColorId;
     }
-    if (hasModernFlags2 && (flags2 & (1 << 12)))
-        [is readInt32];
-    if (hasModernFlags2 && (flags2 & (1 << 14)))
-        [is readInt64];
-    if (hasModernFlags2 && (flags2 & (1 << 15)))
-        [is readInt64];
-    if (signature == (int32_t)0xb1b8cc83 && (flags2 & (1 << 21)))
-        [is readInt64];
+    
+    if (modernLayout)
+    {
+        if (flags2 & (1 << 12))
+            OGModernUserDiscardInt32(is);
+        if (flags2 & (1 << 14))
+            OGModernUserDiscardInt64(is);
+        if (flags2 & (1 << 15))
+            OGModernUserDiscardInt64(is);
+        if ((flags2 & (1 << 21)) && signature == (int32_t)0xb1b8cc83)
+            OGModernUserDiscardInt64(is);
+    }
     
     return object;
 }

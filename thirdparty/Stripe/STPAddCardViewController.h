@@ -51,7 +51,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  If you're using the token generated from STPAddCardViewController to make a Managed Account, you should set this property to the currency that account will use. Otherwise, you should leave it empty. For more information, see https://stripe.com/docs/api#create_card_token-card-currency
  */
-@property(nonatomic, copy)NSString *managedAccountCurrency;
+@property(nonatomic, copy)NSString *_Nullable managedAccountCurrency;
 
 @end
 

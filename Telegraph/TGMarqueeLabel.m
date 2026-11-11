@@ -352,8 +352,8 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
     
     if (!gradientMask) {
         gradientMask = [CAGradientLayer layer];
-        TGSetLayerShouldRasterize(gradientMask, YES);
-        TGSetLayerRasterizationScale(gradientMask, [UIScreen mainScreen].scale);
+        OGCompatLayerSetShouldRasterize(gradientMask, YES);
+        OGCompatLayerSetRasterizationScale(gradientMask, [UIScreen mainScreen].scale);
         gradientMask.startPoint = CGPointMake(0.0f, 0.5f);
         gradientMask.endPoint = CGPointMake(1.0f, 0.5f);
     }

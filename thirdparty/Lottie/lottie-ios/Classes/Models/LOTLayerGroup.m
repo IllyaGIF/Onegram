@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTLayerGroup.m
 //  Pods
@@ -17,7 +17,7 @@
 }
 
 - (instancetype)initWithLayerJSON:(NSArray *)layersJSON
-                   withAssetGroup:(LOTAssetGroup * )assetGroup
+                   withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
                     withFramerate:(NSNumber *)framerate {
   self = [super init];
   if (self) {
@@ -27,7 +27,7 @@
 }
 
 - (void)_mapFromJSON:(NSArray *)layersJSON
-      withAssetGroup:(LOTAssetGroup * )assetGroup
+      withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
        withFramerate:(NSNumber *)framerate {
   
   NSMutableArray *layers = [NSMutableArray array];

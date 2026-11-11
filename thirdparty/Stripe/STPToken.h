@@ -21,13 +21,13 @@
 /**
  *  You cannot directly instantiate an `STPToken`. You should only use one that has been returned from an `STPAPIClient` callback.
  */
-- (instancetype) init __attribute__((unavailable("You cannot directly instantiate an STPToken. You should only use one that has been returned from an STPAPIClient callback.")));
+- (instancetype _Nonnull) init __attribute__((unavailable("You cannot directly instantiate an STPToken. You should only use one that has been returned from an STPAPIClient callback.")));
 
 /**
  *  The value of the token. You can store this value on your server and use it to make charges and customers. @see
  * https://stripe.com/docs/mobile/ios#sending-tokens
  */
-@property (nonatomic, readonly) NSString *tokenId;
+@property (nonatomic, readonly) NSString *_Nonnull tokenId;
 
 /**
  *  Whether or not this token was created in livemode. Will be YES if you used your Live Publishable Key, and NO if you used your Test Publishable Key.
@@ -38,16 +38,16 @@
  *  The credit card details that were used to create the token. Will only be set if the token was created via a credit card or Apple Pay, otherwise it will be
  * nil.
  */
-@property (nonatomic, readonly) STPCard *card;
+@property (nonatomic, readonly) STPCard *_Nullable card;
 
 /**
  *  The bank account details that were used to create the token. Will only be set if the token was created with a bank account, otherwise it will be nil.
  */
-@property (nonatomic, readonly) STPBankAccount *bankAccount;
+@property (nonatomic, readonly) STPBankAccount *_Nullable bankAccount;
 
 /**
  *  When the token was created.
  */
-@property (nonatomic, readonly) NSDate *created;
+@property (nonatomic, readonly) NSDate *_Nullable created;
 
 @end

@@ -169,7 +169,7 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _portraitToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _portraitToolControlView.clipsToBounds = true;
     _portraitToolControlView.interactionEnded = interactionEnded;
-    TGSetLayerRasterizationScale(_portraitToolControlView.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(_portraitToolControlView.layer, TGScreenScaling());
     _portraitToolControlView.isLandscape = false;
     [_portraitToolsWrapperView addSubview:_portraitToolControlView];
     
@@ -184,7 +184,7 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _landscapeToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _landscapeToolControlView.clipsToBounds = true;
     _landscapeToolControlView.interactionEnded = interactionEnded;
-    TGSetLayerRasterizationScale(_landscapeToolControlView.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(_landscapeToolControlView.layer, TGScreenScaling());
     _landscapeToolControlView.isLandscape = true;
     _landscapeToolControlView.toolbarLandscapeSize = self.toolbarLandscapeSize;
     [_landscapeToolsWrapperView addSubview:_landscapeToolControlView];
@@ -225,9 +225,9 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     }];
     
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
+        OGCompatLayerSetShouldRasterize(_portraitToolControlView.layer, true);
     else
-        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
+        OGCompatLayerSetShouldRasterize(_landscapeToolControlView.layer, true);
     
     CGRect toolTargetFrame;
     switch (self.interfaceOrientation)
@@ -268,8 +268,8 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     {
         if (finished)
         {
-            TGSetLayerShouldRasterize(_portraitToolControlView.layer, false);
-            TGSetLayerShouldRasterize(_landscapeToolControlView.layer, false);
+            OGCompatLayerSetShouldRasterize(_portraitToolControlView.layer, false);
+            OGCompatLayerSetShouldRasterize(_landscapeToolControlView.layer, false);
         }
     }];
 
@@ -284,9 +284,9 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _wrapperView.backgroundColor = [UIColor clearColor];
     
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
+        OGCompatLayerSetShouldRasterize(_portraitToolControlView.layer, true);
     else
-        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
+        OGCompatLayerSetShouldRasterize(_landscapeToolControlView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {

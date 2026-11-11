@@ -7,6 +7,7 @@
 //
 
 #import "STPAnalyticsClient.h"
+#import "OGStripeCompat.h"
 #import "NSMutableURLRequest+Stripe.h"
 #import "STPAPIClient.h"
 #import <UIKit/UIKit.h>
@@ -30,7 +31,7 @@ static BOOL STPAnalyticsCollectionDisabled = YES;
 @interface STPAnalyticsClient()
 
 @property (nonatomic) NSSet *apiUsage;
-@property (nonatomic, readwrite) id urlSession;
+@property (nonatomic, readwrite) OGStripeURLSession urlSession;
 
 @end
 

@@ -41,7 +41,7 @@ inline void SHA256Update(SHA256_CTX*) {
 template <typename First, typename ...Others>
 inline void SHA256Update(SHA256_CTX *context, First &&span, Others &&...others) {
 	static_assert(
-		std::is_same<typename std::decay<First>::type, MemorySpan>::value,
+		std::is_same<MemorySpan, typename std::decay<First>::type>::value,
 		"Pass some MemorySpan-s here.");
 
 	SHA256_Update(context, span.data, span.size);

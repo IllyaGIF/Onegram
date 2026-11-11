@@ -184,80 +184,85 @@ static NSMutableDictionary *serverAssetData()
     return dict;
 }
 
-static TLInputFileLocation *IOS6ModernInputLocationFromImageUrl(NSString *url, TGMediaOriginInfo *originInfo, int *datacenterId, int64_t *identifier)
+TLInputFileLocation *OGInputLocationFromImageUrl(NSString *url, TGMediaOriginInfo *originInfo, int *datacenterId, int64_t *identifier)
 {
-    if ([url hasPrefix:@"peerphoto:"])
+    bool isPeerPhoto = [url hasPrefix:@"peerphoto:"];
+    bool isPhoto = [url hasPrefix:@"photo:"];
+    bool isDocumentThumb = [url hasPrefix:@"documentthumb:"];
+    NSArray *fields = [url componentsSeparatedByString:@":"];
+    if (!(isPeerPhoto || isPhoto || isDocumentThumb) || fields.count < 7)
+        return nil;
+    
+    if (datacenterId != NULL)
+        *datacenterId = [[fields objectAtIndex:1] intValue];
+    
+    if (isPeerPhoto)
     {
-        NSArray *components = [url componentsSeparatedByString:@":"];
-        if (components.count >= 7)
-        {
-            if (datacenterId != NULL)
-                *datacenterId = [[components objectAtIndex:1] intValue];
-            int32_t peerType = [[components objectAtIndex:2] intValue];
-            int64_t peerId = [[components objectAtIndex:3] longLongValue];
-            int64_t accessHash = [[components objectAtIndex:4] longLongValue];
-            int64_t photoId = [[components objectAtIndex:5] longLongValue];
-            bool big = [[components objectAtIndex:6] intValue] != 0;
-            if (identifier != NULL)
-                *identifier = photoId != 0 ? photoId : peerId;
-            
-            TLInputFileLocation$inputPeerPhotoFileLocation *location = [[TLInputFileLocation$inputPeerPhotoFileLocation alloc] init];
-            location.peer_id = peerId;
-            location.access_hash = accessHash;
-            location.photo_id = photoId;
-            location.peer_type = peerType;
-            location.big = big;
-            return location;
-        }
-    }
-    else if ([url hasPrefix:@"photo:"])
-    {
-        NSArray *components = [url componentsSeparatedByString:@":"];
-        if (components.count >= 7)
-        {
-            if (datacenterId != NULL)
-                *datacenterId = [[components objectAtIndex:1] intValue];
-            int64_t fileId = [[components objectAtIndex:2] longLongValue];
-            int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-            NSString *thumbSize = [components objectAtIndex:5];
-            NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-            if (identifier != NULL)
-                *identifier = fileId;
-            
-            TLInputFileLocation$inputPhotoFileLocation *location = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
-            location.n_id = fileId;
-            location.access_hash = accessHash;
-            NSData *originFileReference = [originInfo fileReference];
-            location.file_reference = originFileReference.length != 0 ? originFileReference : (fileReference ?: [NSData data]);
-            location.thumb_size = thumbSize ?: @"";
-            return location;
-        }
-    }
-    else if ([url hasPrefix:@"documentthumb:"])
-    {
-        NSArray *components = [url componentsSeparatedByString:@":"];
-        if (components.count >= 7)
-        {
-            if (datacenterId != NULL)
-                *datacenterId = [[components objectAtIndex:1] intValue];
-            int64_t fileId = [[components objectAtIndex:2] longLongValue];
-            int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-            NSString *thumbSize = [components objectAtIndex:5];
-            NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-            if (identifier != NULL)
-                *identifier = fileId;
-
-            TLInputFileLocation$inputDocumentFileLocation *location = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
-            location.n_id = fileId;
-            location.access_hash = accessHash;
-            NSData *originFileReference = [originInfo fileReference];
-            location.file_reference = originFileReference.length != 0 ? originFileReference : (fileReference ?: [NSData data]);
-            location.thumb_size = thumbSize ?: @"";
-            return location;
-        }
+        int64_t peerId = [[fields objectAtIndex:3] longLongValue];
+        int64_t photoId = [[fields objectAtIndex:5] longLongValue];
+        if (identifier != NULL)
+            *identifier = photoId != 0 ? photoId : peerId;
+        
+        TLInputFileLocation$inputPeerPhotoFileLocation *peerLocation = [[TLInputFileLocation$inputPeerPhotoFileLocation alloc] init];
+        peerLocation.peer_id = peerId;
+        peerLocation.access_hash = [[fields objectAtIndex:4] longLongValue];
+        peerLocation.photo_id = photoId;
+        peerLocation.peer_type = [[fields objectAtIndex:2] intValue];
+        peerLocation.big = [[fields objectAtIndex:6] intValue] != 0;
+        return peerLocation;
     }
     
-    return nil;
+    int64_t fileId = [[fields objectAtIndex:2] longLongValue];
+    int64_t accessHash = [[fields objectAtIndex:3] longLongValue];
+    NSString *thumbSize = [fields objectAtIndex:5] ?: @"";
+    NSData *originReference = [originInfo fileReference];
+    NSData *fileReference = originReference.length != 0 ? originReference : ([NSData dataWithHexString:[fields objectAtIndex:6]] ?: [NSData data]);
+    if (identifier != NULL)
+        *identifier = fileId;
+    
+    if (isPhoto)
+    {
+        TLInputFileLocation$inputPhotoFileLocation *photoLocation = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
+        photoLocation.n_id = fileId;
+        photoLocation.access_hash = accessHash;
+        photoLocation.file_reference = fileReference;
+        photoLocation.thumb_size = thumbSize;
+        return photoLocation;
+    }
+    
+    TLInputFileLocation$inputDocumentFileLocation *documentLocation = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
+    documentLocation.n_id = fileId;
+    documentLocation.access_hash = accessHash;
+    documentLocation.file_reference = fileReference;
+    documentLocation.thumb_size = thumbSize;
+    return documentLocation;
+}
+
+static NSString *OGMultipartTemporaryFilePath(NSString *folderName)
+{
+    static NSString *tempRoot = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        tempRoot = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"temp"];
+    });
+    
+    NSString *folderPath = [tempRoot stringByAppendingPathComponent:folderName];
+    [[NSFileManager defaultManager] createDirectoryAtPath:folderPath withIntermediateDirectories:true attributes:nil error:nil];
+    return [folderPath stringByAppendingPathComponent:@"temporary"];
+}
+
+static NSMutableDictionary *OGMultipartFileOptions(int64_t identifier, id fileLocation, NSString *storeFilePath, int datacenterId)
+{
+    return [[NSMutableDictionary alloc] initWithDictionary:@{
+        @"identifier": @(identifier),
+        @"fileLocation": fileLocation,
+        @"storeFilePath": storeFilePath,
+        @"datacenterId": @(datacenterId),
+        @"encryptionArgs": @{},
+        @"mediaTypeTag": @(TGNetworkMediaTypeTagImage),
+        @"completeWithData": @true
+    }];
 }
 
 typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
@@ -1215,34 +1220,13 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                     }
                     
                     _requestedActors = true;
-                    int modernDatacenterId = 0;
-                    int64_t modernIdentifier = _imageId;
-                    TLInputFileLocation *modernLocation = IOS6ModernInputLocationFromImageUrl(trimmedUrl, _originInfo, &modernDatacenterId, &modernIdentifier);
-                    if (modernLocation != nil)
+                    int directDatacenterId = 0;
+                    int64_t directIdentifier = _imageId;
+                    TLInputFileLocation *directLocation = OGInputLocationFromImageUrl(trimmedUrl, _originInfo, &directDatacenterId, &directIdentifier);
+                    if (directLocation != nil)
                     {
-                        static NSString *filesDirectory = nil;
-                        static dispatch_once_t onceToken;
-                        dispatch_once(&onceToken, ^
-                        {
-                            filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"temp"];
-                        });
-                        
-                        NSString *fileDirectoryName = [[NSString alloc] initWithFormat:@"modern-%lu", (unsigned long)[trimmedUrl hash]];
-                        NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
-                        
-                        [[NSFileManager defaultManager] createDirectoryAtPath:fileDirectory withIntermediateDirectories:true attributes:nil error:nil];
-                        
-                        _multipartFilePath = [fileDirectory stringByAppendingPathComponent:@"temporary"];
-                        
-                        NSMutableDictionary *multiPartOptions = [[NSMutableDictionary alloc] initWithDictionary:@{
-                                                                                                                  @"identifier": @(modernIdentifier),
-                                                                                                                  @"fileLocation": modernLocation,
-                                                                                                                  @"storeFilePath": _multipartFilePath,
-                                                                                                                  @"datacenterId": @(modernDatacenterId),
-                                                                                                                  @"encryptionArgs": @{},
-                                                                                                                  @"mediaTypeTag": @(TGNetworkMediaTypeTagImage),
-                                                                                                                  @"completeWithData": @true
-                                                                                                                  }];
+                        _multipartFilePath = OGMultipartTemporaryFilePath([[NSString alloc] initWithFormat:@"modern-%lu", (unsigned long)[trimmedUrl hash]]);
+                        NSMutableDictionary *multiPartOptions = OGMultipartFileOptions(directIdentifier, directLocation, _multipartFilePath, directDatacenterId);
                         TGImageInfo *imageInfo = userProperties[@"imageInfo"];
                         int expectedSize = [imageInfo fileSizeForUrl:trimmedUrl];
                         NSArray *locationParts = [trimmedUrl componentsSeparatedByString:@":"];
@@ -1255,25 +1239,13 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                         if (_originInfo != nil)
                             multiPartOptions[@"originInfo"] = _originInfo;
                         
-                        NSString *multipartPath = [[NSString alloc] initWithFormat:@"/tg/multipart-file/(modern-image:%lld:%d:%lu)", modernIdentifier, modernDatacenterId, (unsigned long)[trimmedUrl hash]];
+                        NSString *multipartPath = [[NSString alloc] initWithFormat:@"/tg/multipart-file/(modern-image:%lld:%d:%lu)", directIdentifier, directDatacenterId, (unsigned long)[trimmedUrl hash]];
                         int multipartFlags = [[userProperties objectForKey:@"changePriority"] boolValue] ? TGActorRequestChangePriority : 0;
                         [ActionStageInstance() requestActor:multipartPath options:multiPartOptions flags:multipartFlags watcher:self];
                     }
                     else if (_multipart)
                     {
-                        static NSString *filesDirectory = nil;
-                        static dispatch_once_t onceToken;
-                        dispatch_once(&onceToken, ^
-                        {
-                            filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"temp"];
-                        });
-                        
-                        NSString *fileDirectoryName = trimmedUrl;
-                        NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
-                        
-                        [[NSFileManager defaultManager] createDirectoryAtPath:fileDirectory withIntermediateDirectories:true attributes:nil error:nil];
-                        
-                        _multipartFilePath = [fileDirectory stringByAppendingPathComponent:@"temporary"];
+                        _multipartFilePath = OGMultipartTemporaryFilePath(trimmedUrl);
                         
                         int datacenterId = 0;
                         int64_t volumeId = 0;
@@ -1288,15 +1260,7 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                             if (options[@"originInfo"] != nil)
                                 fileLocation.file_reference = [options[@"originInfo"] fileReferenceForVolumeId:volumeId localId:localId];
 
-                            NSMutableDictionary *multiPartOptions = [[NSMutableDictionary alloc] initWithDictionary:@{
-                                                                                                                      @"identifier": @(_imageId),
-                                                                                                                      @"fileLocation": fileLocation,
-                                                                                                                      @"storeFilePath": _multipartFilePath,
-                                                                                                                      @"datacenterId": @(datacenterId),
-                                                                                                                      @"encryptionArgs": @{},
-                                                                                                                      @"mediaTypeTag": @(TGNetworkMediaTypeTagImage),
-                                                                                                                      @"completeWithData": @true
-                                                                                                                      }];
+                            NSMutableDictionary *multiPartOptions = OGMultipartFileOptions(_imageId, fileLocation, _multipartFilePath, datacenterId);
                             
                             if (options[@"originInfo"] != nil)
                                 multiPartOptions[@"originInfo"] = options[@"originInfo"];

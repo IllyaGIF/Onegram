@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeRectangle.m
 //  LottieAnimator
@@ -21,25 +21,25 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *position = [jsonDictionary objectForKey:@2];
+  NSDictionary *position = jsonDictionary[@"p"];
   if (position) {
     _position = [[LOTKeyframeGroup alloc] initWithData:position];
   }
   
-  NSDictionary *cornerRadius = [jsonDictionary objectForKey:@2];
+  NSDictionary *cornerRadius = jsonDictionary[@"r"];
   if (cornerRadius) {
     _cornerRadius = [[LOTKeyframeGroup alloc] initWithData:cornerRadius];
   }
   
-  NSDictionary *size = [jsonDictionary objectForKey:@2];
+  NSDictionary *size = jsonDictionary[@"s"];
   if (size) {
     _size = [[LOTKeyframeGroup alloc] initWithData:size];
   }
-  NSNumber *reversed = [jsonDictionary objectForKey:@2];
+  NSNumber *reversed = jsonDictionary[@"d"];
   _reversed = (reversed.integerValue == 3);
 }
 

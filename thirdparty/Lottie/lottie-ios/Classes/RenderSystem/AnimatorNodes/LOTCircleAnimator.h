@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTCircleAnimator.h
 //  Lottie
@@ -12,7 +12,7 @@
 
 @interface LOTCircleAnimator : LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  shapeCircle:(LOTShapeCircle *)shapeCircle;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  shapeCircle:(LOTShapeCircle *_Nonnull)shapeCircle;
 
 @end

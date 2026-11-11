@@ -10,7 +10,7 @@
 
 @implementation NSDictionary (Stripe)
 
-- (NSDictionary *)stp_dictionaryByRemovingNullsValidatingRequiredFields:(NSArray *)requiredFields {
+- (NSDictionary *_Nullable)stp_dictionaryByRemovingNullsValidatingRequiredFields:(NSArray *_Nonnull)requiredFields {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     [self enumerateKeysAndObjectsUsingBlock:^(id key, id obj, __unused BOOL *stop) {
         if (obj != [NSNull null]) {

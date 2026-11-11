@@ -25,6 +25,7 @@
 @property (nonatomic, retain) TLInputPeer *monoforum_peer_id;
 @property (nonatomic) int32_t todo_item_id;
 @property (nonatomic, retain) NSData *poll_option;
+@property (nonatomic, retain) NSArray *quote_rich;
 
 @end
 

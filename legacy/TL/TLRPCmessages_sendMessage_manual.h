@@ -1,5 +1,6 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
+#import "TL/TLInputMedia.h"
 
 @class TLInputPeer;
 @class TLCodexPollValue;
@@ -22,10 +23,25 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 @property (nonatomic) int32_t forumTopicId;
 @property (nonatomic, strong) TLInputPeer *monoforumPeer;
 @property (nonatomic, strong) TLInputPeer *sendAs;
+@property (nonatomic, strong) TLInputPeer *replyToStoryPeer;
+@property (nonatomic) int32_t replyToStoryId;
+@property (nonatomic) int64_t allowPaidStars;
 @property (nonatomic, strong) NSString *message;
 @property (nonatomic) int64_t random_id;
 @property (nonatomic, strong) NSArray *entities;
 
+@end
+
+@interface TGIOS6ForwardMessagesToThreadRpc : TLMetaRpc
+@property (nonatomic) int32_t flags;
+@property (nonatomic, strong) TLInputPeer *fromPeer;
+@property (nonatomic, strong) NSArray *messageIds;
+@property (nonatomic, strong) NSArray *randomIds;
+@property (nonatomic, strong) TLInputPeer *toPeer;
+@property (nonatomic) int32_t topMessageId;
+@property (nonatomic, strong) TLInputPeer *monoforumPeer;
+@property (nonatomic, strong) TLInputPeer *sendAs;
+@property (nonatomic) int64_t allowPaidStars;
 @end
 
 @interface TLRPCmessages_sendReaction_manual : TLMetaRpc
@@ -87,5 +103,13 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 @property (nonatomic) int32_t msg_id;
 @property (nonatomic, strong) TLCodexPollValue *poll;
 @property (nonatomic, strong) NSArray *correct_answers;
+
+@end
+
+@interface TLInputMedia$inputMediaPoll_manual : TLInputMedia
+
+@property (nonatomic, strong) TLCodexPollValue *poll;
+@property (nonatomic, strong) NSArray *correct_answers;
+@property (nonatomic, strong) NSString *solution;
 
 @end

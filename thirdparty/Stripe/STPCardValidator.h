@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 
 #import "STPCardParams.h"
 #import "STPCardBrand.h"
@@ -52,7 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  The possible number lengths for cards associated with a card brand. For example, Discover card numbers contain 16 characters, while American Express cards contain 15 characters.
  */
-+ (NSSet *)lengthsForCardBrand:(STPCardBrand)brand;
++ (OG_COMPAT_GENERIC(NSSet, NSNumber *)*)lengthsForCardBrand:(STPCardBrand)brand;
 + (NSInteger)maxLengthForCardBrand:(STPCardBrand)brand;
 + (NSInteger)lengthForCardBrand:(STPCardBrand)brand __attribute__((deprecated("Card brands may have multiple lengths - use lengthsForCardBrand or maxLengthForCardBrand instead.")));
 

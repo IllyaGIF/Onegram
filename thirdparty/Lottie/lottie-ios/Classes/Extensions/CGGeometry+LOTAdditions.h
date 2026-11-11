@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 
 #import "LOTPlatformCompat.h"
 
@@ -82,7 +82,7 @@ CGRect LOT_RectSetHeight(CGRect rect, CGFloat height);
 CGFloat LOT_PointDistanceFromPoint(CGPoint point1, CGPoint point2);
 CGFloat LOT_DegreesToRadians(CGFloat degrees);
 
-CGFloat LOT_RemapValue(CGFloat value, CGFloat low1, CGFloat high1, CGFloat low2, CGFloat high2);
+CGFloat LOT_RemapValue(CGFloat value, CGFloat low1, CGFloat high1, CGFloat low2, CGFloat high2 );
 CGPoint LOT_PointByLerpingPoints(CGPoint point1, CGPoint point2, CGFloat value);
 
 CGPoint LOT_PointInLine(CGPoint A, CGPoint B, CGFloat T);

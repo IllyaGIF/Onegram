@@ -11,6 +11,15 @@ namespace tgcalls {
 
 template <class ValueT, class CreatorT>
 class Pool : public std::enable_shared_from_this<Pool<ValueT, CreatorT>> {
+  struct Release {
+    std::shared_ptr<Pool> owner;
+    size_t slot;
+
+    void operator()(ValueT *) const {
+      owner->dec_ref(slot);
+    }
+  };
+
   struct Entry {
     ValueT *value;
     size_t refcnt;
@@ -31,11 +40,7 @@ public:
     std::unique_lock<std::mutex> lock(mutex_);
     set_pool_size_locked(1);
     auto i = std::min_element(entries_.begin(), entries_.end()) - entries_.begin();
-    std::shared_ptr<Pool<ValueT, CreatorT>> self = this->shared_from_this();
-    return std::shared_ptr<ValueT>(entries_[i].value,
-      [i, self](ValueT *ptr) {
-        self->dec_ref(i);
-      });
+    return std::shared_ptr<ValueT>(entries_[i].value, Release{this->shared_from_this(), size_t(i)});
   }
 
   void set_pool_size(size_t size) {

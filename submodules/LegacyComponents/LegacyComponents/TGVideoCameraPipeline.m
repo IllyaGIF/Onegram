@@ -276,7 +276,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     
     OSSpinLock _recordLock;
     bool _startRecordAfterFormatBuffer;
-    bool _stopRecordAfterPreparing;
+    bool _deferredStopRequested;
     
     CVPixelBufferRef _currentPreviewPixelBuffer;
     NSMutableDictionary *_thumbnails;
@@ -585,12 +585,12 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     }
     [_captureSession addOutput:_videoOutput];
 	
-	_videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+	_videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
     
     _captureSession.sessionPreset = TGVideoCameraPipelineSessionPreset(_captureSession);
     [_captureSession commitConfiguration];
-    _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
-    _audioConnection = TGAVCaptureConnectionWithMediaType(_audioOutput, AVMediaTypeAudio);
+    _videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
+    _audioConnection = OGCompatCaptureConnection(_audioOutput, AVMediaTypeAudio);
     if ([_captureSession.outputs containsObject:_videoOutput])
         [self configureVideoOutputPixelFormat];
 
@@ -1235,7 +1235,8 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     unsigned char *sourceData = (unsigned char *)baseAddress + startPosition;
     
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreateWithData(NULL, outWidth, outHeight, 8, outWidth * 4, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, NULL, nil);
+    CGBitmapInfo thumbnailBitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
+    CGContextRef context = CGBitmapContextCreateWithData(NULL, outWidth, outHeight, 8, outWidth * 4, colorSpace, thumbnailBitmapInfo, NULL, nil);
     
     unsigned char *outImg = CGBitmapContextGetData(context);
     
@@ -1299,7 +1300,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 		if (_recordingStatus != TGVideoCameraRecordingStatusIdle)
 			return;
 
-        _stopRecordAfterPreparing = false;
+        _deferredStopRequested = false;
         _lastRecordedFrameTime = kCMTimeInvalid;
         if (_lastRecordedPixelBuffer != NULL)
         {
@@ -1336,7 +1337,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     {
         if (_recordingStatus == TGVideoCameraRecordingStatusStartingRecording)
         {
-            _stopRecordAfterPreparing = true;
+            _deferredStopRequested = true;
             return true;
         }
 
@@ -1373,15 +1374,15 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 
 - (void)movieRecorderDidFinishPreparing:(TGVideoCameraMovieRecorder *)__unused recorder
 {
-	bool stopAfterPreparing = false;
+	bool shouldStopNow = false;
 	@synchronized (self)
 	{
 		if (_recordingStatus != TGVideoCameraRecordingStatusStartingRecording)
 			return;
 		
 		[self transitionToRecordingStatus:TGVideoCameraRecordingStatusRecording error:nil];
-        stopAfterPreparing = _stopRecordAfterPreparing;
-        _stopRecordAfterPreparing = false;
+        shouldStopNow = _deferredStopRequested;
+        _deferredStopRequested = false;
         
         if (_liveUpload)
         {
@@ -1390,7 +1391,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
         }
 	}
 
-    if (stopAfterPreparing)
+    if (shouldStopNow)
     {
         [self stopRecording];
     }
@@ -1401,7 +1402,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     TGLegacyLog(@"VIDEOMSG recorder_error %@", error);
 	@synchronized (self)
 	{
-		_stopRecordAfterPreparing = false;
+		_deferredStopRequested = false;
 		_recorder = nil;
 		[self transitionToRecordingStatus:TGVideoCameraRecordingStatusIdle error:error];
 	}
@@ -1424,7 +1425,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 	}
 	
 	_recorder = nil;
-    _stopRecordAfterPreparing = false;
+    _deferredStopRequested = false;
     
     if (_watcher != nil)
         _liveUploadData = [_watcher fileUpdated:true];
@@ -1599,7 +1600,7 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
             _renderer.mirror = _videoDevice.position == AVCaptureDevicePositionFront;
             _renderer.orientation = _orientation;
         }
-        _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+        _videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
         [self _configureFPS];
         [self _enableLowLightBoost];
         [self _enableVideoStabilization];
@@ -1624,7 +1625,7 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
 
 - (void)_enableVideoStabilization
 {
-    AVCaptureConnection *videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+    AVCaptureConnection *videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
     if (videoConnection == nil)
         return;
 
@@ -1709,8 +1710,8 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         [self handleNonRecoverableCaptureSessionRuntimeError:error];
         return;
     }
-    _audioConnection = TGAVCaptureConnectionWithMediaType(_audioOutput, AVMediaTypeAudio);
-    _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+    _audioConnection = OGCompatCaptureConnection(_audioOutput, AVMediaTypeAudio);
+    _videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
     if (_audioConnection == nil || !_audioConnection.enabled)
     {
         [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session did not create an enabled microphone connection."}]];
@@ -1747,8 +1748,9 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         configuredDevice = true;
         [self _reconfigureDevice:_videoDevice withBlock:^(AVCaptureDevice *device)
         {
-            [device setValue:[NSValue valueWithCMTime:frameDuration] forKey:@"activeVideoMaxFrameDuration"];
-            [device setValue:[NSValue valueWithCMTime:frameDuration] forKey:@"activeVideoMinFrameDuration"];
+            NSValue *durationValue = [NSValue valueWithCMTime:frameDuration];
+            for (NSString *key in @[@"activeVideoMaxFrameDuration", @"activeVideoMinFrameDuration"])
+                [device setValue:durationValue forKey:key];
         }];
     }
 

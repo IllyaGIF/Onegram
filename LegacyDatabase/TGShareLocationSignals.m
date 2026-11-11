@@ -86,28 +86,29 @@ static NSArray * TGQueryStringComponentsFromKeyAndValue(NSString *key, id value)
 NSArray * TGQueryStringComponentsFromKeyAndDictionaryValue(NSString *key, NSDictionary *value);
 NSArray * TGQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *value);
 
-static NSString *TGDecodedURLQueryComponent(NSString *value)
+static NSString *OGShareUnescapeQueryPart(NSString *part)
 {
-    NSString *spaceAdjusted = [value stringByReplacingOccurrencesOfString:@"+" withString:@" "];
-    NSString *decoded = [spaceAdjusted stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    return decoded == nil ? spaceAdjusted : decoded;
+    NSString *spaced = [part stringByReplacingOccurrencesOfString:@"+" withString:@" "];
+    NSString *unescaped = [spaced stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    return unescaped != nil ? unescaped : spaced;
 }
 
-static NSDictionary *TGQueryItemsFromURL(NSURL *url)
+static NSDictionary *OGShareQueryParameters(NSURL *url)
 {
-    NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-    for (NSString *component in [[url query] componentsSeparatedByString:@"&"])
+    NSMutableDictionary *parameters = [[NSMutableDictionary alloc] init];
+    for (NSString *pair in [[url query] componentsSeparatedByString:@"&"])
     {
-        if (component.length == 0)
+        if (pair.length == 0)
             continue;
         
-        NSRange separatorRange = [component rangeOfString:@"="];
-        NSString *key = separatorRange.location == NSNotFound ? component : [component substringToIndex:separatorRange.location];
-        NSString *value = separatorRange.location == NSNotFound ? @"" : [component substringFromIndex:separatorRange.location + 1];
-        if (key.length != 0)
-            [result setObject:TGDecodedURLQueryComponent(value) forKey:TGDecodedURLQueryComponent(key)];
+        NSRange equals = [pair rangeOfString:@"="];
+        bool hasValue = equals.location != NSNotFound;
+        NSString *name = hasValue ? [pair substringToIndex:equals.location] : pair;
+        NSString *value = hasValue ? [pair substringFromIndex:equals.location + 1] : @"";
+        if (name.length != 0)
+            [parameters setObject:OGShareUnescapeQueryPart(value) forKey:OGShareUnescapeQueryPart(name)];
     }
-    return result;
+    return parameters;
 }
 
 static NSString * TGQueryStringFromParametersWithEncoding(NSDictionary *parameters, NSStringEncoding stringEncoding) {
@@ -180,7 +181,7 @@ NSArray * TGQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *va
 
 + (SSignal *)_appleMapsLocationContentForURL:(NSURL *)url
 {
-    NSDictionary *queryItems = TGQueryItemsFromURL(url);
+    NSDictionary *queryItems = OGShareQueryParameters(url);
     
     NSString *latLon = [queryItems objectForKey:TGShareAppleMapsLatLonKey];
     NSString *name = [queryItems objectForKey:TGShareAppleMapsNameKey];

@@ -34,14 +34,11 @@ public func flatMap<T, E, R>(_ f: @escaping (T) -> R?) -> (Signal<T, E>) -> Sign
     return { signal in
         return Signal<R, E> { subscriber in
             return signal.start(next: { next in
-                if let value = f(next) {
-                    subscriber.putNext(value)
+                guard let mapped = f(next) else {
+                    return
                 }
-            }, error: { error in
-                subscriber.putError(error)
-            }, completed: {
-                subscriber.putCompletion()
-            })
+                subscriber.putNext(mapped)
+            }, error: subscriber.putError, completed: subscriber.putCompletion)
         }
     }
 }
@@ -63,12 +60,7 @@ public func mapError<T, E, R>(_ f: @escaping(E) -> R) -> (Signal<T, E>) -> Signa
 public func introduceError<T, E>(_ type: E.Type) -> (Signal<T, NoError>) -> Signal<T, E> {
     return { signal in
         return Signal<T, E> { subscriber in
-            return signal.start(next: { next in
-                subscriber.putNext(next)
-            }, error: { _ in
-            }, completed: {
-                subscriber.putCompletion()
-            })
+            return signal.start(next: subscriber.putNext, error: { _ in }, completed: subscriber.putCompletion)
         }
     }
 }

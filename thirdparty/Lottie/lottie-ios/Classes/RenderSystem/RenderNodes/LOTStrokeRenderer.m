@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTStrokeRenderer.m
 //  Lottie
@@ -33,7 +33,7 @@
       LOTNumberInterpolator *interpolator = [[LOTNumberInterpolator alloc] initWithKeyframes:keyframegroup.keyframes];
       [dashPatternIntpolators addObject:interpolator];
       if (dashPatterns && keyframegroup.keyframes.count == 1) {
-        LOTKeyframe *first = [keyframegroup.keyframes objectAtIndex:0];
+        LOTKeyframe *first = keyframegroup.keyframes.firstObject;
         [dashPatterns addObject:@(first.floatValue)];
       }
       if (keyframegroup.keyframes.count > 1) {

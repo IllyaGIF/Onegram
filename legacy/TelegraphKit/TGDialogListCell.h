@@ -18,7 +18,7 @@
 @property (nonatomic, copy) void (^togglePinConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleGroupConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleReadConversation)(int64_t, bool);
-@property (nonatomic, copy) void (^toggleArchiveConversation)(int64_t, bool);
+@property (nonatomic, copy) void (^archiveToggleHandler)(int64_t, bool);
 @property (nonatomic, copy) void (^openCommunity)(int64_t);
 @property (nonatomic, copy) void (^openStories)(int64_t);
 @property (nonatomic) int storyRingState;
@@ -102,6 +102,8 @@
 @property (nonatomic) bool isFeedChannels;
 
 @property (nonatomic, strong) TGDatabaseMessageDraft *draft;
+
+@property (nonatomic, copy) NSArray *folderTags;
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier assetsSource:(id<TGDialogListCellAssetsSource>)assetsSource;
 

@@ -59,10 +59,10 @@
 
 - (void)extendedUserDataRequestSuccess:(TLUserFull$userFull *)userDesc
 {   
-    TLUser *sourceUser = userDesc.user != nil ? userDesc.user : userDesc.link.user;
+    TLUser *sourceUser = userDesc.user ?: userDesc.link.user;
     TGUser *user = [[TGUser alloc] initWithTelegraphUserDesc:sourceUser];
     int64_t userId = user.uid;
-    if (userId == 0 && [sourceUser isKindOfClass:[TLUser$modernUser class]])
+    if ([sourceUser isKindOfClass:[TLUser$modernUser class]] && userId == 0)
         userId = ((TLUser$modernUser *)sourceUser).n_id;
     [TGUserDataRequestBuilder executeUserObjectsUpdate:[NSArray arrayWithObject:user]];
     

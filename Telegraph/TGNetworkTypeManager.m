@@ -147,17 +147,17 @@ static void TGEnsureTransferPolicy(void)
         cellNetworkSignal = [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
         {
             CTTelephonyNetworkInfo *telephonyInfo = [CTTelephonyNetworkInfo new];
-            NSString *network = [telephonyInfo respondsToSelector:NSSelectorFromString(@"currentRadioAccessTechnology")] ? [telephonyInfo valueForKey:@"currentRadioAccessTechnology"] : nil;
-            if (network == nil)
-                network = @"";
-            [subscriber putNext:network];
+            NSString *(^radioTechnology)(void) = ^NSString *
+            {
+                SEL radioSelector = NSSelectorFromString(@"currentRadioAccessTechnology");
+                NSString *current = [telephonyInfo respondsToSelector:radioSelector] ? [telephonyInfo valueForKey:@"currentRadioAccessTechnology"] : nil;
+                return current ?: @"";
+            };
+            [subscriber putNext:radioTechnology()];
             
             TGObserverBlockProxy *observer = [[TGObserverBlockProxy alloc] initWithName:@"CTRadioAccessTechnologyDidChangeNotification" block:^
             {
-                NSString *network = [telephonyInfo respondsToSelector:NSSelectorFromString(@"currentRadioAccessTechnology")] ? [telephonyInfo valueForKey:@"currentRadioAccessTechnology"] : nil;
-                if (network == nil)
-                    network = @"";
-                [subscriber putNext:network];
+                [subscriber putNext:radioTechnology()];
             }];
             
             return [[SBlockDisposable alloc] initWithBlock:^
@@ -167,28 +167,27 @@ static void TGEnsureTransferPolicy(void)
             }];
         }] map:^id(NSString *networkType)
         {
-            if ([networkType isEqualToString:@"CTRadioAccessTechnologyGPRS"])
+            static NSDictionary *generations = nil;
+            static dispatch_once_t onceToken;
+            dispatch_once(&onceToken, ^
             {
-                return @(TGNetworkTypeGPRS);
-            }
-            else if ([networkType isEqualToString:@"CTRadioAccessTechnologyEdge"] || [networkType isEqualToString:@"CTRadioAccessTechnologyCDMA1x"])
-            {
-                return @(TGNetworkTypeEdge);
-            }
-            else if ([networkType isEqualToString:@"CTRadioAccessTechnologyLTE"])
-            {
-                return @(TGNetworkTypeLTE);
-            }
-            else if ([networkType isEqualToString:@"CTRadioAccessTechnologyWCDMA"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyHSDPA"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyHSUPA"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyCDMAEVDORev0"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyCDMAEVDORevA"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyCDMAEVDORevB"]
-                     || [networkType isEqualToString:@"CTRadioAccessTechnologyeHRPD"])
-            {
-                return @(TGNetworkType3G);
-            }
+                generations = @{
+                    @"CTRadioAccessTechnologyGPRS": @(TGNetworkTypeGPRS),
+                    @"CTRadioAccessTechnologyEdge": @(TGNetworkTypeEdge),
+                    @"CTRadioAccessTechnologyCDMA1x": @(TGNetworkTypeEdge),
+                    @"CTRadioAccessTechnologyLTE": @(TGNetworkTypeLTE),
+                    @"CTRadioAccessTechnologyWCDMA": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyHSDPA": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyHSUPA": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyCDMAEVDORev0": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyCDMAEVDORevA": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyCDMAEVDORevB": @(TGNetworkType3G),
+                    @"CTRadioAccessTechnologyeHRPD": @(TGNetworkType3G)
+                };
+            });
+            NSNumber *known = generations[networkType];
+            if (known != nil)
+                return known;
             
             return @(TGNetworkTypeUnknown);
         }];
@@ -204,7 +203,7 @@ static void TGEnsureTransferPolicy(void)
     return [[SSignal combineSignals:@[reachabilitySignal, cellNetworkSignal]] map:^NSNumber *(NSArray *values)
     {
         NSInteger reachability = [[values objectAtIndex:0] integerValue];
-        NSNumber *networkType = [values lastObject];
+        NSNumber *networkType = values.lastObject;
         
         if (reachability == ReachableViaWWAN)
             return networkType;

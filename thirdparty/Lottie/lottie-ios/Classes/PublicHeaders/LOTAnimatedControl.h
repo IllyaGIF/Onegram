@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimatedControl.h
 //  Lottie
@@ -21,9 +21,9 @@
  * When the state is set all layers will be hidden except the specified layer.
  **/
 
-- (void)setLayerName:(NSString * )layerName forState:(UIControlState)state;
+- (void)setLayerName:(NSString * _Nonnull)layerName forState:(UIControlState)state;
 
-@property (nonatomic, readonly) LOTAnimationView *animationView;
-@property (nonatomic) LOTComposition *animationComp;
+@property (nonatomic, readonly) LOTAnimationView *_Nonnull animationView;
+@property (nonatomic) LOTComposition *_Nullable animationComp;
 
 @end

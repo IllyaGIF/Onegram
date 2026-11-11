@@ -598,6 +598,29 @@ void OGPlatformSetTextFieldSelectionRange(UITextField *textField, NSRange range)
 #endif
 }
 
+CGRect OGPlatformTextViewStartCaretRect(UITextView *textView)
+{
+    if (textView == nil)
+        return CGRectNull;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
+    if (![textView respondsToSelector:@selector(beginningOfDocument)] || ![textView respondsToSelector:@selector(caretRectForPosition:)])
+        return CGRectNull;
+    UITextPosition *start = textView.beginningOfDocument;
+    return start == nil ? CGRectNull : [textView caretRectForPosition:start];
+#else
+    SEL startSelector = NSSelectorFromString(@"beginningOfDocument");
+    SEL caretSelector = NSSelectorFromString(@"caretRectForPosition:");
+    if (![textView respondsToSelector:startSelector] || ![textView respondsToSelector:caretSelector])
+        return CGRectNull;
+    id (*startFunction)(id, SEL) = (id (*)(id, SEL))[textView methodForSelector:startSelector];
+    CGRect (*caretFunction)(id, SEL, id) = (CGRect (*)(id, SEL, id))[textView methodForSelector:caretSelector];
+    if (startFunction == NULL || caretFunction == NULL)
+        return CGRectNull;
+    id start = startFunction(textView, startSelector);
+    return start == nil ? CGRectNull : caretFunction(textView, caretSelector, start);
+#endif
+}
+
 void OGPlatformSetTextFieldInputAccessoryView(UITextField *textField, UIView *accessoryView)
 {
     if (textField == nil)

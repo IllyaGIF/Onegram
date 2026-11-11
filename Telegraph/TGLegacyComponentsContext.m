@@ -50,11 +50,12 @@
 
 - (UIEdgeInsets)safeAreaInset {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
-    if (iosMajorVersion() >= 11 && [TGAppDelegateInstance.rootController.view respondsToSelector:@selector(safeAreaInsets)])
+    UIView *rootView = TGAppDelegateInstance.rootController.view;
+    if (iosMajorVersion() >= 11 && [rootView respondsToSelector:@selector(safeAreaInsets)])
     {
-        UIView *view = TGAppDelegateInstance.rootController.view;
-        UIEdgeInsets (*safeAreaInsetsImp)(id, SEL) = (UIEdgeInsets (*)(id, SEL))[view methodForSelector:@selector(safeAreaInsets)];
-        return safeAreaInsetsImp(view, @selector(safeAreaInsets));
+        typedef UIEdgeInsets (*OGCompatInsetsGetter)(id, SEL);
+        OGCompatInsetsGetter getInsets = (OGCompatInsetsGetter)[rootView methodForSelector:@selector(safeAreaInsets)];
+        return getInsets(rootView, @selector(safeAreaInsets));
     }
 #endif
     return UIEdgeInsetsZero;

@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTValueCallback.h
 //  Lottie
@@ -18,9 +18,9 @@
 
 @interface LOTColorValueCallback : NSObject <LOTColorValueDelegate>
 
-+ (instancetype )withCGColor:(CGColorRef )color;
++ (instancetype _Nonnull)withCGColor:(CGColorRef _Nonnull)color NS_SWIFT_NAME(init(color:));
 
-@property (nonatomic) CGColorRef colorValue;
+@property (nonatomic) CGColorRef _Nonnull colorValue;
 
 @end
 
@@ -31,7 +31,7 @@
 
 @interface LOTNumberValueCallback : NSObject <LOTNumberValueDelegate>
 
-+ (instancetype )withFloatValue:(CGFloat)numberValue;
++ (instancetype _Nonnull)withFloatValue:(CGFloat)numberValue NS_SWIFT_NAME(init(number:));
 
 @property (nonatomic, assign) CGFloat numberValue;
 
@@ -44,7 +44,7 @@
 
 @interface LOTPointValueCallback : NSObject <LOTPointValueDelegate>
 
-+ (instancetype )withPointValue:(CGPoint)pointValue;
++ (instancetype _Nonnull)withPointValue:(CGPoint)pointValue;
 
 @property (nonatomic, assign) CGPoint pointValue;
 
@@ -57,7 +57,7 @@
 
 @interface LOTSizeValueCallback : NSObject <LOTSizeValueDelegate>
 
-+ (instancetype )withPointValue:(CGSize)sizeValue;
++ (instancetype _Nonnull)withPointValue:(CGSize)sizeValue NS_SWIFT_NAME(init(size:));
 
 @property (nonatomic, assign) CGSize sizeValue;
 
@@ -70,8 +70,8 @@
 
 @interface LOTPathValueCallback : NSObject <LOTPathValueDelegate>
 
-+ (instancetype )withCGPath:(CGPathRef )path;
++ (instancetype _Nonnull)withCGPath:(CGPathRef _Nonnull)path NS_SWIFT_NAME(init(path:));
 
-@property (nonatomic) CGPathRef pathValue;
+@property (nonatomic) CGPathRef _Nonnull pathValue;
 
 @end

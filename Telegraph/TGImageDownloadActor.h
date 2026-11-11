@@ -12,6 +12,18 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
+@class TLInputFileLocation;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+TLInputFileLocation *OGInputLocationFromImageUrl(NSString *url, TGMediaOriginInfo *originInfo, int *datacenterId, int64_t *identifier);
+
+#ifdef __cplusplus
+}
+#endif
+
 @interface TGImageDownloadActor : ASActor <ASWatcher>
 @property (nonatomic, strong) ASHandle *actionHandle;
 

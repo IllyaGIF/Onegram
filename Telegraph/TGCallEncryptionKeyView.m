@@ -44,28 +44,22 @@ typedef enum
     {
         TGCallKeyViewTransitionType type = [self _transitionType];
         
-        if (type != TGCallKeyViewTransitionTypeLegacy)
-        {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-            _backgroundView = [[UIView alloc] initWithFrame:CGRectZero];
-            if (type == TGCallKeyViewTransitionTypeSimplified)
-            {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+        bool dimmedBackdrop = type == TGCallKeyViewTransitionTypeLegacy;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
+        dimmedBackdrop = true;
 #endif
-                _backgroundView.alpha = 0.0f;
-            }
-#else
-            _backgroundView = [[UIView alloc] init];
-            _backgroundView.alpha = 0.0f;
-            _backgroundView.backgroundColor = UIColorRGBA(0x000000, 0.5f);
-#endif
-        }
-        else
+        _backgroundView = [[UIView alloc] init];
+        if (dimmedBackdrop)
         {
-            _backgroundView = [[UIView alloc] init];
             _backgroundView.alpha = 0.0f;
             _backgroundView.backgroundColor = UIColorRGBA(0x000000, 0.5f);
         }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+        else if (type == TGCallKeyViewTransitionTypeSimplified)
+        {
+            _backgroundView.alpha = 0.0f;
+        }
+#endif
         _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _backgroundView.frame = self.bounds;
         [self addSubview:_backgroundView];

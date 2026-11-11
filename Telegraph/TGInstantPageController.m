@@ -269,7 +269,8 @@
                 }
                 else if ([action isEqualToString:@"addToReadingList"])
                 {
-                    [[(id)NSClassFromString(@"SSReadingList") defaultReadingList] addReadingListItemWithURL:[NSURL URLWithString:url] title:url previewText:nil error:NULL];
+                    id readingList = [(id)NSClassFromString(@"SSReadingList") defaultReadingList];
+                    [readingList addReadingListItemWithURL:[NSURL URLWithString:url] title:url previewText:nil error:NULL];
                 }
                 else if ([action isEqualToString:@"share"])
                 {
@@ -633,25 +634,24 @@
     
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         [self.transitionCoordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
-            if (![context isInteractive] && changeStatusBar) {
-                [UIView animateWithDuration:0.2 animations:^{
-                    [self setStatusBarAlpha:1.0f];
-                    [self setStatusBarOffset:0.0f];
-                }];
-            }
+            if (changeStatusBar && ![context isInteractive])
+                [self og_compat_animateStatusBarToRest];
         } completion:nil];
 #else
-        if (changeStatusBar) {
-            [UIView animateWithDuration:0.2 animations:^{
-                [self setStatusBarAlpha:1.0f];
-                [self setStatusBarOffset:0.0f];
-            }];
-        }
+        if (changeStatusBar)
+            [self og_compat_animateStatusBarToRest];
 #endif
     }
     
     TGInstantPageScrollState *scrollState = [_pageView currentScrollState];
     [TGDatabaseInstance() storeInstantPageScrollState:_webPage.webPageId scrollState:scrollState];
+}
+
+- (void)og_compat_animateStatusBarToRest {
+    [UIView animateWithDuration:0.2 animations:^{
+        [self setStatusBarAlpha:1.0f];
+        [self setStatusBarOffset:0.0f];
+    }];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -666,10 +666,7 @@
     if ([navigationController.topViewController isKindOfClass:[TGInstantPageController class]] && navigationController.topViewController != self) {
         changeStatusBar = false;
     } else {
-        [UIView animateWithDuration:0.2 animations:^{
-            [self setStatusBarAlpha:1.0f];
-        	[self setStatusBarOffset:0.0f];
-        }];
+        [self og_compat_animateStatusBarToRest];
     }
 }
 

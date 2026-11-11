@@ -870,7 +870,7 @@ static SPipe *passportPipe;
     {
         if ([value isKindOfClass:[NSDictionary class]])
         {
-            return [[TGPassportFile alloc] initForUploadedFileWithId:[value[@"fileId"] longLongValue] parts:[value[@"parts"] intValue] md5Checksum:value[@"md5Checksum"] fileHash:fileHash fileSecret:fileSecret encryptedFileSecret:encryptedFileSecret date:(int32_t)[[NSDate date] timeIntervalSince1970]];
+            return [[TGPassportFile alloc] initForUploadedFileWithId:[value[@"fileId"] longLongValue] parts:[value[@"parts"] intValue] md5Checksum:value[@"md5Checksum"] fileHash:fileHash fileSecret:fileSecret encryptedFileSecret:encryptedFileSecret date:(int32_t)(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970)];
         }
         return value;
     }];
@@ -934,18 +934,19 @@ static SPipe *passportPipe;
 
 + (NSData *)encryptedSecureSecretWithData:(NSData *)data password:(NSString *)password nextSecureAlgo:(TGSecurePasswordKdfAlgo *)nextSecureAlgo secureAlgoOut:(TGSecurePasswordKdfAlgo *__autoreleasing *)secureAlgoOut
 {
+    bool pbkdf2 = [nextSecureAlgo isKindOfClass:[TGSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000 class]];
     NSData *nextSecureSalt = nil;
-    if ([nextSecureAlgo isKindOfClass:[TGSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000 class]])
+    if (pbkdf2)
         nextSecureSalt = [(TGSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000 *)nextSecureAlgo salt];
     else if ([nextSecureAlgo isKindOfClass:[TGSecurePasswordKdfAlgoSHA512 class]])
         nextSecureSalt = [(TGSecurePasswordKdfAlgoSHA512 *)nextSecureAlgo salt];
     
     NSMutableData *finalSecureSalt = [[NSMutableData alloc] initWithData:nextSecureSalt];
     uint8_t randomData[32];
-    __unused int result = SecRandomCopyBytes(kSecRandomDefault, 32, randomData);
+    __unused int randomStatus = SecRandomCopyBytes(kSecRandomDefault, 32, randomData);
     [finalSecureSalt appendBytes:randomData length:8];
     
-    if ([nextSecureAlgo isKindOfClass:[TGSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000 class]])
+    if (pbkdf2)
         nextSecureAlgo = [[TGSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000 alloc] initWithSalt:finalSecureSalt];
     
     if (secureAlgoOut != NULL)

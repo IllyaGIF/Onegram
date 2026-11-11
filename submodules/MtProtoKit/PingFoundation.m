@@ -8,6 +8,12 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 
+static void OGZeroFill(void *region, size_t length)
+{
+    if (region != NULL)
+        memset(region, 0, length);
+}
+
 CFTypeRef CFAutorelease(CFTypeRef value)
 {
     return value;
@@ -21,10 +27,10 @@ NSURL *TGFileURLWithPathRelativeToURL(NSString *path, NSURL *baseURL)
 #if defined(ONEGRAM_ARMV6)
     if ([baseURL isFileURL])
         return [NSURL fileURLWithPath:[[baseURL path] stringByAppendingPathComponent:path]];
-    NSString *baseString = [baseURL absoluteString];
-    if (![baseString hasSuffix:@"/"])
-        baseString = [baseString stringByAppendingString:@"/"];
-    return [NSURL URLWithString:[baseString stringByAppendingString:path]];
+    NSString *prefix = [baseURL absoluteString];
+    if (![prefix hasSuffix:@"/"])
+        prefix = [prefix stringByAppendingString:@"/"];
+    return [NSURL URLWithString:[prefix stringByAppendingString:path]];
 #else
     return [baseURL URLByAppendingPathComponent:path];
 #endif
@@ -32,20 +38,17 @@ NSURL *TGFileURLWithPathRelativeToURL(NSString *path, NSURL *baseURL)
 
 void BN_init(BIGNUM *value)
 {
-    if (value != NULL)
-        memset(value, 0, sizeof(BIGNUM));
+    OGZeroFill(value, sizeof(BIGNUM));
 }
 
 void EVP_MD_CTX_init(EVP_MD_CTX *ctx)
 {
-    if (ctx != NULL)
-        memset(ctx, 0, sizeof(EVP_MD_CTX));
+    OGZeroFill(ctx, sizeof(EVP_MD_CTX));
 }
 
 int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx)
 {
-    if (ctx != NULL)
-        memset(ctx, 0, sizeof(EVP_MD_CTX));
+    OGZeroFill(ctx, sizeof(EVP_MD_CTX));
     return 1;
 }
 

@@ -40,92 +40,131 @@
 #import "TLMessageMedia$messageMediaPhoto.h"
 #import "TLMessageMedia$messageMediaDocument.h"
 
-@implementation TLMessage$modernMessage (IOS6PtsCompat)
-
-- (int32_t)pts
-{
-    return 0;
+#define OG_COMPAT_PTS_STUBS \
+- (int32_t)pts \
+{ \
+    return 0; \
+} \
+- (void)setPts:(int32_t)__unused pts \
+{ \
+} \
+- (int32_t)pts_count \
+{ \
+    return 0; \
+} \
+- (void)setPts_count:(int32_t)__unused pts_count \
+{ \
+} \
+- (int32_t)seq \
+{ \
+    return 0; \
+} \
+- (void)setSeq:(int32_t)__unused seq \
+{ \
+} \
+- (int32_t)qts \
+{ \
+    return 0; \
+} \
+- (void)setQts:(int32_t)__unused qts \
+{ \
 }
 
-- (void)setPts:(int32_t)__unused pts
-{
-}
+@implementation TLMessage$modernMessage (OGCompatPts)
 
-- (int32_t)pts_count
-{
-    return 0;
-}
-
-- (void)setPts_count:(int32_t)__unused pts_count
-{
-}
-
-- (int32_t)seq
-{
-    return 0;
-}
-
-- (void)setSeq:(int32_t)__unused seq
-{
-}
-
-- (int32_t)qts
-{
-    return 0;
-}
-
-- (void)setQts:(int32_t)__unused qts
-{
-}
+OG_COMPAT_PTS_STUBS
 
 @end
 
-@implementation TLMessage$modernMessageService (IOS6PtsCompat)
+@implementation TLMessage$modernMessageService (OGCompatPts)
 
-- (int32_t)pts
-{
-    return 0;
-}
-
-- (void)setPts:(int32_t)__unused pts
-{
-}
-
-- (int32_t)pts_count
-{
-    return 0;
-}
-
-- (void)setPts_count:(int32_t)__unused pts_count
-{
-}
-
-- (int32_t)seq
-{
-    return 0;
-}
-
-- (void)setSeq:(int32_t)__unused seq
-{
-}
-
-- (int32_t)qts
-{
-    return 0;
-}
-
-- (void)setQts:(int32_t)__unused qts
-{
-}
+OG_COMPAT_PTS_STUBS
 
 @end
 
-static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment *documentAttachment, TGAudioMediaAttachment *audioMedia, bool isSticker)
+static void TGMessageEnsureAnimatedAttribute(TGDocumentMediaAttachment *document)
 {
-    if (![documentAttachment.mimeType isEqualToString:@"video/mp4"] || audioMedia != nil || isSticker)
-        return false;
+    for (id attribute in document.attributes)
+    {
+        if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]])
+            return;
+    }
+
+    TGDocumentAttributeAnimated *animatedAttribute = [[TGDocumentAttributeAnimated alloc] init];
+    document.attributes = document.attributes.count != 0 ? [document.attributes arrayByAddingObject:animatedAttribute] : @[animatedAttribute];
+}
+
+static bool OGCompatIsSmallMp4Clip(TGDocumentMediaAttachment *documentAttachment, TGAudioMediaAttachment *audioMedia, bool isSticker)
+{
+    const bool eligible = [documentAttachment.mimeType isEqualToString:@"video/mp4"] && audioMedia == nil && !isSticker;
+    return eligible && documentAttachment.size > 0 && documentAttachment.size <= 512 * 1024;
+}
+
+static TGVideoMediaAttachment *OGCompatVideoStandIn(TGDocumentMediaAttachment *documentAttachment, TGMediaOriginInfo *origin)
+{
+    CGSize frameSize = CGSizeZero;
+    if (documentAttachment.thumbnailInfo != nil)
+        [documentAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:&frameSize];
+    if (frameSize.width < 1.0f || frameSize.height < 1.0f)
+        frameSize = CGSizeMake(320.0f, 240.0f);
     
-    return documentAttachment.size > 0 && documentAttachment.size <= 512 * 1024;
+    TGVideoMediaAttachment *video = [[TGVideoMediaAttachment alloc] init];
+    video.videoId = documentAttachment.documentId;
+    video.accessHash = documentAttachment.accessHash;
+    video.duration = 0;
+    video.dimensions = frameSize;
+    video.thumbnailInfo = documentAttachment.thumbnailInfo;
+    video.roundMessage = false;
+    video.originInfo = origin;
+    
+    NSString *locator = [[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", video.videoId, video.accessHash, documentAttachment.datacenterId, documentAttachment.size];
+    TGVideoInfo *info = [[TGVideoInfo alloc] init];
+    [info addVideoWithQuality:1 url:locator size:documentAttachment.size];
+    video.videoInfo = info;
+    return video;
+}
+
+static TGAudioMediaAttachment *OGCompatVoiceFromDocument(TGDocumentMediaAttachment *documentAttachment, TGDocumentAttributeAudio *audio, TGMediaOriginInfo *origin)
+{
+    TGAudioMediaAttachment *voice = [[TGAudioMediaAttachment alloc] init];
+    voice.audioId = documentAttachment.documentId;
+    voice.accessHash = documentAttachment.accessHash;
+    voice.datacenterId = documentAttachment.datacenterId;
+    voice.duration = audio.duration;
+    voice.fileSize = documentAttachment.size;
+    voice.downloadOriginInfo = origin;
+    return voice;
+}
+
+static NSDictionary *OGCompatPropertiesWithEntry(NSDictionary *current, NSString *key, id value)
+{
+    NSMutableDictionary *merged = [[NSMutableDictionary alloc] initWithDictionary:current];
+    merged[key] = value;
+    return merged;
+}
+
+static NSArray *OGCompatAttachmentsWithSecretReply(NSArray *attachments, NSNumber *replyToRandomId)
+{
+    int64_t randomId = [replyToRandomId longLongValue];
+    if (randomId == 0)
+        return attachments;
+    int32_t replyMessageId = [TGDatabaseInstance() messageIdForRandomId:randomId];
+    if (replyMessageId == 0)
+        return attachments;
+    TGMessage *replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:0];
+    if (replyMessage == nil)
+        return attachments;
+
+    TGReplyMessageMediaAttachment *replyAttachment = [[TGReplyMessageMediaAttachment alloc] init];
+    replyAttachment.replyMessage = replyMessage;
+    replyAttachment.replyMessageId = replyMessageId;
+
+    if (attachments == nil)
+        return [NSArray arrayWithObject:replyAttachment];
+
+    NSMutableArray *combined = [NSMutableArray arrayWithArray:attachments];
+    [combined addObject:replyAttachment];
+    return combined;
 }
 
 @implementation TGMessage (Telegraph)
@@ -293,15 +332,8 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             } else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
                 TGDocumentAttributeAudio *audio = (TGDocumentAttributeAudio *)attribute;
                 
-                if (audio.isVoice) {
-                    audioMedia = [[TGAudioMediaAttachment alloc] init];
-                    audioMedia.audioId = documentAttachment.documentId;
-                    audioMedia.accessHash = documentAttachment.accessHash;
-                    audioMedia.datacenterId = documentAttachment.datacenterId;
-                    audioMedia.duration = audio.duration;
-                    audioMedia.fileSize = documentAttachment.size;
-                    audioMedia.ios6OriginInfo = origin;
-                }
+                if (audio.isVoice)
+                    audioMedia = OGCompatVoiceFromDocument(documentAttachment, audio, origin);
             } else if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]]) {
                 isAnimated = true;
             } else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]]) {
@@ -309,97 +341,49 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             }
         }
         
-        if (isSticker) {
-            [mediaAttachments addObject:documentAttachment];
+        if (isSticker)
+        {
             if (mediaLifetime != nil)
                 *mediaLifetime = videoTTLSeconds;
+            [mediaAttachments addObject:documentAttachment];
             return mediaAttachments;
         }
         
-        if (videoMedia != nil && (documentMedia.flags & (1 << 7)))
+        const bool flaggedRound = (documentMedia.flags & (1 << 7)) != 0;
+        if (videoMedia != nil && flaggedRound)
             videoMedia.roundMessage = true;
-        bool isRoundVideo = videoMedia != nil && videoMedia.roundMessage;
-        if (isRoundVideo)
-            isAnimated = false;
+        bool isRoundVideo = videoMedia.roundMessage;
+        isAnimated = isAnimated && !isRoundVideo;
 
-        bool isSmallGifLikeMp4 = !isRoundVideo && TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(documentAttachment, audioMedia, isSticker);
-        if (videoMedia == nil && isSmallGifLikeMp4) {
-            CGSize fallbackDimensions = CGSizeZero;
-            if (documentAttachment.thumbnailInfo != nil)
-                [documentAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:&fallbackDimensions];
-            if (fallbackDimensions.width < 1.0f || fallbackDimensions.height < 1.0f)
-                fallbackDimensions = CGSizeMake(320.0f, 240.0f);
-            
-            videoMedia = [[TGVideoMediaAttachment alloc] init];
-            videoMedia.videoId = documentAttachment.documentId;
-            videoMedia.accessHash = documentAttachment.accessHash;
-            videoMedia.duration = 0;
-            videoMedia.dimensions = fallbackDimensions;
-            videoMedia.thumbnailInfo = documentAttachment.thumbnailInfo;
-            videoMedia.roundMessage = false;
-            videoMedia.originInfo = origin;
-            
-            TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
-            [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
-            videoMedia.videoInfo = videoInfo;
-        }
+        bool smallMp4Animation = !isRoundVideo && OGCompatIsSmallMp4Clip(documentAttachment, audioMedia, isSticker);
+        if (smallMp4Animation && videoMedia == nil)
+            videoMedia = OGCompatVideoStandIn(documentAttachment, origin);
         
-        NSString *safeFileName = [documentAttachment safeFileName];
-        NSString *lowerSafeFileName = [safeFileName lowercaseString];
-        bool isGifFile = [documentAttachment.mimeType isEqualToString:@"image/gif"] || [lowerSafeFileName.pathExtension isEqualToString:@"gif"];
-        bool isGifLikeMp4 = !isRoundVideo && [documentAttachment.mimeType isEqualToString:@"video/mp4"] && (isSmallGifLikeMp4 || isAnimated || [lowerSafeFileName isEqualToString:@"animation.mp4"]);
+        NSString *lowerFileName = [[documentAttachment safeFileName] lowercaseString];
+        const bool isGifFile = [documentAttachment.mimeType isEqualToString:@"image/gif"] || [lowerFileName.pathExtension isEqualToString:@"gif"];
+        const bool isGifLikeMp4 = !isRoundVideo && [documentAttachment.mimeType isEqualToString:@"video/mp4"] && (smallMp4Animation || isAnimated || [lowerFileName isEqualToString:@"animation.mp4"]);
         if (isGifFile || isGifLikeMp4)
         {
             isAnimated = true;
-            if (videoMedia != nil)
-                videoMedia.roundMessage = false;
-
-            bool hasAnimatedAttribute = false;
-            for (id attribute in documentAttachment.attributes)
-            {
-                if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]])
-                {
-                    hasAnimatedAttribute = true;
-                    break;
-                }
-            }
-            if (!hasAnimatedAttribute)
-                documentAttachment.attributes = [documentAttachment.attributes arrayByAddingObject:[[TGDocumentAttributeAnimated alloc] init]];
-
+            [videoMedia setRoundMessage:false];
+            TGMessageEnsureAnimatedAttribute(documentAttachment);
         }
         if (videoTTLSeconds > 0 && videoTTLSeconds <= 60) {
             isAnimated = false;
         }
 
-        if (videoMedia == nil && [documentAttachment.mimeType hasPrefix:@"video/"]) {
-            CGSize fallbackDimensions = CGSizeZero;
-            if (documentAttachment.thumbnailInfo != nil)
-                [documentAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:&fallbackDimensions];
-            if (fallbackDimensions.width < 1.0f || fallbackDimensions.height < 1.0f)
-                fallbackDimensions = CGSizeMake(320.0f, 240.0f);
-            
-            videoMedia = [[TGVideoMediaAttachment alloc] init];
-            videoMedia.videoId = documentAttachment.documentId;
-            videoMedia.accessHash = documentAttachment.accessHash;
-            videoMedia.duration = 0;
-            videoMedia.dimensions = fallbackDimensions;
-            videoMedia.thumbnailInfo = documentAttachment.thumbnailInfo;
-            videoMedia.roundMessage = false;
-            videoMedia.originInfo = origin;
-            
-            TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
-            [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
-            videoMedia.videoInfo = videoInfo;
-        }
+        if (videoMedia == nil && [documentAttachment.mimeType hasPrefix:@"video/"])
+            videoMedia = OGCompatVideoStandIn(documentAttachment, origin);
         
-        if (videoMedia != nil && !isAnimated) {
+        id primaryMedia = documentAttachment;
+        if (videoMedia != nil && !isAnimated)
+        {
             videoMedia.strippedThumbnailUrl = [TGDocumentMediaAttachment strippedThumbnailUrlForTelegraphDocumentDesc:documentMedia.document];
-            [mediaAttachments addObject:videoMedia];
-        } else if (audioMedia != nil && !isAnimated && !isSticker) {
-            [mediaAttachments addObject:audioMedia];
-        } else {
-            [mediaAttachments addObject:documentAttachment];
+            primaryMedia = videoMedia;
         }
+        else if (audioMedia != nil && !isAnimated)
+            primaryMedia = audioMedia;
+        [mediaAttachments addObject:primaryMedia];
         
         if (mediaLifetime != nil) {
            *mediaLifetime = videoTTLSeconds;
@@ -494,6 +478,10 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityCashtag class]]) {
             TLMessageEntity$messageEntityCashtag *messageEntityCashtag = entity;
             [result addObject:[[TGMessageEntityCashtag alloc] initWithRange:NSMakeRange(messageEntityCashtag.offset, messageEntityCashtag.length)]];
+        } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityCustomEmoji class]]) {
+            TLMessageEntity$messageEntityCustomEmoji *customEmojiEntity = entity;
+            if (customEmojiEntity.document_id != 0)
+                [result addObject:[[TGMessageEntityCustomEmoji alloc] initWithRange:NSMakeRange(customEmojiEntity.offset, customEmojiEntity.length) documentId:customEmojiEntity.document_id]];
         }
     }
     
@@ -596,13 +584,16 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
             {
                 TLPeer$peerUser *toUser = (TLPeer$peerUser *)concreteMessage.to_id;
                 self.toUid = toUser.user_id;
-                if ([desc isKindOfClass:[TLMessage$modernMessage class]] && self.fromUid == 0 && !self.outgoing)
+                const bool isModernDesc = [desc isKindOfClass:[TLMessage$modernMessage class]];
+                if (isModernDesc && !self.outgoing && self.fromUid == 0)
                     self.fromUid = self.toUid;
                 if (self.toUid == self.fromUid && !self.outgoing)
                     self.outgoing = true;
                 self.cid = self.outgoing ? self.toUid : self.fromUid;
-                if ([desc isKindOfClass:[TLMessage$modernMessage class]] && self.fromUid == self.toUid && !((concreteMessage.flags & 2) != 0))
+                if (isModernDesc && self.fromUid == self.toUid && (concreteMessage.flags & 2) == 0 && self.toUid != TGTelegraphInstance.clientUserId)
+                {
                     self.outgoing = false;
+                }
             }
             else if ([concreteMessage.to_id isKindOfClass:[TLPeer$peerChat class]])
             {
@@ -622,9 +613,9 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     self.sortKey = TGMessageSortKeyMake(self.cid, TGMessageSpaceUnimportant, concreteMessage.date, self.mid);
                 }
                 
-                if (![desc isKindOfClass:[TLMessage$modernMessage class]] && (concreteMessage.flags & 256) == 0) {
+                const bool senderFlagMissing = (concreteMessage.flags & 256) == 0;
+                if (senderFlagMissing && ![desc isKindOfClass:[TLMessage$modernMessage class]])
                     self.fromUid = self.cid;
-                }
                 
                 if (self.fromUid == TGTelegraphInstance.clientUserId) {
                     self.outgoing = true;
@@ -688,6 +679,9 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     }
                 }
                 
+                if (modernMessage.reply_to_story_id != 0 && modernMessage.reply_to_story_peer_id != 0)
+                    [self setStoryReplyPeerId:modernMessage.reply_to_story_peer_id storyId:modernMessage.reply_to_story_id];
+
                 int32_t ios6ForumTopicId = modernMessage.reply_to_top_id;
                 if (ios6ForumTopicId == 0 && modernMessage.forum_topic)
                     ios6ForumTopicId = modernMessage.reply_to_msg_id;
@@ -736,11 +730,8 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     self.contentProperties = discussionProperties;
                 }
 
-                if (modernMessage.reactionSummary.length != 0) {
-                    NSMutableDictionary *contentProperties = [[NSMutableDictionary alloc] initWithDictionary:self.contentProperties];
-                    contentProperties[@"ios6ReactionSummary"] = [[TGMessageReactionSummaryContentProperty alloc] initWithSummary:modernMessage.reactionSummary chosenReaction:modernMessage.chosenReaction];
-                    self.contentProperties = contentProperties;
-                }
+                if (modernMessage.reactionSummary.length != 0)
+                    self.contentProperties = OGCompatPropertiesWithEntry(self.contentProperties, @"ios6ReactionSummary", [[TGMessageReactionSummaryContentProperty alloc] initWithSummary:modernMessage.reactionSummary chosenReaction:modernMessage.chosenReaction]);
                 
                 if (modernMessage.grouped_id != 0)
                     self.groupedId = modernMessage.grouped_id;
@@ -788,11 +779,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 }
                 
                 if (hasContentToRead)
-                {
-                    NSMutableDictionary *contentProperties = [[NSMutableDictionary alloc] initWithDictionary:self.contentProperties];
-                    contentProperties[@"contentsRead"] = [[TGMessageViewedContentProperty alloc] init];
-                    self.contentProperties = contentProperties;
-                }
+                    self.contentProperties = OGCompatPropertiesWithEntry(self.contentProperties, @"contentsRead", [[TGMessageViewedContentProperty alloc] init]);
                 
                 if (mediaLifetime > 0) {
                     self.messageLifetime = mediaLifetime;
@@ -805,9 +792,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 bool hidePreviousMarkup = false;
                 bool forceReply = false;
                 bool onlyIfRelevantToUser = false;
-                int64_t markupUserId = self.fromUid;
-                if (markupUserId == 0 && self.cid < 0)
-                    markupUserId = self.cid;
+                int64_t markupUserId = self.fromUid != 0 ? self.fromUid : (self.cid < 0 ? self.cid : 0);
                 TGBotReplyMarkup *replyMarkup = [TGBotSignals botReplyMarkupForMarkup:((TLMessage$modernMessage *)desc).reply_markup userId:markupUserId messageId:self.mid hidePreviousMarkup:&hidePreviousMarkup forceReply:&forceReply onlyIfRelevantToUser:&onlyIfRelevantToUser];
                 
                 if (!onlyIfRelevantToUser || ((TLMessage$modernMessage *)desc).flags & (1 << 4))
@@ -860,13 +845,15 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
             {
                 TLPeer$peerUser *toUser = (TLPeer$peerUser *)concreteMessage.to_id;
                 self.toUid = toUser.user_id;
-                if (self.fromUid == 0 && !self.outgoing)
+                if (!self.outgoing && self.fromUid == 0)
                     self.fromUid = self.toUid;
                 if (self.toUid == self.fromUid && !self.outgoing)
                     self.outgoing = true;
                 self.cid = self.outgoing ? self.toUid : self.fromUid;
-                if (self.fromUid == self.toUid && !((concreteMessage.flags & 2) != 0))
+                if (self.fromUid == self.toUid && (concreteMessage.flags & 2) == 0 && self.toUid != TGTelegraphInstance.clientUserId)
+                {
                     self.outgoing = false;
+                }
             }
             else if ([concreteMessage.to_id isKindOfClass:[TLPeer$peerChat class]])
             {
@@ -886,9 +873,8 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     self.sortKey = TGMessageSortKeyMake(self.cid, TGMessageSpaceUnimportant, concreteMessage.date, self.mid);
                 }
                 
-                if (self.fromUid == 0) {
+                if (self.fromUid == 0)
                     self.fromUid = self.cid;
-                }
                 
                 if (self.fromUid == TGTelegraphInstance.clientUserId) {
                     self.outgoing = true;
@@ -2320,28 +2306,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 entitiesAttachment.entities = entities;
             }
             
-            if ([concreteMessage.replyToRandomId longLongValue] != 0) {
-                int32_t replyMessageId = [TGDatabaseInstance() messageIdForRandomId:[concreteMessage.replyToRandomId longLongValue]];
-                if (replyMessageId != 0) {
-                    TGMessage *replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:0];
-                    if (replyMessage != nil) {
-                        TGReplyMessageMediaAttachment *replyAttachment = [[TGReplyMessageMediaAttachment alloc] init];
-                        
-                        replyAttachment.replyMessage = replyMessage;
-                        replyAttachment.replyMessageId = replyMessageId;
-                        
-                        if (mediaAttachments == nil)
-                            mediaAttachments = [NSArray arrayWithObject:replyAttachment];
-                        else
-                        {
-                            NSMutableArray *array = [[NSMutableArray alloc] init];
-                            [array addObjectsFromArray:mediaAttachments];
-                            [array addObject:replyAttachment];
-                            mediaAttachments = array;
-                        }
-                    }
-                }
-            }
+            mediaAttachments = OGCompatAttachmentsWithSecretReply(mediaAttachments, concreteMessage.replyToRandomId);
             
             if (![concreteMessage.media isKindOfClass:[Secret46_DecryptedMessageMedia_decryptedMessageMediaEmpty class]])
             {
@@ -2815,28 +2780,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 entitiesAttachment.entities = entities;
             }
             
-            if ([concreteMessage.replyToRandomId longLongValue] != 0) {
-                int32_t replyMessageId = [TGDatabaseInstance() messageIdForRandomId:[concreteMessage.replyToRandomId longLongValue]];
-                if (replyMessageId != 0) {
-                    TGMessage *replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:0];
-                    if (replyMessage != nil) {
-                        TGReplyMessageMediaAttachment *replyAttachment = [[TGReplyMessageMediaAttachment alloc] init];
-                        
-                        replyAttachment.replyMessage = replyMessage;
-                        replyAttachment.replyMessageId = replyMessageId;
-                        
-                        if (mediaAttachments == nil)
-                            mediaAttachments = [NSArray arrayWithObject:replyAttachment];
-                        else
-                        {
-                            NSMutableArray *array = [[NSMutableArray alloc] init];
-                            [array addObjectsFromArray:mediaAttachments];
-                            [array addObject:replyAttachment];
-                            mediaAttachments = array;
-                        }
-                    }
-                }
-            }
+            mediaAttachments = OGCompatAttachmentsWithSecretReply(mediaAttachments, concreteMessage.replyToRandomId);
             
             if (![concreteMessage.media isKindOfClass:[Secret66_DecryptedMessageMedia_decryptedMessageMediaEmpty class]])
             {
@@ -3343,28 +3287,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 entitiesAttachment.entities = entities;
             }
             
-            if ([concreteMessage.replyToRandomId longLongValue] != 0) {
-                int32_t replyMessageId = [TGDatabaseInstance() messageIdForRandomId:[concreteMessage.replyToRandomId longLongValue]];
-                if (replyMessageId != 0) {
-                    TGMessage *replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:0];
-                    if (replyMessage != nil) {
-                        TGReplyMessageMediaAttachment *replyAttachment = [[TGReplyMessageMediaAttachment alloc] init];
-                        
-                        replyAttachment.replyMessage = replyMessage;
-                        replyAttachment.replyMessageId = replyMessageId;
-                        
-                        if (mediaAttachments == nil)
-                            mediaAttachments = [NSArray arrayWithObject:replyAttachment];
-                        else
-                        {
-                            NSMutableArray *array = [[NSMutableArray alloc] init];
-                            [array addObjectsFromArray:mediaAttachments];
-                            [array addObject:replyAttachment];
-                            mediaAttachments = array;
-                        }
-                    }
-                }
-            }
+            mediaAttachments = OGCompatAttachmentsWithSecretReply(mediaAttachments, concreteMessage.replyToRandomId);
             
             if (![concreteMessage.media isKindOfClass:[Secret73_DecryptedMessageMedia_decryptedMessageMediaEmpty class]])
             {

@@ -21,12 +21,12 @@
 /**
  *  The card's number.
  */
-@property (nonatomic, copy) NSString *number;
+@property (nonatomic, copy) NSString *_Nullable number;
 
 /**
  *  The last 4 digits of the card's number, if it's been set, otherwise nil.
  */
-- (NSString *)last4;
+- (NSString *_Nullable)last4;
 
 /**
  *  The card's expiration month.
@@ -41,45 +41,45 @@
 /**
  *  The card's security code, found on the back.
  */
-@property (nonatomic, copy) NSString *cvc;
+@property (nonatomic, copy) NSString *_Nullable cvc;
 
 /**
  *  The cardholder's name.
  */
-@property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *_Nullable name;
 
 /**
  *  The cardholder's address.
  */
 #if TARGET_OS_IPHONE
-@property(nonatomic, copy) STPAddress *address;
+@property(nonatomic, copy) STPAddress *_Nonnull address;
 #endif
 
-@property (nonatomic, copy) NSString *addressLine1;
-@property (nonatomic, copy) NSString *addressLine2;
-@property (nonatomic, copy) NSString *addressCity;
-@property (nonatomic, copy) NSString *addressState;
-@property (nonatomic, copy) NSString *addressZip;
-@property (nonatomic, copy) NSString *addressCountry;
+@property (nonatomic, copy) NSString *_Nullable addressLine1;
+@property (nonatomic, copy) NSString *_Nullable addressLine2;
+@property (nonatomic, copy) NSString *_Nullable addressCity;
+@property (nonatomic, copy) NSString *_Nullable addressState;
+@property (nonatomic, copy) NSString *_Nullable addressZip;
+@property (nonatomic, copy) NSString *_Nullable addressCountry;
 
 /**
  *  Three-letter ISO currency code representing the currency paid out to the bank account. This is only applicable when tokenizing debit cards to issue payouts to managed accounts. You should not set it otherwise. The card can then be used as a transfer destination for funds in this currency.
  */
-@property (nonatomic, copy) NSString *currency;
+@property (nonatomic, copy) NSString *_Nullable currency;
 
 /**
  *  Validate each field of the card.
  *  @return whether or not that field is valid.
  *  @deprecated use STPCardValidator instead.
  */
-- (BOOL)validateNumber:(id * )ioValue
-                 error:(NSError * * )outError __attribute__((deprecated("Use STPCardValidator instead.")));
-- (BOOL)validateCvc:(id * )ioValue
-              error:(NSError * * )outError __attribute__((deprecated("Use STPCardValidator instead.")));
-- (BOOL)validateExpMonth:(id * )ioValue
-                   error:(NSError * * )outError __attribute__((deprecated("Use STPCardValidator instead.")));
-- (BOOL)validateExpYear:(id *)ioValue
-                  error:(NSError * * )outError __attribute__((deprecated("Use STPCardValidator instead.")));
+- (BOOL)validateNumber:(__nullable id * __nullable )ioValue
+                 error:(NSError * __nullable * __nullable )outError __attribute__((deprecated("Use STPCardValidator instead.")));
+- (BOOL)validateCvc:(__nullable id * __nullable )ioValue
+              error:(NSError * __nullable * __nullable )outError __attribute__((deprecated("Use STPCardValidator instead.")));
+- (BOOL)validateExpMonth:(__nullable  id * __nullable )ioValue
+                   error:(NSError * __nullable * __nullable )outError __attribute__((deprecated("Use STPCardValidator instead.")));
+- (BOOL)validateExpYear:(__nullable id * __nullable)ioValue
+                  error:(NSError * __nullable * __nullable )outError __attribute__((deprecated("Use STPCardValidator instead.")));
 
 /**
  *  This validates a fully populated card to check for all errors, including ones that come about
@@ -93,6 +93,6 @@
  *  @return whether or not the card is valid.
  *  @deprecated use STPCardValidator instead.
  */
-- (BOOL)validateCardReturningError:(NSError * *)outError __attribute__((deprecated("Use STPCardValidator instead.")));
+- (BOOL)validateCardReturningError:(NSError * __nullable * __nullable)outError __attribute__((deprecated("Use STPCardValidator instead.")));
 
 @end

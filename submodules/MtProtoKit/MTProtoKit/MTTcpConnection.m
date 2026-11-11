@@ -17,7 +17,7 @@
 
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
-#import "../../../Telegraph/IOS6NotificationProbe.h"
+#import "../../../Telegraph/OGNotificationProbe.h"
 #import "../../../OnegramPlatform/OGPlatformVersion.h"
 #endif
 
@@ -1321,20 +1321,64 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
     [_socket readDataToLength:4 withTimeout:-1 tag:MTTcpSocksRequest];
 }
 
+#if TARGET_OS_IPHONE
+- (BOOL)og_isBackgroundPrimaryTransport
+{
+    if (!OGPlatformSupportsBackgroundVoipTransport())
+        return NO;
+    return _usageCalculationInfo.primaryConnection;
+}
+
+- (void)og_prepareBackgroundPrimarySocketForHost:(NSString *)host port:(uint16_t)port
+{
+#if defined(ONEGRAM_ARMV6)
+    BOOL wantsBackgrounding = NO;
+#else
+    BOOL wantsBackgrounding = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
+#endif
+    __block BOOL backgrounded = NO;
+    __block int descriptor = -1;
+    __block int aliveStatus = -2;
+    __block int aliveErrno = 0;
+    __block int idleStatus = -2;
+    __block int idleErrno = 0;
+    [_socket performBlock:^{
+        if (wantsBackgrounding)
+            backgrounded = OGPlatformMajorVersion() <= 4 ? [_socket enableBackgroundingOnSocketWithCaveat] : [_socket enableBackgroundingOnSocket];
+
+        descriptor = [_socket socketFD];
+        if (descriptor >= 0) {
+            int enabled = 1;
+            aliveStatus = setsockopt(descriptor, SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled));
+            if (aliveStatus != 0)
+                aliveErrno = errno;
+#ifdef TCP_KEEPALIVE
+            int idleSeconds = 60;
+            idleStatus = setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPALIVE, &idleSeconds, sizeof(idleSeconds));
+            if (idleStatus != 0)
+                idleErrno = errno;
+#endif
+        }
+    }];
+    OGNotificationProbe(@"SOCKET", @"primary_connected host=%@ port=%d backgroundRequested=%d background=%d fd=%d soKeepAlive=%d/%d tcpKeepAlive=%d/%d",
+                          host ?: @"none", (int)port, wantsBackgrounding ? 1 : 0, backgrounded ? 1 : 0, descriptor,
+                          aliveStatus, aliveErrno, idleStatus, idleErrno);
+}
+#endif
+
 - (void)socket:(GCDAsyncSocket *)socket didReadData:(NSData *)rawData withTag:(long)tag
 {
     if (_closed || socket != _socket)
         return;
 
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection)
+    if ([self og_isBackgroundPrimaryTransport])
     {
-        static CFAbsoluteTime lastPrimaryActivitySignalTime = 0.0;
-        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-        if (lastPrimaryActivitySignalTime == 0.0 || now - lastPrimaryActivitySignalTime >= 30.0)
+        static CFAbsoluteTime lastSignalMoment = 0.0;
+        CFAbsoluteTime currentMoment = CFAbsoluteTimeGetCurrent();
+        if (lastSignalMoment == 0.0 || currentMoment - lastSignalMoment >= 30.0)
         {
-            lastPrimaryActivitySignalTime = now;
+            lastSignalMoment = currentMoment;
             [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6PrimaryTransportReceivedData" object:nil];
         }
     }
@@ -1842,46 +1886,8 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
         }
     }];
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection) {
-        __block BOOL backgroundingEnabled = NO;
-        __block int socketFd = -1;
-        __block int keepAliveResult = -2;
-        __block int keepAliveError = 0;
-        __block int keepAliveIdleResult = -2;
-        __block int keepAliveIdleError = 0;
-#if defined(ONEGRAM_ARMV6)
-        BOOL shouldEnableBackgrounding = NO;
-#else
-        BOOL shouldEnableBackgrounding = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
-#endif
-        [_socket performBlock:^{
-            if (shouldEnableBackgrounding)
-            {
-                if (OGPlatformMajorVersion() <= 4)
-                    backgroundingEnabled = [_socket enableBackgroundingOnSocketWithCaveat];
-                else
-                    backgroundingEnabled = [_socket enableBackgroundingOnSocket];
-            }
-
-            socketFd = [_socket socketFD];
-            if (socketFd >= 0) {
-                int keepAlive = 1;
-                keepAliveResult = setsockopt(socketFd, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(keepAlive));
-                if (keepAliveResult != 0)
-                    keepAliveError = errno;
-#ifdef TCP_KEEPALIVE
-                int keepAliveIdle = 60;
-                keepAliveIdleResult = setsockopt(socketFd, IPPROTO_TCP, TCP_KEEPALIVE, &keepAliveIdle, sizeof(keepAliveIdle));
-                if (keepAliveIdleResult != 0)
-                    keepAliveIdleError = errno;
-#endif
-            }
-        }];
-        IOS6NotificationProbe(@"SOCKET", @"primary_connected host=%@ port=%d backgroundRequested=%d background=%d fd=%d soKeepAlive=%d/%d tcpKeepAlive=%d/%d",
-                              host ?: @"none", (int)port, shouldEnableBackgrounding ? 1 : 0, backgroundingEnabled ? 1 : 0, socketFd,
-                              keepAliveResult, keepAliveError, keepAliveIdleResult, keepAliveIdleError);
-    }
+    if ([self og_isBackgroundPrimaryTransport])
+        [self og_prepareBackgroundPrimarySocketForHost:host port:port];
 #endif
     
     if (_onegramWebSocket)
@@ -1946,12 +1952,9 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
 
     OGPlatformDiagnosticLog(@"NETSTATE disconnected connection=%p primary=%d closed=%d domain=%@ code=%ld description=%@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, _closed ? 1 : 0, error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection)
-    {
-        IOS6NotificationProbe(@"SOCKET", @"primary_disconnected domain=%@ code=%ld description=%@",
+    if ([self og_isBackgroundPrimaryTransport])
+        OGNotificationProbe(@"SOCKET", @"primary_disconnected domain=%@ code=%ld description=%@",
                               error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
-    }
 #endif
 
     if (_onegramWebSocket && !_onegramWebSocketReady && !_closed)

@@ -15,8 +15,8 @@
     
     TGSearchChatMembersControllerView *_controllerView;
     
-    NSArray *_users;
-    NSDictionary *_memberDatas;
+    NSArray *_roster;
+    NSDictionary *_rosterDatas;
     
     id<SDisposable> _channelMembersDisposable;
     SMetaDisposable *_searchDisposable;
@@ -71,8 +71,8 @@
             __strong TGSearchChatMembersController *strongSelf = weakSelf;
             if (strongSelf != nil) {
                 TGDispatchOnMainThread(^{
-                    strongSelf->_users = dict[@"users"];
-                    strongSelf->_memberDatas = dict[@"memberDatas"];
+                    strongSelf->_roster = dict[@"users"];
+                    strongSelf->_rosterDatas = dict[@"memberDatas"];
                     if ([strongSelf isViewLoaded]) {
                         [strongSelf->_controllerView setUsers:dict[@"users"] memberDatas:dict[@"memberDatas"]];
                     }
@@ -114,7 +114,7 @@
     _controllerView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:_controllerView];
     
-    [_controllerView setUsers:_users memberDatas:_memberDatas];
+    [_controllerView setUsers:_roster memberDatas:_rosterDatas];
     
     self.scrollViewsForAutomaticInsetsAdjustment = @[_controllerView.tableView];
     

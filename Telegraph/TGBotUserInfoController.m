@@ -1638,7 +1638,7 @@ static UIView *_findBackArrow(UIView *view)
     _checked3dTouch = true;
     if (iosMajorVersion() >= 9)
     {
-        if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
+        if (self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
         {
             [self registerForPreviewingWithDelegate:(id)self sourceView:self.userInfoItem.avatarView];
         }

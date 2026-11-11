@@ -27,49 +27,53 @@ static NSMutableDictionary *keychains()
     return dict;
 }
 
-static NSString *MTFileBasedKeychainFallbackAesPath(NSString *documentsPath, NSString *name)
+static const NSUInteger OGKeychainBackupLength = 64;
+
+static NSString *OGKeychainBackupFile(NSString *rootPath, NSString *keychainName)
 {
-    if (documentsPath.length == 0 || name.length == 0)
+    if (rootPath.length == 0 || keychainName.length == 0)
         return nil;
     
-    NSString *directory = [documentsPath stringByAppendingPathComponent:@"mtkeychain-aes"];
-    __autoreleasing NSError *error = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:&error];
-    if (error != nil && MTLogEnabled())
-        MTLog(@"AUTH keychain.aes.file.mkdir name=%@ error=%@", name, error);
+    NSString *folder = [rootPath stringByAppendingPathComponent:@"mtkeychain-aes"];
+    __autoreleasing NSError *folderError = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:true attributes:nil error:&folderError];
+    if (folderError != nil && MTLogEnabled())
+        MTLog(@"AUTH keychain.aes.file.mkdir name=%@ error=%@", keychainName, folderError);
     
-    NSString *safeName = [[name componentsSeparatedByCharactersInSet:[[NSCharacterSet alphanumericCharacterSet] invertedSet]] componentsJoinedByString:@"_"];
-    return [directory stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%@.bin", safeName]];
+    NSArray *pieces = [keychainName componentsSeparatedByCharactersInSet:[[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+    return [folder stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%@.bin", [pieces componentsJoinedByString:@"_"]]];
 }
 
-static NSData *MTFileBasedKeychainReadFallbackAes(NSString *documentsPath, NSString *name)
+static NSData *OGKeychainLoadBackup(NSString *rootPath, NSString *keychainName)
 {
-    NSString *path = MTFileBasedKeychainFallbackAesPath(documentsPath, name);
-    NSData *data = path == nil ? nil : [[NSData alloc] initWithContentsOfFile:path];
-    return data.length == 64 ? data : nil;
+    NSString *file = OGKeychainBackupFile(rootPath, keychainName);
+    if (file == nil)
+        return nil;
+    NSData *stored = [[NSData alloc] initWithContentsOfFile:file];
+    return stored.length == OGKeychainBackupLength ? stored : nil;
 }
 
-static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSString *name, NSData *data)
+static void OGKeychainStoreBackup(NSString *rootPath, NSString *keychainName, NSData *payload)
 {
-    if (data.length != 64)
+    if (payload.length != OGKeychainBackupLength)
         return;
     
-    NSString *path = MTFileBasedKeychainFallbackAesPath(documentsPath, name);
-    if (path == nil)
+    NSString *file = OGKeychainBackupFile(rootPath, keychainName);
+    if (file == nil)
         return;
     
-    bool written = [data writeToFile:path atomically:true];
+    BOOL stored = [payload writeToFile:file atomically:true];
 #if TARGET_OS_IPHONE && !defined(ONEGRAM_ARMV6)
-    if (written)
+    if (stored)
     {
-        __autoreleasing NSError *protectionError = nil;
-        [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:path error:&protectionError];
-        if (protectionError != nil && MTLogEnabled())
-            MTLog(@"AUTH keychain.aes.file.protection name=%@ error=%@", name, protectionError);
+        __autoreleasing NSError *attributesError = nil;
+        [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:file error:&attributesError];
+        if (attributesError != nil && MTLogEnabled())
+            MTLog(@"AUTH keychain.aes.file.protection name=%@ error=%@", keychainName, attributesError);
     }
 #endif
-    if (!written && MTLogEnabled())
-        MTLog(@"AUTH keychain.aes.file.write name=%@ failed", name);
+    if (!stored && MTLogEnabled())
+        MTLog(@"AUTH keychain.aes.file.write name=%@ failed", keychainName);
 }
 
 @interface MTFileBasedKeychain ()
@@ -175,8 +179,8 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                 bool upgradeEncryption = false;
                 
                 CFDataRef keyData = NULL;
-                OSStatus readStatus = SecItemCopyMatching((__bridge CFDictionaryRef)keychainReadQuery, (CFTypeRef *)&keyData);
-                if (readStatus == noErr && keyData != NULL)
+                OSStatus keyReadResult = SecItemCopyMatching((__bridge CFDictionaryRef)keychainReadQuery, (CFTypeRef *)&keyData);
+                if (keyReadResult == noErr && keyData != NULL)
                 {
                     NSData *data = (__bridge_transfer NSData *)keyData;
                     if (data.length == 64)
@@ -189,8 +193,8 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                 else
                 {
                     keychainReadQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAlwaysThisDeviceOnly;
-                    readStatus = SecItemCopyMatching((__bridge CFDictionaryRef)keychainReadQuery, (CFTypeRef *)&keyData);
-                    if (readStatus == noErr && keyData != NULL)
+                    keyReadResult = SecItemCopyMatching((__bridge CFDictionaryRef)keychainReadQuery, (CFTypeRef *)&keyData);
+                    if (keyReadResult == noErr && keyData != NULL)
                     {
                         NSData *data = (__bridge_transfer NSData *)keyData;
                         if (data.length == 64)
@@ -206,11 +210,11 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
 	                
                     if (_aesKey == nil || _aesIv == nil)
                     {
-                        NSData *fallbackData = MTFileBasedKeychainReadFallbackAes(_documentsPath, name);
-                        if (fallbackData.length == 64)
+                        NSData *backupData = OGKeychainLoadBackup(_documentsPath, name);
+                        if (backupData != nil)
                         {
-                            _aesKey = [fallbackData subdataWithRange:NSMakeRange(0, 32)];
-                            _aesIv = [fallbackData subdataWithRange:NSMakeRange(32, 32)];
+                            _aesKey = [backupData subdataWithRange:NSMakeRange(0, 32)];
+                            _aesIv = [backupData subdataWithRange:NSMakeRange(32, 32)];
                         }
                     }
                     
@@ -231,17 +235,17 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
 	                NSMutableData *newKeyData = [[NSMutableData alloc] init];
 	                [newKeyData appendData:_aesKey];
 	                [newKeyData appendData:_aesIv];
-                    NSData *fallbackKeyData = [[NSData alloc] initWithData:newKeyData];
+                    NSData *backupKeyData = [[NSData alloc] initWithData:newKeyData];
 	                
 	                if (storeKey)
 	                {
-                    OSStatus deleteStatus = SecItemDelete((__bridge CFDictionaryRef)@{
+                    OSStatus itemRemoveResult = SecItemDelete((__bridge CFDictionaryRef)@{
                                                                                       (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
                                                                                       (__bridge id)kSecAttrService: @"org.mtproto.MTKeychain",
                                                                                       (__bridge id)kSecAttrAccount: [[NSString alloc] initWithFormat:@"MTKeychain:%@", name]
                                                                                       });
                     
-                    OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)@{
+                    OSStatus itemStoreResult = SecItemAdd((__bridge CFDictionaryRef)@{
                                                                                 (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
                                                                                 (__bridge id)kSecAttrService: @"org.mtproto.MTKeychain",
                                                                                 (__bridge id)kSecAttrAccount: [[NSString alloc] initWithFormat:@"MTKeychain:%@", name],
@@ -250,15 +254,15 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
 #endif
                                                                                 (__bridge id)kSecValueData: newKeyData
 	                                                                                }, NULL);
-	                    if (addStatus != noErr && MTLogEnabled())
-                        MTLog(@"AUTH keychain.aes.store name=%@ deleteStatus=%d addStatus=%d", name, (int)deleteStatus, (int)addStatus);
-                        MTFileBasedKeychainWriteFallbackAes(_documentsPath, name, fallbackKeyData);
+	                    if (itemStoreResult != noErr && MTLogEnabled())
+                        MTLog(@"AUTH keychain.aes.store name=%@ itemRemoveResult=%d itemStoreResult=%d", name, (int)itemRemoveResult, (int)itemStoreResult);
+                        OGKeychainStoreBackup(_documentsPath, name, backupKeyData);
 	                }
                     else
                     {
-                        NSString *fallbackPath = MTFileBasedKeychainFallbackAesPath(_documentsPath, name);
-                        if (fallbackPath.length != 0 && ![[NSFileManager defaultManager] fileExistsAtPath:fallbackPath])
-                            MTFileBasedKeychainWriteFallbackAes(_documentsPath, name, fallbackKeyData);
+                        NSString *backupPath = OGKeychainBackupFile(_documentsPath, name);
+                        if (backupPath.length != 0 && ![[NSFileManager defaultManager] fileExistsAtPath:backupPath])
+                            OGKeychainStoreBackup(_documentsPath, name, backupKeyData);
                     }
 	            }
 	        }

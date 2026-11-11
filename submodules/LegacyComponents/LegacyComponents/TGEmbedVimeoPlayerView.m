@@ -6,33 +6,24 @@
 NSString *const TGVimeoPlayerCallbackOnReady = @"onReady";
 NSString *const TGVimeoPlayerCallbackOnState = @"onState";
 
-static NSDictionary *TGEmbedLegacyQueryParameters(NSURL *url)
+static NSString *OGEmbedPercentDecoded(NSString *text)
 {
-    NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-    NSString *query = [url query];
-    for (NSString *part in [query componentsSeparatedByString:@"&"])
+    return [text stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+}
+
+static NSDictionary *OGEmbedCallbackParameters(NSURL *url)
+{
+    NSMutableDictionary *parameters = [NSMutableDictionary dictionary];
+    for (NSString *item in [[url query] componentsSeparatedByString:@"&"])
     {
-        if (part.length == 0)
-            continue;
-        NSRange range = [part rangeOfString:@"="];
-        NSString *key = nil;
-        NSString *value = nil;
-        if (range.location == NSNotFound)
-        {
-            key = part;
-            value = @"";
-        }
-        else
-        {
-            key = [part substringToIndex:range.location];
-            value = [part substringFromIndex:range.location + range.length];
-        }
-        key = [key stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-        value = [value stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-        if (key != nil && value != nil)
-            [result setObject:value forKey:key];
+        NSRange separator = [item rangeOfString:@"="];
+        bool hasValue = separator.location != NSNotFound;
+        NSString *name = OGEmbedPercentDecoded(hasValue ? [item substringToIndex:separator.location] : item);
+        NSString *value = OGEmbedPercentDecoded(hasValue ? [item substringFromIndex:NSMaxRange(separator)] : @"");
+        if (item.length != 0 && name != nil && value != nil)
+            [parameters setObject:value forKey:name];
     }
-    return result;
+    return parameters;
 }
 
 @interface TGEmbedVimeoPlayerView ()
@@ -127,7 +118,7 @@ static NSDictionary *TGEmbedLegacyQueryParameters(NSURL *url)
     }
     else if ([action isEqualToString:TGVimeoPlayerCallbackOnState])
     {
-        NSDictionary *queryItems = TGEmbedLegacyQueryParameters(url);
+        NSDictionary *callbackParameters = OGEmbedCallbackParameters(url);
         
         bool playing = self.state.playing;
         bool finished = false;
@@ -136,26 +127,24 @@ static NSDictionary *TGEmbedLegacyQueryParameters(NSURL *url)
         CGFloat downloadProgress = self.state.downloadProgress;
         bool buffering = self.state.buffering;
 
-        NSString *playbackValue = [queryItems objectForKey:@"playback"];
-        if (playbackValue != nil)
+        NSString *rawValue = nil;
+        if ((rawValue = [callbackParameters objectForKey:@"playback"]) != nil)
         {
-            playing = ([playbackValue integerValue] == 1);
-            finished = ([playbackValue integerValue] == 2);
+            NSInteger playbackCode = [rawValue integerValue];
+            playing = (playbackCode == 1);
+            finished = (playbackCode == 2);
         }
-        NSString *positionValue = [queryItems objectForKey:@"position"];
-        if (positionValue != nil)
+        if ((rawValue = [callbackParameters objectForKey:@"position"]) != nil)
         {
             if (_ignorePositionUpdates > 0)
                 _ignorePositionUpdates--;
             else
-                position = [positionValue doubleValue];
+                position = [rawValue doubleValue];
         }
-        NSString *durationValue = [queryItems objectForKey:@"duration"];
-        if (durationValue != nil)
-            duration = [durationValue doubleValue];
-        NSString *downloadValue = [queryItems objectForKey:@"download"];
-        if (downloadValue != nil)
-            downloadProgress = [downloadValue floatValue];
+        if ((rawValue = [callbackParameters objectForKey:@"duration"]) != nil)
+            duration = [rawValue doubleValue];
+        if ((rawValue = [callbackParameters objectForKey:@"download"]) != nil)
+            downloadProgress = [rawValue floatValue];
         
         if (!_started && playing)
         {

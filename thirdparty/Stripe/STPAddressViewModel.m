@@ -7,13 +7,14 @@
 //
 
 #import "STPAddressViewModel.h"
+#import "OGStripeCompat.h"
 #import "NSArray+Stripe_BoundSafe.h"
 #import "STPPostalCodeValidator.h"
 
 @interface STPAddressViewModel()<STPAddressFieldTableViewCellDelegate>
 
 @property(nonatomic)STPBillingAddressFields requiredBillingAddressFields;
-@property(nonatomic)NSArray *addressCells;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, STPAddressFieldTableViewCell *) *addressCells;
 @property(nonatomic)BOOL showingPostalCodeCell;
 @end
 
@@ -71,14 +72,14 @@
                 break;
             case STPBillingAddressFieldsFull: {
                 // Add after STPAddressFieldTypeState
-                NSUInteger stateFieldIndex = [self.addressCells indexOfObjectPassingTest:^BOOL(STPAddressFieldTableViewCell * obj, NSUInteger __unused idx, BOOL * __unused stop) {
+                NSUInteger stateFieldIndex = [self.addressCells indexOfObjectPassingTest:^BOOL(STPAddressFieldTableViewCell * _Nonnull obj, NSUInteger __unused idx, BOOL * _Nonnull __unused stop) {
                     return (obj.type == STPAddressFieldTypeState);
                 }];
                 
                 if (stateFieldIndex != NSNotFound) {
                     NSUInteger zipFieldIndex = stateFieldIndex + 1;
                     
-                    NSMutableArray *mutableAddressCells = self.addressCells.mutableCopy;
+                    OG_COMPAT_GENERIC(NSMutableArray, STPAddressFieldTableViewCell *) *mutableAddressCells = self.addressCells.mutableCopy;
                     [mutableAddressCells insertObject:[[STPAddressFieldTableViewCell alloc] initWithType:STPAddressFieldTypeZip contents:@"" lastInList:NO delegate:self]
                                               atIndex:zipFieldIndex];
                     self.addressCells = mutableAddressCells.copy;
@@ -101,12 +102,12 @@
                 [self.delegate addressViewModelDidChange:self];
                 break;
             case STPBillingAddressFieldsFull: {
-                NSUInteger zipFieldIndex = [self.addressCells indexOfObjectPassingTest:^BOOL(STPAddressFieldTableViewCell * obj, NSUInteger __unused idx, BOOL * __unused stop) {
+                NSUInteger zipFieldIndex = [self.addressCells indexOfObjectPassingTest:^BOOL(STPAddressFieldTableViewCell * _Nonnull obj, NSUInteger __unused idx, BOOL * _Nonnull __unused stop) {
                     return (obj.type == STPAddressFieldTypeZip);
                 }];
                 
                 if (zipFieldIndex != NSNotFound) {
-                    NSMutableArray *mutableAddressCells = self.addressCells.mutableCopy;
+                    OG_COMPAT_GENERIC(NSMutableArray, STPAddressFieldTableViewCell *) *mutableAddressCells = self.addressCells.mutableCopy;
                     [mutableAddressCells removeObjectAtIndex:zipFieldIndex];
                     self.addressCells = mutableAddressCells.copy;
                     [self.delegate addressViewModel:self removedCellAtIndex:zipFieldIndex];

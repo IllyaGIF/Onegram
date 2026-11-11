@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTBezierPath.m
 //  Lottie
@@ -458,7 +458,7 @@ struct LOT_Subpath {
 
 - (void)lot_enumeratePath:(CGPathRef)cgPath elementsUsingBlock:(LOTBezierPathEnumerationHandler)handler {
   void CGPathEnumerationCallback(void *info, const CGPathElement *element);
-  CGPathApply(cgPath, (__bridge void * )(handler), CGPathEnumerationCallback);
+  CGPathApply(cgPath, (__bridge void * _Nullable)(handler), CGPathEnumerationCallback);
 }
 
 @end

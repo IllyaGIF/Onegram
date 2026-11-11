@@ -114,15 +114,17 @@
         int requestMaxMid = (maxMid == 0 ? INT_MAX : maxMid);
         bool isEncrypted = [options[@"isEncrypted"] boolValue];
         bool isBroadcast = [options[@"isBroadcast"] boolValue];
-        bool isNegativeModernUser = false;
+        bool plainPeer = !isEncrypted && !isBroadcast;
+        bool modernNegativeUser = false;
         if (conversationId < 0)
         {
             TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
-            isNegativeModernUser = user != nil && user.phoneNumberHash != 0;
+            modernNegativeUser = user != nil && user.phoneNumberHash != 0;
         }
-        bool isTopRefreshRequest = offset == 0 && (maxMid == 0 || maxMid == INT_MAX);
-        bool isUserPeerTopRefresh = (conversationId > 0 || isNegativeModernUser) && isTopRefreshRequest && _loadAtMessageId == 0 && ![options[@"downwards"] boolValue] && !isEncrypted && !isBroadcast;
-        bool forceRemoteTopRefresh = isUserPeerTopRefresh || (offset == 0 && maxDate == 0 && _loadAtMessageId == 0 && ![options[@"downwards"] boolValue] && !isEncrypted && !isBroadcast);
+        bool latestPage = offset == 0 && (maxMid == 0 || maxMid == INT_MAX);
+        bool openEnded = _loadAtMessageId == 0 && ![options[@"downwards"] boolValue] && plainPeer;
+        bool userLatest = (conversationId > 0 || modernNegativeUser) && latestPage && openEnded;
+        bool forceRemoteTopRefresh = userLatest || (offset == 0 && maxDate == 0 && openEnded);
         
         [[TGDatabase instance] loadMessagesFromConversation:conversationId maxMid:requestMaxMid maxDate:(maxDate == 0 ? INT_MAX : maxDate) maxLocalMid:(maxLocalMid == 0 ? INT_MAX : maxLocalMid) atMessageId:_loadAtMessageId limit:limit extraUnread:extraUnread completion:^(NSArray *messages, bool historyExistsBelow)
         {
@@ -141,8 +143,8 @@
                 }
                 
                 bool sequenceContainsHoles = minMessageId <= requestMaxMid && [TGDatabaseInstance() conversationContainsHole:conversationId minMessageId:minMessageId maxMessageId:requestMaxMid];
-                bool suspiciousStaleHistoryEnd = peerMinMid == 1 && messages.count <= 1 && conversationId < 0 && !isEncrypted && !isBroadcast;
-                if (((messages.count != 0 && !suspiciousStaleHistoryEnd) || (peerMinMid != 0 && !suspiciousStaleHistoryEnd) || [options[@"isEncrypted"] boolValue] || [options[@"isBroadcast"] boolValue]) && !sequenceContainsHoles && !forceRemoteTopRefresh)
+                bool staleHistoryEnd = peerMinMid == 1 && messages.count <= 1 && conversationId < 0 && plainPeer;
+                if (((messages.count != 0 && !staleHistoryEnd) || (peerMinMid != 0 && !staleHistoryEnd) || [options[@"isEncrypted"] boolValue] || [options[@"isBroadcast"] boolValue]) && !sequenceContainsHoles && !forceRemoteTopRefresh)
                 {
                     
                     [ActionStageInstance() actionCompleted:self.path result:@{
@@ -153,13 +155,8 @@
                 }
                 else
                 {
-                    int remoteMaxMid = forceRemoteTopRefresh ? 0 : maxMid;
-                    NSString *remoteFetchReason = forceRemoteTopRefresh ? @"forceTopLatest" : (sequenceContainsHoles ? @"holes" : @"empty");
-                    if (messages.count == 0 && conversationId < 0 && !isEncrypted && !isBroadcast && !isNegativeModernUser)
-                    {
-                        remoteMaxMid = 0;
-                        remoteFetchReason = @"emptyBasicChatLatest";
-                    }
+                    bool emptyBasicChat = messages.count == 0 && conversationId < 0 && plainPeer && !modernNegativeUser;
+                    int remoteMaxMid = (forceRemoteTopRefresh || emptyBasicChat) ? 0 : maxMid;
                     [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/conversations/(%lld)/asyncHistory/(%d)", conversationId, remoteMaxMid] options:options watcher:self];
                 }
             }];

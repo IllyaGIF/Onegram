@@ -45,6 +45,7 @@
 #import "../OnegramUI/Core/OGSearchBarAppearance.h"
 #import "../OnegramUI/Core/OGContactListAppearance.h"
 #import "../OnegramUI/Core/OGCommunitySheetAppearance.h"
+#import "../OnegramUI/Core/OGMenuSheetAppearance.h"
 #import "../OnegramUI/Core/OGSettingsAppearance.h"
 #import "../OnegramUI/Core/OGAssets.h"
 #import "../OnegramUI/Core/OGSurfaceStyle.h"
@@ -59,6 +60,28 @@
 - (instancetype)initWithPallete:(int32_t)pallete userInfo:(int32_t)userInfo fontSize:(int32_t)fontSize;
 
 @end
+
+static UIImage *OGCompatBrandedGradientImage(UIImage *source, NSArray *colors)
+{
+    if (source == nil || colors.count < 2)
+        return source;
+
+    CGSize size = source.size;
+    NSMutableArray *stops = [[NSMutableArray alloc] init];
+    for (UIColor *stop in colors)
+        [stops addObject:(__bridge id)stop.CGColor];
+
+    UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
+    CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+    CGGradientRef gradient = CGGradientCreateWithColors(rgb, (__bridge CFArrayRef)stops, NULL);
+    CGContextDrawLinearGradient(UIGraphicsGetCurrentContext(), gradient, CGPointZero, CGPointMake(0.0f, size.height), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(rgb);
+    [source drawInRect:CGRectMake(0.0f, 0.0f, size.width, size.height) blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
 
 @implementation TGPresentation
 
@@ -94,12 +117,25 @@
 
 - (TGMenuSheetPallete *)menuSheetPallete
 {
-    return [TGMenuSheetPallete palleteWithDark:self.pallete.isDark backgroundColor:self.pallete.menuBackgroundColor selectionColor:self.pallete.menuSelectionColor separatorColor:self.pallete.menuSeparatorColor accentColor:self.pallete.menuAccentColor destructiveColor:self.pallete.menuDestructiveColor textColor:self.pallete.menuTextColor secondaryTextColor:self.pallete.menuSecondaryTextColor spinnerColor:self.pallete.menuSpinnerColor badgeTextColor:self.pallete.accentContrastColor badgeImage:self.images.shareBadgeImage cornersImage:self.images.menuCornersImage];
+    OGTheme *theme = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme] : nil;
+    OGMenuSheetAppearance *appearance = theme.menuSheetAppearance;
+    if (appearance == nil)
+        return [TGMenuSheetPallete palleteWithDark:self.pallete.isDark backgroundColor:self.pallete.menuBackgroundColor selectionColor:self.pallete.menuSelectionColor separatorColor:self.pallete.menuSeparatorColor accentColor:self.pallete.menuAccentColor destructiveColor:self.pallete.menuDestructiveColor textColor:self.pallete.menuTextColor secondaryTextColor:self.pallete.menuSecondaryTextColor spinnerColor:self.pallete.menuSpinnerColor badgeTextColor:self.pallete.accentContrastColor badgeImage:self.images.shareBadgeImage cornersImage:self.images.menuCornersImage];
+
+    TGMenuSheetPallete *pallete = [TGMenuSheetPallete palleteWithDark:self.pallete.isDark backgroundColor:appearance.backgroundColor selectionColor:appearance.selectionColor separatorColor:appearance.separatorColor accentColor:appearance.accentColor destructiveColor:appearance.destructiveColor textColor:appearance.textColor secondaryTextColor:appearance.secondaryTextColor spinnerColor:self.pallete.menuSpinnerColor badgeTextColor:self.pallete.accentContrastColor badgeImage:self.images.shareBadgeImage cornersImage:self.images.menuCornersImage];
+    OGSurfaceStyle *surfaceStyle = appearance.surfaceStyle;
+    OGSurfaceRenderer *renderer = theme.surfaceRenderer;
+    UIImage *(^surfaceImage)(CGSize) = surfaceStyle == nil || renderer == nil ? nil : ^UIImage *(CGSize size)
+    {
+        CGSize pixelSize = CGSizeMake(CGCeil(size.width), CGCeil(size.height));
+        return [renderer imageWithStyle:surfaceStyle size:pixelSize bodyFrame:CGRectMake(0.0f, 0.0f, pixelSize.width, pixelSize.height)];
+    };
+    return [pallete palleteWithSurfaceImage:surfaceImage cornerRadius:appearance.cornerRadius buttonFont:appearance.buttonFont cancelButtonFont:appearance.cancelButtonFont textShadowColor:appearance.textShadowColor textShadowOffset:appearance.textShadowOffset];
 }
 
 - (TGStickerKeyboardPallete *)stickerKeyboardPallete
 {
-    return [TGStickerKeyboardPallete palleteWithBackgroundColor:self.pallete.barBackgroundColor separatorColor:self.pallete.chatInputKeyboardBorderColor selectionColor:self.pallete.chatInputSelectionColor gifIcon:self.images.chatStickersGifIcon trendingIcon:self.images.chatStickersTrendingIcon favoritesIcon:self.images.chatStickersFavoritesIcon recentIcon:self.images.chatStickersRecentIcon settingsIcon:self.images.chatStickersSettingsIcon badge:self.images.chatStickersBadge badgeTextColor:self.pallete.accentContrastColor];
+    return [[TGStickerKeyboardPallete palleteWithBackgroundColor:self.pallete.barBackgroundColor separatorColor:self.pallete.chatInputKeyboardBorderColor selectionColor:self.pallete.chatInputSelectionColor gifIcon:self.images.chatStickersGifIcon trendingIcon:self.images.chatStickersTrendingIcon favoritesIcon:self.images.chatStickersFavoritesIcon recentIcon:self.images.chatStickersRecentIcon settingsIcon:self.images.chatStickersSettingsIcon badge:self.images.chatStickersBadge badgeTextColor:self.pallete.accentContrastColor] palleteWithCustomEmojiIcon:self.images.chatStickersCustomEmojiIcon createStickerIcon:self.images.chatStickersCreateStickerIcon];
 }
 
 - (TGCheckButtonPallete *)checkButtonPallete
@@ -143,7 +179,7 @@ static SPipe *fontPipe;
 static TGPresentationAutoNightPreferences *autoNightPreferences;
 static SPipe *autoNightPreferencesPipe;
 static id<SDisposable> autoNightDisposable;
-static NSString *const TGClassicIOS6StyleDefaultsKey = @"TGClassicIOS6Style";
+static NSString *const OGCompatClassicStyleDefaultsKey = @"TGClassicIOS6Style";
 static NSString *const TGInterfaceStyleDefaultsKey = @"TGInterfaceStyle";
 
 static TGPresentationPallete *TGPresentationPalleteForInterfaceStyle(TGPresentationPallete *pallete)
@@ -166,7 +202,7 @@ static bool TGPresentationPalletesMatch(TGPresentationPallete *lhs, TGPresentati
     return lhsAccent == rhsAccent || [lhsAccent isEqual:rhsAccent];
 }
 
-static UIImage *TGClassicIOS6RecoloredImage(UIImage *image, UIColor *tintColor, CGFloat intensity)
+static UIImage *OGCompatClassicRecoloredImage(UIImage *image, UIColor *tintColor, CGFloat intensity)
 {
     if (image == nil || tintColor == nil)
         return image;
@@ -441,28 +477,14 @@ static UIImage *TGClassicIOS6RecoloredImage(UIImage *image, UIColor *tintColor, 
     if (source == nil)
         return nil;
 
-    UIGraphicsBeginImageContextWithOptions(source.size, false, source.scale);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat components[] = {
-        0.86f, 0.86f, 0.86f, 1.0f,
-        0.48f, 0.48f, 0.48f, 1.0f
-    };
-    CGFloat locations[] = {0.0f, 1.0f};
-    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
-    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, source.size.height), 0);
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorSpace);
-    [source drawInRect:CGRectMake(0.0f, 0.0f, source.size.width, source.size.height) blendMode:kCGBlendModeDestinationIn alpha:1.0f];
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
+    UIImage *image = OGCompatBrandedGradientImage(source, @[[UIColor colorWithRed:0.86f green:0.86f blue:0.86f alpha:1.0f], [UIColor colorWithRed:0.48f green:0.48f blue:0.48f alpha:1.0f]]);
 
     if (image != nil)
         cache[name] = image;
     return image;
 }
 
-static UIImage *TGBrandedIOS6BandImage(OGTheme *theme, OGSurfaceStyle *style, CGSize size)
+static UIImage *OGCompatBrandedBandImage(OGTheme *theme, OGSurfaceStyle *style, CGSize size)
 {
     if (style == nil || size.width < 1.0f || size.height < 1.0f)
         return nil;
@@ -470,59 +492,23 @@ static UIImage *TGBrandedIOS6BandImage(OGTheme *theme, OGSurfaceStyle *style, CG
     return [theme.surfaceRenderer imageWithStyle:style size:CGSizeMake(size.width, size.height + outsets.bottom) bodyFrame:CGRectMake(0.0f, 0.0f, size.width, size.height)];
 }
 
-static UIImage *TGBrandedIOS6GradientImage(UIImage *source, NSArray *colors)
+static OGSurfaceStyle *OGCompatBrandedNavigationButtonStyle(OGNavigationAppearance *appearance, bool backButton, bool highlighted)
 {
-    if (source == nil || colors.count < 2)
-        return source;
-
-    CGSize size = source.size;
-    UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    NSMutableArray *cgColors = [[NSMutableArray alloc] initWithCapacity:colors.count];
-    for (UIColor *color in colors)
-        [cgColors addObject:(__bridge id)color.CGColor];
-    CGGradientRef gradient = CGGradientCreateWithColors(colorSpace, (__bridge CFArrayRef)cgColors, NULL);
-    CGContextDrawLinearGradient(context, gradient, CGPointZero, CGPointMake(0.0f, size.height), 0);
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorSpace);
-    [source drawInRect:CGRectMake(0.0f, 0.0f, size.width, size.height) blendMode:kCGBlendModeDestinationIn alpha:1.0f];
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return image;
+    OGSurfaceStyle *normal = backButton ? appearance.backButtonSurfaceStyle : appearance.buttonSurfaceStyle;
+    OGSurfaceStyle *pressed = backButton ? appearance.backButtonPressedSurfaceStyle : appearance.buttonPressedSurfaceStyle;
+    return highlighted ? pressed : normal;
 }
 
-static OGSurfaceStyle *TGBrandedIOS6NavigationButtonStyle(OGNavigationAppearance *appearance, bool backButton, bool highlighted)
-{
-    if (backButton)
-        return highlighted ? appearance.backButtonPressedSurfaceStyle : appearance.backButtonSurfaceStyle;
-    return highlighted ? appearance.buttonPressedSurfaceStyle : appearance.buttonSurfaceStyle;
-}
-
-static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlighted, bool landscape)
+static UIImage *OGCompatClassicNavigationButtonImage(bool backButton, bool highlighted, bool landscape)
 {
     if ([TGPresentation brandedIOS6Style])
     {
-        OGSurfaceStyle *style = TGBrandedIOS6NavigationButtonStyle([OGTheme brandedTheme].navigationAppearance, backButton, highlighted);
+        OGSurfaceStyle *style = OGCompatBrandedNavigationButtonStyle([OGTheme brandedTheme].navigationAppearance, backButton, highlighted);
         UIImage *image = [TGPresentation brandedIOS6NavigationButtonImage:backButton highlighted:highlighted landscape:landscape width:0.0f];
         return [image resizableImageWithCapInsets:[style horizontalCapInsets]];
     }
 
-    NSString *name = nil;
-    if (backButton)
-    {
-        if (landscape)
-            name = highlighted ? @"BackButton_Landscape_Pressed" : @"BackButton_Landscape";
-        else
-            name = highlighted ? @"BackButton_Pressed" : @"BackButton";
-    }
-    else
-    {
-        if (landscape)
-            name = highlighted ? @"HeaderButton_Landscape_Pressed" : @"HeaderButton_Landscape";
-        else
-            name = highlighted ? @"HeaderButton_Pressed" : @"HeaderButton";
-    }
+    NSString *name = [NSString stringWithFormat:@"%@%@%@", backButton ? @"BackButton" : @"HeaderButton", landscape ? @"_Landscape" : @"", highlighted ? @"_Pressed" : @""];
 
     UIImage *image = [TGPresentation classicIOS6ResourceImage:name];
     if (image == nil)
@@ -540,7 +526,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGNavigationAppearance *appearance = theme.navigationAppearance;
-    OGSurfaceStyle *style = TGBrandedIOS6NavigationButtonStyle(appearance, backButton, highlighted);
+    OGSurfaceStyle *style = OGCompatBrandedNavigationButtonStyle(appearance, backButton, highlighted);
     CGFloat bodyHeight = landscape ? appearance.buttonLandscapeHeight : appearance.buttonHeight;
     CGFloat imageHeight = landscape ? appearance.buttonLandscapeImageHeight : appearance.buttonImageHeight;
     CGFloat imageWidth = width > FLT_EPSILON ? width : appearance.buttonImageWidth;
@@ -552,12 +538,12 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
     OGTheme *theme = [OGTheme brandedTheme];
     OGNavigationAppearance *appearance = theme.navigationAppearance;
     OGSurfaceStyle *backgroundStyle = gloss && appearance.glossBackgroundSurfaceStyle != nil ? appearance.glossBackgroundSurfaceStyle : appearance.backgroundSurfaceStyle;
-    UIImage *barImage = TGBrandedIOS6BandImage(theme, backgroundStyle, size);
+    UIImage *barImage = OGCompatBrandedBandImage(theme, backgroundStyle, size);
     bool sheet = backgroundStyle.shape == OGSurfaceShapeSheet;
     if ((overflow < 1.0f && !sheet) || barImage == nil)
         return barImage;
 
-    UIImage *overflowImage = TGBrandedIOS6BandImage(theme, appearance.statusBackgroundSurfaceStyle, CGSizeMake(size.width, sheet ? overflow + size.height : overflow));
+    UIImage *overflowImage = OGCompatBrandedBandImage(theme, appearance.statusBackgroundSurfaceStyle, CGSizeMake(size.width, sheet ? overflow + size.height : overflow));
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(size.width, overflow + barImage.size.height), false, barImage.scale);
     [overflowImage drawAtPoint:CGPointZero];
     [barImage drawAtPoint:CGPointMake(0.0f, overflow)];
@@ -581,7 +567,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
     OGContactListAppearance *appearance = theme.contactListAppearance;
     if (appearance.navigationSurfaceStyle == nil)
         return [self brandedIOS6NavigationBarBackgroundImageForSize:size overflow:overflow gloss:false];
-    UIImage *barImage = TGBrandedIOS6BandImage(theme, appearance.navigationSurfaceStyle, size);
+    UIImage *barImage = OGCompatBrandedBandImage(theme, appearance.navigationSurfaceStyle, size);
     if (barImage == nil)
         return nil;
     overflow = MAX(0.0f, overflow);
@@ -628,7 +614,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
     OGSurfaceStyle *style = theme.dialogListAppearance.cellBackgroundSurfaceStyle;
     if (style == nil)
         return nil;
-    UIImage *image = TGBrandedIOS6BandImage(theme, style, CGSizeMake(1.0f, height));
+    UIImage *image = OGCompatBrandedBandImage(theme, style, CGSizeMake(1.0f, height));
     return [image stretchableImageWithLeftCapWidth:0 topCapHeight:0];
 }
 
@@ -666,7 +652,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 
 + (UIImage *)brandedIOS6DialogPinImage
 {
-    return TGBrandedIOS6GradientImage([self brandedIOS6ResourceImage:@"pin-angle-fill"], [OGTheme brandedTheme].dialogListAppearance.pinGradientColors);
+    return OGCompatBrandedGradientImage([self brandedIOS6ResourceImage:@"pin-angle-fill"], [OGTheme brandedTheme].dialogListAppearance.pinGradientColors);
 }
 
 + (UIImage *)brandedIOS6DialogFolderButtonImageForWidth:(CGFloat)width highlighted:(bool)highlighted selected:(bool)selected
@@ -689,14 +675,14 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGDialogListAppearance *appearance = theme.dialogListAppearance;
-    UIImage *image = TGBrandedIOS6BandImage(theme, appearance.headerSurfaceStyle, size);
+    UIImage *image = OGCompatBrandedBandImage(theme, appearance.headerSurfaceStyle, size);
     return image != nil ? [UIColor colorWithPatternImage:image] : appearance.headerColor;
 }
 
 + (UIImage *)brandedIOS6SearchBarBackgroundImageForSize:(CGSize)size
 {
     OGTheme *theme = [OGTheme brandedTheme];
-    return TGBrandedIOS6BandImage(theme, theme.searchBarAppearance.backgroundSurfaceStyle, size);
+    return OGCompatBrandedBandImage(theme, theme.searchBarAppearance.backgroundSurfaceStyle, size);
 }
 
 + (UIColor *)brandedIOS6SearchBarBackdropColorForSize:(CGSize)size
@@ -762,7 +748,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 + (UIImage *)brandedIOS6ContactSearchBarBackgroundImageForSize:(CGSize)size
 {
     OGTheme *theme = [OGTheme brandedTheme];
-    return TGBrandedIOS6BandImage(theme, theme.contactListAppearance.searchBarAppearance.backgroundSurfaceStyle, size);
+    return OGCompatBrandedBandImage(theme, theme.contactListAppearance.searchBarAppearance.backgroundSurfaceStyle, size);
 }
 
 + (UIImage *)brandedIOS6ContactSearchBarFieldImageForSize:(CGSize)size
@@ -786,7 +772,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGDialogListAppearance *appearance = theme.dialogListAppearance;
-    UIImage *image = TGBrandedIOS6BandImage(theme, appearance.actionSurfaceStyle, size);
+    UIImage *image = OGCompatBrandedBandImage(theme, appearance.actionSurfaceStyle, size);
     if (image != nil)
     {
         CGFloat scale = image.scale;
@@ -812,7 +798,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGContactListAppearance *appearance = theme.contactListAppearance;
-    return TGBrandedIOS6BandImage(theme, appearance.sectionHeaderSurfaceStyle, CGSizeMake(1.0f, appearance.sectionHeaderHeight));
+    return OGCompatBrandedBandImage(theme, appearance.sectionHeaderSurfaceStyle, CGSizeMake(1.0f, appearance.sectionHeaderHeight));
 }
 
 + (OGCommunitySheetAppearance *)brandedIOS6CommunitySheetAppearance
@@ -824,7 +810,7 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGCommunitySheetAppearance *appearance = theme.communitySheetAppearance;
-    return TGBrandedIOS6BandImage(theme, appearance.headerSurfaceStyle, CGSizeMake(width, appearance.headerHeight));
+    return OGCompatBrandedBandImage(theme, appearance.headerSurfaceStyle, CGSizeMake(width, appearance.headerHeight));
 }
 
 + (UIImage *)brandedIOS6CommunitySheetIndicatorImage
@@ -872,13 +858,13 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
     return [image stretchableImageWithLeftCapWidth:leftCap topCapHeight:topCap];
 }
 
-static CGRect TGBrandedIOS6ConversationCardFrame(OGConversationAppearance *appearance, CGSize size, CGFloat topInset, CGFloat bottomSafeInset)
+static CGRect OGCompatBrandedConversationCardFrame(OGConversationAppearance *appearance, CGSize size, CGFloat topInset, CGFloat bottomSafeInset)
 {
     CGFloat horizontalInset = appearance.backgroundCardHorizontalInset;
     return CGRectMake(horizontalInset, topInset, size.width - horizontalInset * 2.0f, size.height - topInset - appearance.inputPanelHeight - bottomSafeInset);
 }
 
-static void TGBrandedIOS6AddRoundedRectPath(CGContextRef context, CGRect rect, CGFloat radius)
+static void OGCompatBrandedAddRoundedRectPath(CGContextRef context, CGRect rect, CGFloat radius)
 {
     radius = MIN(radius, MIN(rect.size.width, rect.size.height) * 0.5f);
     CGContextMoveToPoint(context, CGRectGetMinX(rect) + radius, CGRectGetMinY(rect));
@@ -889,7 +875,7 @@ static void TGBrandedIOS6AddRoundedRectPath(CGContextRef context, CGRect rect, C
     CGContextClosePath(context);
 }
 
-static UIImage *TGBrandedIOS6SurfaceImage(OGTheme *theme, OGSurfaceStyle *style, CGSize size, UIEdgeInsets *outsets)
+static UIImage *OGCompatBrandedSurfaceImage(OGTheme *theme, OGSurfaceStyle *style, CGSize size, UIEdgeInsets *outsets)
 {
     if (style == nil || size.width < 1.0f || size.height < 1.0f)
         return nil;
@@ -922,17 +908,17 @@ static UIImage *TGBrandedIOS6SurfaceImage(OGTheme *theme, OGSurfaceStyle *style,
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGSurfaceStyle *style = joinedHeader ? theme.conversationAppearance.joinedPinnedPanelSurfaceStyle : theme.conversationAppearance.pinnedPanelSurfaceStyle;
-    return TGBrandedIOS6SurfaceImage(theme, style, size, outsets);
+    return OGCompatBrandedSurfaceImage(theme, style, size, outsets);
 }
 
 + (UIImage *)brandedIOS6PinnedIndicatorImage
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGConversationAppearance *appearance = theme.conversationAppearance;
-    return TGBrandedIOS6SurfaceImage(theme, appearance.pinnedIndicatorSurfaceStyle, appearance.pinnedIndicatorFrame.size, NULL);
+    return OGCompatBrandedSurfaceImage(theme, appearance.pinnedIndicatorSurfaceStyle, appearance.pinnedIndicatorFrame.size, NULL);
 }
 
-static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UIEdgeInsets *outsets)
+static UIImage *OGCompatBrandedPinnedBubbleImage(OGTheme *theme, CGFloat width, UIEdgeInsets *outsets)
 {
     OGConversationAppearance *appearance = theme.conversationAppearance;
     OGSurfaceStyle *style = appearance.pinnedBubbleSurfaceStyle;
@@ -947,7 +933,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
 
 + (UIImage *)brandedIOS6PinnedBubbleImageForWidth:(CGFloat)width outsets:(UIEdgeInsets *)outsets
 {
-    return TGBrandedIOS6PinnedBubbleImage([OGTheme brandedTheme], width, outsets);
+    return OGCompatBrandedPinnedBubbleImage([OGTheme brandedTheme], width, outsets);
 }
 
 + (void)prewarmBrandedIOS6ConversationSurfaces
@@ -963,10 +949,10 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     {
         @autoreleasepool
         {
-            TGBrandedIOS6BandImage(theme, appearance.backgroundSurfaceStyle, screenSize);
-            TGBrandedIOS6SurfaceImage(theme, appearance.pinnedPanelSurfaceStyle, CGSizeMake(bodyWidth, appearance.pinnedPanelHeight), NULL);
-            TGBrandedIOS6SurfaceImage(theme, appearance.joinedPinnedPanelSurfaceStyle, CGSizeMake(bodyWidth, appearance.pinnedPanelHeight), NULL);
-            TGBrandedIOS6PinnedBubbleImage(theme, bubbleWidth, NULL);
+            OGCompatBrandedBandImage(theme, appearance.backgroundSurfaceStyle, screenSize);
+            OGCompatBrandedSurfaceImage(theme, appearance.pinnedPanelSurfaceStyle, CGSizeMake(bodyWidth, appearance.pinnedPanelHeight), NULL);
+            OGCompatBrandedSurfaceImage(theme, appearance.joinedPinnedPanelSurfaceStyle, CGSizeMake(bodyWidth, appearance.pinnedPanelHeight), NULL);
+            OGCompatBrandedPinnedBubbleImage(theme, bubbleWidth, NULL);
         }
     });
 }
@@ -976,7 +962,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     OGConversationAppearance *appearance = [OGTheme brandedTheme].conversationAppearance;
     if (appearance.pinnedIconAssetName.length == 0)
         return nil;
-    return TGBrandedIOS6GradientImage([self brandedIOS6ResourceImage:appearance.pinnedIconAssetName], appearance.pinnedIconColors);
+    return OGCompatBrandedGradientImage([self brandedIOS6ResourceImage:appearance.pinnedIconAssetName], appearance.pinnedIconColors);
 }
 
 + (UIImage *)brandedIOS6PinnedCloseImage
@@ -1005,7 +991,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGConversationAppearance *appearance = theme.conversationAppearance;
-    return TGBrandedIOS6SurfaceImage(theme, appearance.commentsAvatarOverlaySurfaceStyle, CGSizeMake(appearance.commentsAvatarSize, appearance.commentsAvatarSize), outsets);
+    return OGCompatBrandedSurfaceImage(theme, appearance.commentsAvatarOverlaySurfaceStyle, CGSizeMake(appearance.commentsAvatarSize, appearance.commentsAvatarSize), outsets);
 }
 
 + (UIImage *)brandedIOS6CommentsChevronImage
@@ -1028,13 +1014,13 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
 {
     OGTheme *theme = [OGTheme brandedTheme];
     OGConversationAppearance *appearance = theme.conversationAppearance;
-    return TGBrandedIOS6SurfaceImage(theme, appearance.unreadHeaderSurfaceStyle, CGSizeMake(width, appearance.unreadHeaderHeight), NULL);
+    return OGCompatBrandedSurfaceImage(theme, appearance.unreadHeaderSurfaceStyle, CGSizeMake(width, appearance.unreadHeaderHeight), NULL);
 }
 
 + (UIImage *)brandedIOS6ConversationBackgroundImageForSize:(CGSize)size
 {
     OGTheme *theme = [OGTheme brandedTheme];
-    return TGBrandedIOS6BandImage(theme, theme.conversationAppearance.backgroundSurfaceStyle, size);
+    return OGCompatBrandedBandImage(theme, theme.conversationAppearance.backgroundSurfaceStyle, size);
 }
 
 + (UIImage *)brandedIOS6ConversationCardImageForSize:(CGSize)size topInset:(CGFloat)topInset bottomSafeInset:(CGFloat)bottomSafeInset frame:(CGRect *)frame
@@ -1045,7 +1031,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     if (cardStyle == nil)
         return nil;
 
-    CGRect cardFrame = TGBrandedIOS6ConversationCardFrame(appearance, size, topInset, bottomSafeInset);
+    CGRect cardFrame = OGCompatBrandedConversationCardFrame(appearance, size, topInset, bottomSafeInset);
     if (cardFrame.size.width < 1.0f || cardFrame.size.height < 1.0f)
         return nil;
 
@@ -1064,7 +1050,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
         return nil;
 
     CGSize size = background.size;
-    CGRect cardFrame = TGBrandedIOS6ConversationCardFrame(appearance, size, topInset, bottomSafeInset);
+    CGRect cardFrame = OGCompatBrandedConversationCardFrame(appearance, size, topInset, bottomSafeInset);
     CGFloat radius = cardStyle.cornerRadius;
     if (radius < 1.0f || cardFrame.size.width < radius * 2.0f || cardFrame.size.height < radius * 2.0f)
         return nil;
@@ -1076,7 +1062,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     [background drawAtPoint:CGPointMake(0.0f, -bandFrame.origin.y)];
     [card drawAtPoint:CGPointMake(cardImageFrame.origin.x, cardImageFrame.origin.y - bandFrame.origin.y)];
     CGContextSetBlendMode(context, kCGBlendModeClear);
-    TGBrandedIOS6AddRoundedRectPath(context, CGRectOffset(cardFrame, 0.0f, -bandFrame.origin.y), radius);
+    OGCompatBrandedAddRoundedRectPath(context, CGRectOffset(cardFrame, 0.0f, -bandFrame.origin.y), radius);
     CGContextFillPath(context);
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -1178,7 +1164,7 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     OGSurfaceStyle *style = highlighted ? appearance.actionButtonHighlightedSurfaceStyle : appearance.actionButtonSurfaceStyle;
     UIEdgeInsets capInsets = [style horizontalCapInsets];
     UIEdgeInsets styleOutsets = UIEdgeInsetsZero;
-    UIImage *image = TGBrandedIOS6SurfaceImage(theme, style, CGSizeMake(capInsets.left + 1.0f + capInsets.right, appearance.actionButtonHeight), &styleOutsets);
+    UIImage *image = OGCompatBrandedSurfaceImage(theme, style, CGSizeMake(capInsets.left + 1.0f + capInsets.right, appearance.actionButtonHeight), &styleOutsets);
     if (outsets != NULL)
         *outsets = styleOutsets;
     return [image resizableImageWithCapInsets:UIEdgeInsetsMake(0.0f, styleOutsets.left + capInsets.left, 0.0f, styleOutsets.right + capInsets.right)];
@@ -1756,17 +1742,17 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
         UIColor *navigationButtonColor = TGPresentation.current.pallete.navigationButtonColor;
         UIColor *navigationTitleColor = TGPresentation.current.pallete.navigationTitleColor;
         UIBarButtonItem *item = [UIBarButtonItem appearanceWhenContainedIn:[TGNavigationBar class], nil];
-        bool classicIOS6Style = [TGPresentation classicIOS6Style];
+        bool classicThemeStyle = [TGPresentation classicThemeStyle];
         bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-        bool classicDarkIOS6Style = classicIOS6Style && TGPresentation.current.pallete.isDark;
+        bool classicDarkIOS6Style = classicThemeStyle && TGPresentation.current.pallete.isDark;
         OGNavigationAppearance *navigationAppearance = brandedIOS6Style ? [OGTheme brandedTheme].navigationAppearance : nil;
 
-        if (classicIOS6Style)
+        if (classicThemeStyle)
         {
-            UIImage *buttonImage = TGClassicIOS6NavigationButtonImage(false, false, false);
-            UIImage *buttonHighlightedImage = TGClassicIOS6NavigationButtonImage(false, true, false);
-            UIImage *buttonLandscapeImage = TGClassicIOS6NavigationButtonImage(false, false, true);
-            UIImage *buttonLandscapeHighlightedImage = TGClassicIOS6NavigationButtonImage(false, true, true);
+            UIImage *buttonImage = OGCompatClassicNavigationButtonImage(false, false, false);
+            UIImage *buttonHighlightedImage = OGCompatClassicNavigationButtonImage(false, true, false);
+            UIImage *buttonLandscapeImage = OGCompatClassicNavigationButtonImage(false, false, true);
+            UIImage *buttonLandscapeHighlightedImage = OGCompatClassicNavigationButtonImage(false, true, true);
             [item setBackgroundImage:buttonImage ?: transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
             [item setBackgroundImage:buttonHighlightedImage ?: buttonImage ?: transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
             [item setBackgroundImage:buttonLandscapeImage ?: buttonImage ?: transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
@@ -1780,37 +1766,37 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
             [item setBackgroundImage:transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
         }
 
-        UIImage *backImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, false, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton.png"], navigationButtonColor);
-        UIImage *backHighlightedImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, true, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton_Highlighted.png"], navigationButtonColor);
-        UIImage *backLandscapeImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, false, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape.png"], navigationButtonColor);
-        UIImage *backLandscapeHighlightedImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, true, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape_Highlighted.png"], navigationButtonColor);
+        UIImage *backImage = classicThemeStyle ? OGCompatClassicNavigationButtonImage(true, false, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton.png"], navigationButtonColor);
+        UIImage *backHighlightedImage = classicThemeStyle ? OGCompatClassicNavigationButtonImage(true, true, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton_Highlighted.png"], navigationButtonColor);
+        UIImage *backLandscapeImage = classicThemeStyle ? OGCompatClassicNavigationButtonImage(true, false, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape.png"], navigationButtonColor);
+        UIImage *backLandscapeHighlightedImage = classicThemeStyle ? OGCompatClassicNavigationButtonImage(true, true, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape_Highlighted.png"], navigationButtonColor);
 
-        UIImage *backButtonImage = classicIOS6Style ? backImage : [backImage stretchableImageWithLeftCapWidth:(int)backImage.size.width topCapHeight:0];
-        UIImage *backButtonHighlightedImage = classicIOS6Style ? backHighlightedImage : [backHighlightedImage stretchableImageWithLeftCapWidth:(int)backHighlightedImage.size.width topCapHeight:0];
-        UIImage *backButtonLandscapeImage = classicIOS6Style ? backLandscapeImage : [backLandscapeImage stretchableImageWithLeftCapWidth:(int)backLandscapeImage.size.width topCapHeight:0];
-        UIImage *backButtonLandscapeHighlightedImage = classicIOS6Style ? backLandscapeHighlightedImage : [backLandscapeHighlightedImage stretchableImageWithLeftCapWidth:(int)backLandscapeHighlightedImage.size.width topCapHeight:0];
+        UIImage *backButtonImage = classicThemeStyle ? backImage : [backImage stretchableImageWithLeftCapWidth:(int)backImage.size.width topCapHeight:0];
+        UIImage *backButtonHighlightedImage = classicThemeStyle ? backHighlightedImage : [backHighlightedImage stretchableImageWithLeftCapWidth:(int)backHighlightedImage.size.width topCapHeight:0];
+        UIImage *backButtonLandscapeImage = classicThemeStyle ? backLandscapeImage : [backLandscapeImage stretchableImageWithLeftCapWidth:(int)backLandscapeImage.size.width topCapHeight:0];
+        UIImage *backButtonLandscapeHighlightedImage = classicThemeStyle ? backLandscapeHighlightedImage : [backLandscapeHighlightedImage stretchableImageWithLeftCapWidth:(int)backLandscapeHighlightedImage.size.width topCapHeight:0];
         [item setBackButtonBackgroundImage:backButtonImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
         [item setBackButtonBackgroundImage:backButtonHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
         [item setBackButtonBackgroundImage:backButtonLandscapeImage forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
         [item setBackButtonBackgroundImage:backButtonLandscapeHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
-        UIOffset backButtonTitleOffset = brandedIOS6Style ? navigationAppearance.backButtonTitleOffset : UIOffsetMake(classicIOS6Style ? 1.0f : 5.0f, classicIOS6Style ? 0.0f : -1.0f);
-        UIOffset backButtonLandscapeTitleOffset = brandedIOS6Style ? navigationAppearance.backButtonLandscapeTitleOffset : UIOffsetMake(classicIOS6Style ? 1.0f : 5.0f, classicIOS6Style ? -1.0f : -3.0f);
-        UIOffset buttonTitleOffset = brandedIOS6Style ? navigationAppearance.buttonTitleOffset : UIOffsetMake(0.0f, classicIOS6Style ? 0.0f : 1.0f);
+        UIOffset backButtonTitleOffset = brandedIOS6Style ? navigationAppearance.backButtonTitleOffset : UIOffsetMake(classicThemeStyle ? 1.0f : 5.0f, classicThemeStyle ? 0.0f : -1.0f);
+        UIOffset backButtonLandscapeTitleOffset = brandedIOS6Style ? navigationAppearance.backButtonLandscapeTitleOffset : UIOffsetMake(classicThemeStyle ? 1.0f : 5.0f, classicThemeStyle ? -1.0f : -3.0f);
+        UIOffset buttonTitleOffset = brandedIOS6Style ? navigationAppearance.buttonTitleOffset : UIOffsetMake(0.0f, classicThemeStyle ? 0.0f : 1.0f);
         [item setBackButtonTitlePositionAdjustment:backButtonTitleOffset forBarMetrics:UIBarMetricsDefault];
         [item setBackButtonTitlePositionAdjustment:backButtonLandscapeTitleOffset forBarMetrics:UIBarMetricsLandscapePhone];
         [item setTitlePositionAdjustment:buttonTitleOffset forBarMetrics:UIBarMetricsDefault];
 
-        UIColor *buttonTitleColor = brandedIOS6Style ? navigationAppearance.buttonTitleColor : (classicIOS6Style ? [UIColor whiteColor] : TGPresentation.current.pallete.accentColor);
-        UIColor *buttonShadowColor = brandedIOS6Style ? navigationAppearance.buttonShadowColor : (classicIOS6Style ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor]);
-        UIFont *buttonFont = brandedIOS6Style ? navigationAppearance.buttonFont : (classicIOS6Style ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(16.0f));
-        UIOffset buttonShadowOffset = brandedIOS6Style ? navigationAppearance.buttonShadowOffset : UIOffsetMake(0.0f, classicIOS6Style ? -1.0f : 0.0f);
+        UIColor *buttonTitleColor = brandedIOS6Style ? navigationAppearance.buttonTitleColor : (classicThemeStyle ? [UIColor whiteColor] : TGPresentation.current.pallete.accentColor);
+        UIColor *buttonShadowColor = brandedIOS6Style ? navigationAppearance.buttonShadowColor : (classicThemeStyle ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor]);
+        UIFont *buttonFont = brandedIOS6Style ? navigationAppearance.buttonFont : (classicThemeStyle ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(16.0f));
+        UIOffset buttonShadowOffset = brandedIOS6Style ? navigationAppearance.buttonShadowOffset : UIOffsetMake(0.0f, classicThemeStyle ? -1.0f : 0.0f);
         CGFloat highlightedButtonAlpha = brandedIOS6Style ? navigationAppearance.buttonHighlightedAlpha : 0.75f;
         [item setTitleTextAttributes:@{UITextAttributeTextColor:buttonTitleColor, UITextAttributeTextShadowColor:buttonShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:buttonShadowOffset], UITextAttributeFont:buttonFont} forState:UIControlStateNormal];
         [item setTitleTextAttributes:@{UITextAttributeTextColor:[buttonTitleColor colorWithAlphaComponent:highlightedButtonAlpha], UITextAttributeTextShadowColor:buttonShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:buttonShadowOffset], UITextAttributeFont:buttonFont} forState:UIControlStateHighlighted];
 
-        UIColor *effectiveNavigationTitleColor = brandedIOS6Style ? navigationAppearance.titleColor : (classicIOS6Style ? [UIColor whiteColor] : navigationTitleColor);
-        UIColor *navigationTitleShadowColor = brandedIOS6Style ? navigationAppearance.titleShadowColor : (classicIOS6Style ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor]);
-        UIOffset navigationTitleShadowOffset = brandedIOS6Style ? navigationAppearance.titleShadowOffset : UIOffsetMake(0.0f, classicIOS6Style ? -1.0f : 0.0f);
+        UIColor *effectiveNavigationTitleColor = brandedIOS6Style ? navigationAppearance.titleColor : (classicThemeStyle ? [UIColor whiteColor] : navigationTitleColor);
+        UIColor *navigationTitleShadowColor = brandedIOS6Style ? navigationAppearance.titleShadowColor : (classicThemeStyle ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor]);
+        UIOffset navigationTitleShadowOffset = brandedIOS6Style ? navigationAppearance.titleShadowOffset : UIOffsetMake(0.0f, classicThemeStyle ? -1.0f : 0.0f);
         UIFont *navigationTitleFont = brandedIOS6Style ? navigationAppearance.titleFont : TGBoldSystemFontOfSize(17.0f);
         [[TGNavigationBar appearance] setTitleTextAttributes:@{UITextAttributeTextColor:effectiveNavigationTitleColor, UITextAttributeTextShadowColor:navigationTitleShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:navigationTitleShadowOffset], UITextAttributeFont:navigationTitleFont}];
         CGFloat titleVerticalOffset = brandedIOS6Style ? (TGIsRetina() ? navigationAppearance.titleRetinaVerticalOffset : navigationAppearance.titleVerticalOffset) : (TGIsRetina() ? 0.5f : 0.0f);
@@ -1847,7 +1833,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
 
 + (TGInterfaceStyle)uncachedInterfaceStyle
 {
-    if (![self classicIOS6StyleAvailable])
+    if (![self classicThemeStyleAvailable])
         return TGInterfaceStyleModern;
 
     return (TGInterfaceStyle)TGCurrentInterfaceStyle();
@@ -1863,7 +1849,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
 
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setInteger:style forKey:TGInterfaceStyleDefaultsKey];
-    [defaults setBool:style != TGInterfaceStyleModern forKey:TGClassicIOS6StyleDefaultsKey];
+    [defaults setBool:style != TGInterfaceStyleModern forKey:OGCompatClassicStyleDefaultsKey];
     [defaults synchronize];
     OGPlatformInvalidateCachedDefaults();
     TGPresentationCachedInterfaceStyle = -1;
@@ -1877,7 +1863,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
     }
 }
 
-+ (bool)classicIOS6Style
++ (bool)classicThemeStyle
 {
     return [self interfaceStyle] != TGInterfaceStyleModern;
 }
@@ -1887,12 +1873,12 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
     return [self interfaceStyle] == TGInterfaceStyleFekla;
 }
 
-+ (bool)classicIOS6StyleAvailable
++ (bool)classicThemeStyleAvailable
 {
     return true;
 }
 
-+ (void)setClassicIOS6Style:(bool)enabled
++ (void)setClassicThemeStyle:(bool)enabled
 {
     [self setInterfaceStyle:enabled ? TGInterfaceStyleClassic : TGInterfaceStyleModern];
 }
@@ -1900,7 +1886,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
 
 + (bool)classicIOS6UsesPaletteAdaptedAssets
 {
-    if (![self classicIOS6Style] || [self brandedIOS6Style])
+    if (![self classicThemeStyle] || [self brandedIOS6Style])
         return false;
 
     TGPresentationPallete *pallete = currentPresentation != nil ? currentPresentation.pallete : [self currentSavedPallete];
@@ -1922,7 +1908,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
 
     TGPresentationPallete *pallete = currentPresentation != nil ? currentPresentation.pallete : [self currentSavedPallete];
     CGFloat intensity = pallete.isDark ? MAX(0.45f, alpha) : MIN(0.55f, MAX(0.18f, alpha * 0.6f));
-    return TGClassicIOS6RecoloredImage(image, tintColor, intensity);
+    return OGCompatClassicRecoloredImage(image, tintColor, intensity);
 }
 
 + (TGPresentationPallete *)currentSavedPallete

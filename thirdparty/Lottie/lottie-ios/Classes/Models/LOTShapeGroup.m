@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShape.m
 //  LottieAnimator
@@ -31,11 +31,11 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSArray *itemsJSON = [jsonDictionary objectForKey:@2];
+  NSArray *itemsJSON = jsonDictionary[@"it"];
   NSMutableArray *items = [NSMutableArray array];
   for (NSDictionary *itemJSON in itemsJSON) {
     id newItem = [LOTShapeGroup shapeItemWithJSON:itemJSON];
@@ -47,7 +47,7 @@
 }
 
 + (id)shapeItemWithJSON:(NSDictionary *)itemJSON {
-  NSString *type = [itemJSON objectForKey:@2];
+  NSString *type = itemJSON[@"ty"];
   if ([type isEqualToString:@"gr"]) {
     LOTShapeGroup *group = [[LOTShapeGroup alloc] initWithJSON:itemJSON];
     return group;
@@ -81,13 +81,13 @@
     LOTShapeStar *star = [[LOTShapeStar alloc] initWithJSON:itemJSON];
     return star;
   } else if ([type isEqualToString:@"mm"]) {
-    NSString *name = [itemJSON objectForKey:@2];
+    NSString *name = itemJSON[@"nm"];
     NSLog(@"%s: Warning: merge shape is not supported. name: %@", __PRETTY_FUNCTION__, name);
   } else if ([type isEqualToString:@"rp"]) {
     LOTShapeRepeater *repeater = [[LOTShapeRepeater alloc] initWithJSON:itemJSON];
     return repeater;
   } else {
-    NSString *name = [itemJSON objectForKey:@2];
+    NSString *name = itemJSON[@"nm"];
     NSLog(@"%s: Unsupported shape: %@ name: %@", __PRETTY_FUNCTION__, type, name);
   }
   

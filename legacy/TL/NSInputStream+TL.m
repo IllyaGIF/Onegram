@@ -18,17 +18,19 @@ static inline int roundUpInput(int numToRound, int multiple)
     return numToRound + multiple - remainder;
 }
 
-static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUInteger length)
+static bool OGCompatReadFully(NSInputStream *stream, void *destination, NSUInteger length)
 {
-    NSUInteger offset = 0;
-    while (offset < length)
+    uint8_t *cursor = (uint8_t *)destination;
+    NSUInteger remaining = length;
+    while (remaining != 0)
     {
-        NSInteger count = [stream read:buffer + offset maxLength:length - offset];
-        if (count <= 0)
-            break;
-        offset += (NSUInteger)count;
+        NSInteger received = [stream read:cursor maxLength:remaining];
+        if (received <= 0)
+            return false;
+        cursor += received;
+        remaining -= (NSUInteger)received;
     }
-    return (NSInteger)offset;
+    return true;
 }
 
 @implementation NSInputStream (TL)
@@ -37,7 +39,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int32_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 4) != 4)
+    if (!OGCompatReadFully(self, &value, 4))
     {
         TGLog(@"***** Couldn't read int32");
         
@@ -58,7 +60,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int32_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 4) != 4)
+    if (!OGCompatReadFully(self, &value, 4))
     {
         *failed = true;
         return 0;
@@ -78,7 +80,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int64_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (!OGCompatReadFully(self, &value, 8))
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readInt64 end of stream" userInfo:@{}];
     
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -95,7 +97,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int64_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (!OGCompatReadFully(self, &value, 8))
     {
         *failed = true;
         return 0;
@@ -115,7 +117,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     double value = 0.0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (!OGCompatReadFully(self, &value, 8))
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readDouble end of stream" userInfo:@{}];
     
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -132,7 +134,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     double value = 0.0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (!OGCompatReadFully(self, &value, 8))
     {
         *failed = true;
         return 0.0;
@@ -157,7 +159,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     uint8_t *bytes = (uint8_t *)malloc((size_t)length);
     if (bytes == NULL)
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readData allocation failed" userInfo:@{}];
-    if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    if (!OGCompatReadFully(self, bytes, (NSUInteger)length))
     {
         free(bytes);
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readData end of stream" userInfo:@{}];
@@ -175,7 +177,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 0)
         return [NSData data];
     uint8_t *bytes = (uint8_t *)malloc((size_t)length);
-    if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    if (bytes == NULL || !OGCompatReadFully(self, bytes, (NSUInteger)length))
     {
         if (bytes != NULL)
             free(bytes);
@@ -194,7 +196,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     uint8_t *bytes = (uint8_t *)malloc((size_t)length);
     if (bytes == NULL)
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readMutableData allocation failed" userInfo:@{}];
-    if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    if (!OGCompatReadFully(self, bytes, (NSUInteger)length))
     {
         free(bytes);
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readMutableData end of stream" userInfo:@{}];
@@ -212,7 +214,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 0)
         return [[NSMutableData alloc] init];
     uint8_t *bytes = (uint8_t *)malloc((size_t)length);
-    if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    if (bytes == NULL || !OGCompatReadFully(self, bytes, (NSUInteger)length))
     {
         if (bytes != NULL)
             free(bytes);
@@ -225,7 +227,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSString *)readString
 {
     uint8_t tmp = 0;
-    if (TLReadExactly(self, &tmp, 1) != 1)
+    if (!OGCompatReadFully(self, &tmp, 1))
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString end of stream" userInfo:@{}];
 
     int paddingBytes = 0;
@@ -233,7 +235,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+        if (!OGCompatReadFully(self, ((uint8_t *)&length) + 1, 3))
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString length end of stream" userInfo:@{}];
         length >>= 8;
         paddingBytes = roundUpInput(length, 4) - length;
@@ -247,7 +249,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
         uint8_t *bytes = (uint8_t *)malloc((size_t)length);
         if (bytes == NULL)
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString allocation failed" userInfo:@{}];
-        if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
+        if (!OGCompatReadFully(self, bytes, (NSUInteger)length))
         {
             free(bytes);
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString data end of stream" userInfo:@{}];
@@ -259,7 +261,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 
     for (int i = 0; i < paddingBytes; i++)
     {
-        if (TLReadExactly(self, &tmp, 1) != 1)
+        if (!OGCompatReadFully(self, &tmp, 1))
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString padding end of stream" userInfo:@{}];
     }
     return string;
@@ -268,7 +270,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSString *)readString:(bool *)failed
 {
     uint8_t tmp = 0;
-    if (TLReadExactly(self, &tmp, 1) != 1)
+    if (!OGCompatReadFully(self, &tmp, 1))
     {
         *failed = true;
         return nil;
@@ -279,7 +281,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+        if (!OGCompatReadFully(self, ((uint8_t *)&length) + 1, 3))
         {
             *failed = true;
             return nil;
@@ -294,7 +296,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length > 0)
     {
         uint8_t *bytes = (uint8_t *)malloc((size_t)length);
-        if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+        if (bytes == NULL || !OGCompatReadFully(self, bytes, (NSUInteger)length))
         {
             if (bytes != NULL)
                 free(bytes);
@@ -311,7 +313,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 
     for (int i = 0; i < paddingBytes; i++)
     {
-        if (TLReadExactly(self, &tmp, 1) != 1)
+        if (!OGCompatReadFully(self, &tmp, 1))
         {
             *failed = true;
             return nil;
@@ -323,7 +325,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readBytes
 {
     uint8_t tmp = 0;
-    if (TLReadExactly(self, &tmp, 1) != 1)
+    if (!OGCompatReadFully(self, &tmp, 1))
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes end of stream" userInfo:@{}];
 
     int paddingBytes = 0;
@@ -331,7 +333,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+        if (!OGCompatReadFully(self, ((uint8_t *)&length) + 1, 3))
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes length end of stream" userInfo:@{}];
         length >>= 8;
         paddingBytes = roundUpInput(length, 4) - length;
@@ -342,7 +344,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     uint8_t *bytes = length == 0 ? NULL : (uint8_t *)malloc((size_t)length);
     if (length != 0 && bytes == NULL)
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes allocation failed" userInfo:@{}];
-    if (length != 0 && TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    if (length != 0 && !OGCompatReadFully(self, bytes, (NSUInteger)length))
     {
         free(bytes);
         @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes data end of stream" userInfo:@{}];
@@ -351,7 +353,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     NSData *result = length == 0 ? [NSData data] : [NSData dataWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
     for (int i = 0; i < paddingBytes; i++)
     {
-        if (TLReadExactly(self, &tmp, 1) != 1)
+        if (!OGCompatReadFully(self, &tmp, 1))
             @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes padding end of stream" userInfo:@{}];
     }
     return result;
@@ -360,7 +362,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readBytes:(bool *)failed
 {
     uint8_t tmp = 0;
-    if (TLReadExactly(self, &tmp, 1) != 1)
+    if (!OGCompatReadFully(self, &tmp, 1))
     {
         *failed = true;
         return nil;
@@ -371,7 +373,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+        if (!OGCompatReadFully(self, ((uint8_t *)&length) + 1, 3))
         {
             *failed = true;
             return nil;
@@ -383,7 +385,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
         paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
 
     uint8_t *bytes = length == 0 ? NULL : (uint8_t *)malloc((size_t)length);
-    if (length != 0 && (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length))
+    if (length != 0 && (bytes == NULL || !OGCompatReadFully(self, bytes, (NSUInteger)length)))
     {
         if (bytes != NULL)
             free(bytes);
@@ -394,7 +396,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     NSData *result = length == 0 ? [NSData data] : [NSData dataWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
     for (int i = 0; i < paddingBytes; i++)
     {
-        if (TLReadExactly(self, &tmp, 1) != 1)
+        if (!OGCompatReadFully(self, &tmp, 1))
         {
             *failed = true;
             return nil;

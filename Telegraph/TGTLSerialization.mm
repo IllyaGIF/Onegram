@@ -7,7 +7,7 @@
  */
 
 #import "TGTLSerialization.h"
-#import "IOS6NotificationProbe.h"
+#import "OGNotificationProbe.h"
 
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
@@ -39,18 +39,21 @@
 
 @end
 
-static void TGLogTLParseError(id error)
+static void OGCompatLogTLParseError(id error)
 {
-    if (![error isKindOfClass:[NSError class]])
+    if ([error isKindOfClass:[NSError class]])
     {
-        IOS6NotificationProbe(@"PARSER", @"tl_error class=%@", NSStringFromClass([error class]));
-        TGLog(@"TL parse error class=%@", NSStringFromClass([error class]));
+        NSError *failure = error;
+        NSString *domain = failure.domain ?: @"TL";
+        long code = (long)failure.code;
+        OGNotificationProbe(@"PARSER", @"tl_error domain=%@ code=%ld", domain, code);
+        TGLog(@"TL parse error domain=%@ code=%ld description=%@", domain, code, failure.localizedDescription ?: @"");
         return;
     }
 
-    NSError *typedError = (NSError *)error;
-    IOS6NotificationProbe(@"PARSER", @"tl_error domain=%@ code=%ld", typedError.domain ?: @"TL", (long)typedError.code);
-    TGLog(@"TL parse error domain=%@ code=%ld description=%@", typedError.domain ?: @"TL", (long)typedError.code, typedError.localizedDescription ?: @"");
+    NSString *className = NSStringFromClass([error class]);
+    OGNotificationProbe(@"PARSER", @"tl_error class=%@", className);
+    TGLog(@"TL parse error class=%@", className);
 }
 
 @implementation TGTLSerialization
@@ -102,7 +105,7 @@ static void TGLogTLParseError(id error)
     __autoreleasing NSError *error = nil;
     id topObject = TLMetaClassStore::constructObject(is, topSignature, nil, nil, &error);
     if (error != nil)
-        TGLogTLParseError(error);
+        OGCompatLogTLParseError(error);
     
     [is close];
     
@@ -248,7 +251,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
         __autoreleasing NSError *viewsError = nil;
         NSDictionary *views = [TGIOS6MessageViewsRpc parseResponseFromStream:is signature:topSignature error:&viewsError];
         if (viewsError != nil)
-            TGLogTLParseError(viewsError);
+            OGCompatLogTLParseError(viewsError);
         [is close];
         return views;
     }
@@ -264,7 +267,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
         }
         if (discussionError != nil)
         {
-            TGLogTLParseError(discussionError);
+            OGCompatLogTLParseError(discussionError);
             NSLog(@"COMMENTS discussion.parse.error top=0x%08x description=%@", topSignature, discussionError.localizedDescription ?: @"");
             [is close];
             return nil;
@@ -280,7 +283,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     }
     if (error != nil)
     {
-        TGLogTLParseError(error);
+        OGCompatLogTLParseError(error);
     }
     
     [is close];
@@ -340,7 +343,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
         if (document == nil || error != nil)
         {
             if (error != nil)
-                TGLogTLParseError(error);
+                OGCompatLogTLParseError(error);
             TGLog(@"PROFILEMUSIC document parse failed index=%d sig=0x%08x", i, documentSignature);
             failed = true;
             break;
@@ -455,7 +458,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
 
 - (NSUInteger)currentLayer
 {
-    return 228;
+    return 233;
 }
 
 @end

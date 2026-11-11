@@ -7,8 +7,9 @@
 //
 
 #import "STPPassKitCompatibility.h"
+#import "OGStripeCompat.h"
 #import <objc/runtime.h>
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 #import "PKPaymentAuthorizationViewController+Stripe_Blocks.h"
 #endif
 #import "UIViewController+Stripe_ParentViewController.h"
@@ -31,7 +32,7 @@
 @property(nonatomic)STPTheme *theme;
 @property(nonatomic)id<STPBackendAPIAdapter> apiAdapter;
 @property(nonatomic)STPAPIClient *apiClient;
-@property(nonatomic)STPPromise *loadingPromise;
+@property(nonatomic)OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *loadingPromise;
 
 // these wrap hostViewController's promises because the hostVC is nil at init-time
 @property(nonatomic)STPVoidPromise *willAppearPromise;
@@ -39,7 +40,7 @@
 
 @property(nonatomic, unsafe_unretained)STPPaymentMethodsViewController *paymentMethodsViewController;
 @property(nonatomic)id<STPPaymentMethod> selectedPaymentMethod;
-@property(nonatomic)NSArray *paymentMethods;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *paymentMethods;
 
 @property(nonatomic)STPPaymentContextAmountModel *paymentAmountModel;
 
@@ -77,11 +78,11 @@
         return;
     }
     WEAK(self);
-    self.loadingPromise = [[[STPPromise new] onSuccess:^(STPPaymentMethodTuple *tuple) {
+    self.loadingPromise = [[[OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) new] onSuccess:^(STPPaymentMethodTuple *tuple) {
         STRONG(self);
         self.paymentMethods = tuple.paymentMethods;
         self.selectedPaymentMethod = tuple.selectedPaymentMethod;
-    }] onFailure:^(NSError * error) {
+    }] onFailure:^(NSError * _Nonnull error) {
         STRONG(self);
         if (self.hostViewController) {
             [self.didAppearPromise onSuccess:^(__unused id value) {
@@ -95,7 +96,7 @@
             }];
         }
     }];
-    [self.apiAdapter retrieveCustomer:^(STPCustomer * customer, NSError * error) {
+    [self.apiAdapter retrieveCustomer:^(STPCustomer * _Nullable customer, NSError * _Nullable error) {
         stpDispatchToMainThreadIfNecessary(^{
             STRONG(self);
             if (!self) {
@@ -106,7 +107,7 @@
                 return;
             }
             STPCard *selectedCard;
-            NSMutableArray *cards = [NSMutableArray array];
+            OG_COMPAT_GENERIC(NSMutableArray, STPCard *) *cards = [NSMutableArray array];
             for (id<STPSource> source in customer.sources) {
                 if ([source isKindOfClass:[STPCard class]]) {
                     STPCard *card = (STPCard *)source;
@@ -146,16 +147,16 @@
     }];
 }
 
-- (STPPromise *)currentValuePromise {
+- (OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *)currentValuePromise {
     WEAK(self);
-    return (STPPromise *)[self.loadingPromise map:^id(__unused STPPaymentMethodTuple *value) {
+    return (OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *)[self.loadingPromise map:^id _Nonnull(__unused STPPaymentMethodTuple *value) {
         STRONG(self);
         return [STPPaymentMethodTuple tupleWithPaymentMethods:self.paymentMethods
                                         selectedPaymentMethod:self.selectedPaymentMethod];
     }];
 }
 
-- (void)setPaymentMethods:(NSArray *)paymentMethods {
+- (void)setPaymentMethods:(OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *)paymentMethods {
     _paymentMethods = [paymentMethods sortedArrayUsingComparator:^NSComparisonResult(id<STPPaymentMethod> obj1, id<STPPaymentMethod> obj2) {
         Class applePayKlass = [STPApplePayPaymentMethod class];
         Class cardKlass = [STPCard class];
@@ -193,12 +194,12 @@
     return [self.paymentAmountModel paymentAmountWithCurrency:self.paymentCurrency];
 }
 
-- (void)setPaymentSummaryItems:(NSArray *)paymentSummaryItems {
+- (void)setPaymentSummaryItems:(OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItems {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability)
     self.paymentAmountModel = [[STPPaymentContextAmountModel alloc] initWithPaymentSummaryItems:paymentSummaryItems];
 }
 
-- (NSArray *)paymentSummaryItems {
+- (OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItems {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability)
     return [self.paymentAmountModel paymentSummaryItemsWithCurrency:self.paymentCurrency
                                                         companyName:self.configuration.companyName];
@@ -276,7 +277,7 @@
 - (void)requestPayment {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability);
     WEAK(self);
-    [[[self.didAppearPromise voidFlatMap:^STPPromise *{
+    [[[self.didAppearPromise voidFlatMap:^STPPromise * _Nonnull{
         STRONG(self);
         return self.loadingPromise;
     }] onSuccess:^(__unused STPPaymentMethodTuple *tuple) {
@@ -295,7 +296,7 @@
         }
         else if ([self.selectedPaymentMethod isKindOfClass:[STPCard class]]) {
             STPPaymentResult *result = [[STPPaymentResult alloc] initWithSource:(STPCard *)self.selectedPaymentMethod];
-            [self.delegate paymentContext:self didCreatePaymentResult:result completion:^(NSError * error) {
+            [self.delegate paymentContext:self didCreatePaymentResult:result completion:^(NSError * _Nullable error) {
                 stpDispatchToMainThreadIfNecessary(^{
                     if (error) {
                         [self.delegate paymentContext:self didFinishWithStatus:STPPaymentStatusError error:error];
@@ -305,7 +306,7 @@
                 });
             }];
         }
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
         else if ([self.selectedPaymentMethod isKindOfClass:[STPApplePayPaymentMethod class]]) {
             PKPaymentRequest *paymentRequest = [self buildPaymentRequest];
             STPApplePayTokenHandlerBlock applePayTokenHandler = ^(STPToken *token, STPErrorBlock tokenCompletion) {
@@ -332,7 +333,7 @@
                              stp_controllerWithPaymentRequest:paymentRequest
                                                     apiClient:self.apiClient
                                               onTokenCreation:applePayTokenHandler
-                                                     onFinish:^(STPPaymentStatus status, NSError * error) {
+                                                     onFinish:^(STPPaymentStatus status, NSError * _Nullable error) {
                                                          [self.hostViewController dismissViewControllerAnimated:YES completion:^{
                                                              [self.delegate paymentContext:self
                                                                            didFinishWithStatus:status
@@ -352,13 +353,13 @@
 
 - (PKPaymentRequest *)buildPaymentRequest {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability);
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
     if (!self.configuration.appleMerchantIdentifier || !self.paymentAmount) {
         return nil;
     }
     PKPaymentRequest *paymentRequest = [Stripe paymentRequestWithMerchantIdentifier:self.configuration.appleMerchantIdentifier];
     
-    NSArray *summaryItems = self.paymentSummaryItems;
+    OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *summaryItems = self.paymentSummaryItems;
     paymentRequest.paymentSummaryItems = summaryItems;
     paymentRequest.requiredBillingAddressFields = [STPAddress applePayAddressFieldsFromBillingAddressFields:self.configuration.requiredBillingAddressFields];
     paymentRequest.currencyCode = self.paymentCurrency.uppercaseString;

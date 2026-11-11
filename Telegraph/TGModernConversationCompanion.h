@@ -28,6 +28,7 @@
 @class TGVenueAttachment;
 @class TGGameMediaAttachment;
 @class TGPreparedMessage;
+@class TGPreparedPollMessage;
 
 @class TGModernConversationEmptyListPlaceholderView;
 @class TGModernConversationInputPanel;
@@ -197,6 +198,7 @@ typedef enum {
 - (void)controllerWantsToSendRemoteVideoWithMedia:(TGVideoMediaAttachment *)media asReplyToMessageId:(int32_t)replyMessageId text:(NSString *)text entities:(NSArray *)entities botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup;
 - (void)controllerWantsToSendContact:(TGUser *)contactUser asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup;
 - (void)controllerWantsToSendGame:(TGGameMediaAttachment *)gameMedia asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup;
+- (void)controllerWantsToSendPoll:(TGPreparedPollMessage *)pollMessage asReplyToMessageId:(int32_t)replyMessageId;
 - (void)controllerWantsToResendMessages:(NSArray *)messageIds;
 - (void)controllerWantsToForwardMessages:(NSArray *)messageIndices;
 - (void)controllerWantsToCreateContact:(int64_t)uid firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber attachment:(TGContactMediaAttachment *)attachment;
@@ -233,6 +235,8 @@ typedef enum {
 - (bool)allowSelfDescructingMedia;
 - (bool)allowLiveLocations;
 - (bool)allowMediaGrouping;
+- (bool)allowPollSending;
+- (bool)allowPublicPollVoters;
 - (bool)encryptUploads;
 - (bool)canPostMessages;
 - (bool)skipServiceMessages;

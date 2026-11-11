@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTRenderGroup.h
 //  Lottie
@@ -11,11 +11,11 @@
 
 @interface LOTRenderGroup : LOTRenderNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode * )inputNode
-                                   contents:(NSArray * )contents
-                                    keyname:(NSString * )keyname;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode * _Nullable)inputNode
+                                   contents:(NSArray * _Nonnull)contents
+                                    keyname:(NSString * _Nullable)keyname;
 
-@property (nonatomic, strong, readonly) CALayer *  containerLayer;
+@property (nonatomic, strong, readonly) CALayer * _Nonnull containerLayer;
 
 @end
 

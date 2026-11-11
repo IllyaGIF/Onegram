@@ -11,6 +11,8 @@ extern NSString *authorNameYou;
 @class TGModernConversationTitlePanel;
 
 @class TGPresentation;
+@class TGConversation;
+@class TGDialogFilter;
 
 @interface TGDialogListController : TGViewController <ASWatcher>
 
@@ -72,5 +74,10 @@ extern NSString *authorNameYou;
 - (SSignal *)visibleUnreadDialogsCountSignal;
 
 - (int64_t)currentVisibleUnreadConversation;
+
+- (NSArray *)dialogFilterConversations;
+- (bool)dialogFilter:(TGDialogFilter *)filter matchesConversation:(TGConversation *)conversation;
+- (bool)canAddPeerIdToDialogFilter:(int64_t)peerId;
+- (void)presentAddToDialogFilterForPeerId:(int64_t)peerId;
 
 @end

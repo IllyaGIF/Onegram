@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShape.h
 //  LottieAnimator
@@ -12,11 +12,11 @@
 
 @interface LOTShapeGroup : NSObject
 
-- (instancetype )initWithJSON:(NSDictionary *)jsonDictionary;
+- (instancetype _Nonnull)initWithJSON:(NSDictionary *_Nonnull)jsonDictionary;
 
-@property (nonatomic, readonly) NSString *keyname;
-@property (nonatomic, readonly) NSArray *items;
+@property (nonatomic, readonly) NSString *_Nonnull keyname;
+@property (nonatomic, readonly) NSArray *_Nonnull items;
 
-+ (id )shapeItemWithJSON:(NSDictionary * )itemJSON;
++ (id _Nullable)shapeItemWithJSON:(NSDictionary * _Nonnull)itemJSON;
 
 @end

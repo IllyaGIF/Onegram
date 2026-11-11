@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTKeypath.h
 //  Lottie_iOS
@@ -9,7 +9,7 @@
 
 #import <Foundation/Foundation.h>
 
-extern NSString *  const kLOTKeypathEnd;
+extern NSString * _Nonnull const kLOTKeypathEnd;
 
 /*!
  @brief LOTKeypath is an object that describes a keypath search for nodes in the animation JSON. LOTKeypath matches views inside of LOTAnimationView to their After Effects counterparts.
@@ -46,7 +46,7 @@ extern NSString *  const kLOTKeypathEnd;
  @return A new LOTKeypath
  */
 
-+ ( LOTKeypath *)keypathWithString:( NSString *)keypath;
++ (LOTKeypath *_Nonnull)keypathWithString:(NSString *_Nonnull)keypath;
 
 /*!
  @brief Creates a LOTKeypath from a list of keypath string objects, can use wildcards @"*" and fuzzy depth wild cards @"**".
@@ -62,23 +62,23 @@ extern NSString *  const kLOTKeypathEnd;
  @return A new LOTKeypath
  */
 
-+ ( LOTKeypath *)keypathWithKeys:( NSString *)firstKey, ...
++ (LOTKeypath *_Nonnull)keypathWithKeys:(NSString *_Nonnull)firstKey, ...
   NS_REQUIRES_NIL_TERMINATION;
 
-@property (nonatomic, readonly) NSString *absoluteKeypath;
-@property (nonatomic, readonly) NSString *currentKey;
-@property (nonatomic, readonly) NSString *currentKeyPath;
+@property (nonatomic, readonly) NSString *_Nonnull absoluteKeypath;
+@property (nonatomic, readonly) NSString *_Nonnull currentKey;
+@property (nonatomic, readonly) NSString *_Nonnull currentKeyPath;
 
-@property (nonatomic, readonly) NSDictionary *searchResults;
+@property (nonatomic, readonly) NSDictionary *_Nonnull searchResults;
 
 @property (nonatomic, readonly) BOOL hasFuzzyWildcard;
 @property (nonatomic, readonly) BOOL hasWildcard;
 @property (nonatomic, readonly) BOOL endOfKeypath;
 
-- (BOOL)pushKey:( NSString *)key;
+- (BOOL)pushKey:(NSString *_Nonnull)key;
 - (void)popKey;
 - (void)popToRootKey;
 
-- (void)addSearchResultForCurrentPath:(id )result;
+- (void)addSearchResultForCurrentPath:(id _Nonnull)result;
 
 @end

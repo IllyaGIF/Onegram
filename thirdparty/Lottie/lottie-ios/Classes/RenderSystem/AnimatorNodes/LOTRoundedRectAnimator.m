@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTRoundedRectAnimator.m
 //  Lottie
@@ -19,8 +19,8 @@
   BOOL _reversed;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                             shapeRectangle:(LOTShapeRectangle *)shapeRectangle {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                             shapeRectangle:(LOTShapeRectangle *_Nonnull)shapeRectangle {
   self = [super initWithInputNode:inputNode keyName:shapeRectangle.keyname];
   if (self) {
     _centerInterpolator = [[LOTPointInterpolator alloc] initWithKeyframes:shapeRectangle.position.keyframes];

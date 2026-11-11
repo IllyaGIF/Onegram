@@ -7,18 +7,19 @@
 //
 
 #import "STPStringUtils.h"
+#import "OGStripeCompat.h"
 
 @implementation STPStringUtils
 
 + (void)parseRangesFromString:(NSString *)string
-                     withTags:(NSSet *)tags 
+                     withTags:(OG_COMPAT_GENERIC(NSSet, NSString *) *)tags 
                    completion:(STPTaggedSubstringsCompletionBlock)completion {
     if (!completion) {
         return;
     }
     
-    NSMutableDictionary *interiorRangesToTags = [NSMutableDictionary new];
-    NSMutableDictionary *tagsToRange = [NSMutableDictionary new];
+    OG_COMPAT_GENERIC(NSMutableDictionary, NSValue *, NSString *) *interiorRangesToTags = [NSMutableDictionary new];
+    OG_COMPAT_GENERIC(NSMutableDictionary, NSString *, NSValue *) *tagsToRange = [NSMutableDictionary new];
     
     for (NSString *tag in tags) {
         [self parseRangeFromString:string 
@@ -36,7 +37,7 @@
         
     }
     
-    NSArray *sortedRanges = [[interiorRangesToTags allKeys] sortedArrayUsingComparator:^NSComparisonResult(NSValue * obj1, NSValue * obj2) {
+    OG_COMPAT_GENERIC(NSArray, NSValue *) *sortedRanges = [[interiorRangesToTags allKeys] sortedArrayUsingComparator:^NSComparisonResult(NSValue *  _Nonnull obj1, NSValue *  _Nonnull obj2) {
         NSRange range1 = obj1.rangeValue;
         NSRange range2 = obj2.rangeValue;
         

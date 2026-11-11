@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 // Kindly stolen from https://github.com/BigZaphod/Chameleon
 /*
  * Copyright (c) 2011, The Iconfactory. All rights reserved.

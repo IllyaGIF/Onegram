@@ -39,20 +39,9 @@
         _backgroundView.image = [TGComponentsImageNamed(@"LocationTopPanel") resizableImageWithCapInsets:UIEdgeInsetsMake(15.0f, 15.0f, 18.0f, 15.0f)];
         [self addSubview:_backgroundView];
         
-        UIView *mapModeBackgroundView = nil;
-        if (iosMajorVersion() >= 8)
-        {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-            _mapModeBackgroundView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
-            mapModeBackgroundView = _mapModeBackgroundView;
-        }
-        else
-        {
-            _mapModeBackgroundView = [[UIView alloc] init];
+        _mapModeBackgroundView = [[UIView alloc] initWithFrame:CGRectZero];
+        if (iosMajorVersion() < 8)
             _mapModeBackgroundView.backgroundColor = [UIColor whiteColor];
-            mapModeBackgroundView = _mapModeBackgroundView;
-        }
         _mapModeBackgroundView.clipsToBounds = true;
         _mapModeBackgroundView.layer.cornerRadius = 4.0f;
         _mapModeBackgroundView.alpha = 0.0f;
@@ -63,7 +52,7 @@
         _mapModeControl = [[TGLocationMapModeControl alloc] init];
         _mapModeControl.selectedSegmentIndex = 0;
         [_mapModeControl addTarget:self action:@selector(modeChanged:) forControlEvents:UIControlEventValueChanged];
-        [mapModeBackgroundView addSubview:_mapModeControl];
+        [_mapModeBackgroundView addSubview:_mapModeControl];
         
         _mapModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 45.0f, 45.0f)];
         _mapModeButton.adjustsImageWhenHighlighted = false;
@@ -88,28 +77,7 @@
 {
     _pallete = pallete;
     
-    if (!false)
-        _mapModeBackgroundView.backgroundColor = pallete.backgroundColor;
-    else
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-#endif
-    
-    if (![pallete.backgroundColor isEqual:[UIColor whiteColor]])
-    {
-        UIGraphicsBeginImageContextWithOptions(_backgroundView.image.size, false, 0.0f);
-        [_backgroundView.image drawAtPoint:CGPointZero];
-        
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        [pallete.backgroundColor setFill];
-        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(4.0f, 4.0f, 46.5f, 46.5f) cornerRadius:10.0f];
-        CGContextAddPath(context, path.CGPath);
-        CGContextFillPath(context);
-        
-        UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        
-        _backgroundView.image = [image resizableImageWithCapInsets:UIEdgeInsetsMake(15.0f, 15.0f, 18.0f, 15.0f)];
-    }
+    _mapModeBackgroundView.backgroundColor = pallete.backgroundColor;
     
     _separatorView.backgroundColor = pallete.separatorColor;
     

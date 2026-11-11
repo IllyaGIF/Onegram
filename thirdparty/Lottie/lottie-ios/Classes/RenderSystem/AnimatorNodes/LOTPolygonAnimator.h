@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTPolygonAnimator.h
 //  Lottie
@@ -12,7 +12,7 @@
 
 @interface LOTPolygonAnimator : LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                             shapePolygon:(LOTShapeStar *)shapeStar;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                             shapePolygon:(LOTShapeStar *_Nonnull)shapeStar;
 
 @end

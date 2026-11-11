@@ -12,13 +12,13 @@
 
 @interface STPCheckoutBootstrapResponse : NSObject
 
-+ (instancetype)bootstrapResponseWithData:(NSData *)data
-                                       URLResponse:(NSURLResponse *)response;
++ (instancetype _Nullable)bootstrapResponseWithData:(NSData *_Nullable)data
+                                       URLResponse:(NSURLResponse *_Nullable)response;
 
 @property(nonatomic, readonly)BOOL liveMode;
 @property(nonatomic, readonly)BOOL accountsDisabled;
-@property(nonatomic, readonly)NSString *sessionID;
-@property(nonatomic, readonly)NSString *csrfToken;
-@property(nonatomic, readonly)STPAPIClient *tokenClient;
+@property(nonatomic, readonly)NSString *_Nonnull sessionID;
+@property(nonatomic, readonly)NSString *_Nonnull csrfToken;
+@property(nonatomic, readonly)STPAPIClient *_Nonnull tokenClient;
 
 @end

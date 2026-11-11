@@ -116,7 +116,11 @@ const CGFloat TGMenuSheetButtonItemViewHeight = 57.0f;
 
 - (void)_updateForType:(TGMenuSheetButtonType)type
 {
-    _button.titleLabel.font = (type == TGMenuSheetButtonTypeCancel || type == TGMenuSheetButtonTypeSend) ? TGMediumSystemFontOfSize(20) : TGSystemFontOfSize(20);
+    bool emphasized = type == TGMenuSheetButtonTypeCancel || type == TGMenuSheetButtonTypeSend;
+    UIFont *palleteFont = emphasized ? _pallete.cancelButtonFont : _pallete.buttonFont;
+    _button.titleLabel.font = palleteFont != nil ? palleteFont : (emphasized ? TGMediumSystemFontOfSize(20) : TGSystemFontOfSize(20));
+    [_button setTitleShadowColor:_pallete.textShadowColor forState:UIControlStateNormal];
+    _button.titleLabel.shadowOffset = _pallete.textShadowColor != nil ? _pallete.textShadowOffset : CGSizeZero;
     UIColor *accentColor = _dark ? UIColorRGB(0x4fbcff) : TGAccentColor();
     if (_pallete != nil)
         accentColor = _pallete.accentColor;

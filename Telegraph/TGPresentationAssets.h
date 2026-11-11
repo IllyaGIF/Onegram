@@ -144,6 +144,7 @@
 + (UIImage *)stickersRecentIcon:(UIColor *)color;
 + (UIImage *)stickersFavoritesIcon:(UIColor *)color;
 + (UIImage *)stickersSettingsIcon:(UIColor *)color;
++ (UIImage *)stickersCustomEmojiIcon:(UIColor *)color;
 + (UIImage *)stickersHollowButton:(UIColor *)color radius:(CGFloat)radius;
 + (UIImage *)stickersPlaceholderImage:(UIColor *)color;
 

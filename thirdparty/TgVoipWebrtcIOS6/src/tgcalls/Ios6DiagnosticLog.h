@@ -39,4 +39,16 @@ static inline void TGIOS6DiagnosticSyslog(int priority, const char *format, ...)
 
 #define syslog(...) do { if (TGIOS6NativeDiagnosticsEnabled()) TGIOS6DiagnosticSyslog(__VA_ARGS__); } while (0)
 
+#define OG_COMPAT_TRACE_STDERR(format, ...) do { \
+    fprintf(stderr, "IOS6WEBRTC " format "\n", ##__VA_ARGS__); \
+    fflush(stderr); \
+} while (0)
+
+#define OG_COMPAT_TRACE_SYSLOG(format, ...) syslog(LOG_NOTICE, "IOS6WEBRTC " format, ##__VA_ARGS__)
+
+#define OG_COMPAT_TRACE(format, ...) do { \
+    OG_COMPAT_TRACE_STDERR(format, ##__VA_ARGS__); \
+    OG_COMPAT_TRACE_SYSLOG(format, ##__VA_ARGS__); \
+} while (0)
+
 #endif

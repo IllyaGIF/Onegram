@@ -34,6 +34,7 @@
 
 extern NSString *TGMentionUidAttributeName;
 extern NSString *TGMentionBoldAttributeName;
+extern NSString *TGCustomEmojiAttributeName;
 @class TGMessageEntity;
 
 @class TGKeyCommandController;
@@ -109,6 +110,7 @@ extern NSString *TGMentionBoldAttributeName;
 - (void)selectRange:(NSRange)range force:(bool)force;
 
 - (NSString *)textWithEntities:(__autoreleasing NSArray **)entities;
+- (void)insertCustomEmojiWithDocumentId:(int64_t)documentId alt:(NSString *)alt image:(UIImage *)image;
 
 + (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int64_t)userId;
 + (bool)isMentionCharacter:(unichar)character;

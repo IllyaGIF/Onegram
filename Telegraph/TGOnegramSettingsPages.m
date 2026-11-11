@@ -166,7 +166,7 @@ static NSString *TGOnegramTimeZoneTitle(NSInteger minutes)
 
 - (bool)rebuildsForSettingKey:(NSString *)key
 {
-    return [key hasPrefix:@"Onegram.Translator."] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneManual] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneOffset];
+    return [key hasPrefix:@"Onegram.Translator."] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneManual] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneOffset] || [key isEqualToString:TGOnegramSettingGeneralNewChats] || [key isEqualToString:TGOnegramSettingGeneralMessageMenuStyle];
 }
 
 - (NSArray *)buildSections
@@ -296,8 +296,11 @@ static NSString *TGOnegramTimeZoneTitle(NSInteger minutes)
             [self switchWithTitle:TGLocalized(@"OnegramSettings.ModernInterface") key:TGOnegramSettingInterfaceModern description:TGLocalized(@"OnegramSettings.ModernInterfaceInfo")]
         ] footer:nil] atIndex:0];
 
-    [sections addObject:[self sectionWithHeader:TGLocalized(@"OnegramSettings.General") items:@[
-        [self switchWithTitle:TGLocalized(@"OnegramSettings.NewChats") key:TGOnegramSettingGeneralNewChats description:TGLocalized(@"OnegramSettings.NewChatsInfo")],
+    NSMutableArray *generalItems = [[NSMutableArray alloc] init];
+    [generalItems addObject:[self switchWithTitle:TGLocalized(@"OnegramSettings.NewChats") key:TGOnegramSettingGeneralNewChats description:TGLocalized(@"OnegramSettings.NewChatsInfo")]];
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
+        [generalItems addObject:[self choiceWithTitle:TGLocalized(@"OnegramSettings.MessageMenuStyle") key:TGOnegramSettingGeneralMessageMenuStyle options:@[TGLocalized(@"OnegramSettings.MessageMenuStyleIOS"), TGLocalized(@"OnegramSettings.MessageMenuStyleAndroid")] description:TGLocalized(@"OnegramSettings.MessageMenuStyleInfo")]];
+    [generalItems addObjectsFromArray:@[
         [self switchWithTitle:TGLocalized(@"Appearance.NewGestures") value:[[NSUserDefaults standardUserDefaults] boolForKey:@"TGIOS6NewChatListGestures"] toggled:^(bool value)
         {
             NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -310,12 +313,13 @@ static NSString *TGOnegramTimeZoneTitle(NSInteger minutes)
         [self switchWithTitle:TGLocalized(@"OnegramSettings.ExactNumbers") key:TGOnegramSettingGeneralExactNumbers description:TGLocalized(@"OnegramSettings.ExactNumbersInfo")],
         [self switchWithTitle:TGLocalized(@"OnegramSettings.ExactLastSeen") key:TGOnegramSettingGeneralExactLastSeen description:TGLocalized(@"OnegramSettings.ExactLastSeenInfo")],
         [self switchWithTitle:TGLocalized(@"OnegramSettings.FilterZalgo") key:TGOnegramSettingGeneralFilterZalgo description:TGLocalized(@"OnegramSettings.FilterZalgoInfo")]
-    ] footer:nil]];
+    ]];
+    [sections addObject:[self sectionWithHeader:TGLocalized(@"OnegramSettings.General") items:generalItems footer:nil]];
 
     TGMessageMenuPreviewCollectionItem *menuPreview = [[TGMessageMenuPreviewCollectionItem alloc] init];
     menuPreview.menuScale = (CGFloat)[TGOnegramSettings integerForKey:TGOnegramSettingMessagesMenuScale] / 100.0f;
     __weak TGMessageMenuPreviewCollectionItem *weakMenuPreview = menuPreview;
-    TGOnegramSliderCollectionItem *menuSize = [self sliderWithTitle:TGLocalized(@"OnegramSettings.MenuSize") key:TGOnegramSettingMessagesMenuScale minimumValue:70 maximumValue:110 formatter:^NSString *(NSInteger value)
+    TGOnegramSliderCollectionItem *menuSize = [self sliderWithTitle:TGLocalized(@"OnegramSettings.MenuSize") key:TGOnegramSettingMessagesMenuScale minimumValue:70 maximumValue:130 formatter:^NSString *(NSInteger value)
     {
         return [NSString stringWithFormat:@"%ld%%", (long)value];
     }];

@@ -242,9 +242,8 @@ const NSInteger PGCameraFrameRate = 30;
     (void)monitorSubjectAreaChange;
 }
 
-- (void)setExposureTargetBias:(CGFloat)bias
+- (void)setExposureTargetBias:(__unused CGFloat)bias
 {
-    (void)bias;
 }
 
 - (void)startVideoRecordingWithOrientation:(AVCaptureVideoOrientation)orientation mirrored:(bool)mirrored completion:(void (^)(NSURL *, CGAffineTransform, CGSize, NSTimeInterval, bool))completion
@@ -271,9 +270,8 @@ const NSInteger PGCameraFrameRate = 30;
     return nil;
 }
 
-+ (bool)_isZoomAvailableForDevice:(AVCaptureDevice *)device
++ (bool)_isZoomAvailableForDevice:(__unused AVCaptureDevice *)device
 {
-    (void)device;
     return false;
 }
 
@@ -535,7 +533,7 @@ const NSInteger PGCameraFrameRate = 30;
     [self commitConfiguration];
 }
 
-- (void)switchToBestVideoFormatForDevice:(AVCaptureDevice *)device
+- (void)switchToBestVideoFormatForDevice:(__unused AVCaptureDevice *)device
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     [self _reconfigureDevice:device withBlock:^(AVCaptureDevice *device)
@@ -580,8 +578,6 @@ const NSInteger PGCameraFrameRate = 30;
         
         [device setActiveFormat:preferredFormat];
     }];
-#else
-    (void)device;
 #endif
 }
 
@@ -618,7 +614,7 @@ const NSInteger PGCameraFrameRate = 30;
 
 - (void)_enableVideoStabilization
 {
-    AVCaptureConnection *videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+    AVCaptureConnection *videoConnection = OGCompatCaptureConnection(_videoOutput, AVMediaTypeVideo);
     if (videoConnection == nil)
         return;
 
@@ -713,7 +709,7 @@ const NSInteger PGCameraFrameRate = 30;
 #endif
 }
 
-- (void)setZoomLevel:(CGFloat)zoomLevel
+- (void)setZoomLevel:(__unused CGFloat)zoomLevel
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     if (![self.videoDevice respondsToSelector:@selector(setVideoZoomFactor:)])
@@ -728,8 +724,6 @@ const NSInteger PGCameraFrameRate = 30;
         
         device.videoZoomFactor = MAX(1.0f, MIN([strongSelf _maximumZoomFactor], 1.0f + ([strongSelf _maximumZoomFactor] - 1.0f) * zoomLevel));
     }];
-#else
-    (void)zoomLevel;
 #endif
 }
 
@@ -738,7 +732,7 @@ const NSInteger PGCameraFrameRate = 30;
     return [PGCameraCaptureSession _isZoomAvailableForDevice:self.videoDevice];
 }
 
-+ (bool)_isZoomAvailableForDevice:(AVCaptureDevice *)device
++ (bool)_isZoomAvailableForDevice:(__unused AVCaptureDevice *)device
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     if (![device respondsToSelector:@selector(setVideoZoomFactor:)])
@@ -749,7 +743,6 @@ const NSInteger PGCameraFrameRate = 30;
     
     return true;
 #else
-    (void)device;
     return false;
 #endif
 }
@@ -791,7 +784,7 @@ const NSInteger PGCameraFrameRate = 30;
     }];
 }
 
-- (void)setExposureTargetBias:(CGFloat)bias
+- (void)setExposureTargetBias:(__unused CGFloat)bias
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
     [self _reconfigureDevice:self.videoDevice withBlock:^(AVCaptureDevice *device)
@@ -802,8 +795,6 @@ const NSInteger PGCameraFrameRate = 30;
         
         [device setExposureTargetBias:(float)value completionHandler:nil];
     }];
-#else
-    (void)bias;
 #endif
 }
 
@@ -1024,7 +1015,7 @@ const NSInteger PGCameraFrameRate = 30;
         TGLegacyLog(@"ERROR: failed to reconfigure camera: %@", error);
 }
 
-- (void)setFrameRate:(NSInteger)frameRate forDevice:(AVCaptureDevice *)videoDevice
+- (void)setFrameRate:(NSInteger)frameRate forDevice:(__unused AVCaptureDevice *)videoDevice
 {
     _frameRate = frameRate;
     
@@ -1057,8 +1048,6 @@ const NSInteger PGCameraFrameRate = 30;
             }];
         }
     }
-#else
-    (void)videoDevice;
 #endif
 }
 

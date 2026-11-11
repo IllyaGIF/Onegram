@@ -7,18 +7,19 @@
 //
 
 #import "STPCardTuple.h"
+#import "OGStripeCompat.h"
 
 @interface STPCardTuple()
 
-@property(nonatomic)STPCard *selectedCard;
-@property(nonatomic)NSArray *cards;
+@property(nonatomic)STPCard *_Nullable selectedCard;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, STPCard *) *cards;
 
 @end
 
 @implementation STPCardTuple
 
 + (instancetype)tupleWithSelectedCard:(STPCard *)selectedCard
-                                cards:(NSArray *)cards {
+                                cards:(OG_COMPAT_GENERIC(NSArray, STPCard *)*)cards {
     STPCardTuple *tuple = [self new];
     tuple.selectedCard = selectedCard;
     tuple.cards = cards ?: @[];

@@ -17,11 +17,11 @@
     self = [super initWithFrame:frame];
     if (self != nil)
     {
-        TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
-        TGSetLayerShouldRasterize(self.layer, true);
-        if ([self.layer respondsToSelector:NSSelectorFromString(@"setAllowsEdgeAntialiasing:")])
-            if ([self.layer respondsToSelector:NSSelectorFromString(@"setAllowsEdgeAntialiasing:")])
-                [self.layer setValue:@true forKey:@"allowsEdgeAntialiasing"];
+        OGCompatLayerSetRasterizationScale(self.layer, TGScreenScaling());
+        OGCompatLayerSetShouldRasterize(self.layer, true);
+        SEL edgeSelector = NSSelectorFromString(@"setAllowsEdgeAntialiasing:");
+        if ([self.layer respondsToSelector:edgeSelector])
+            [self.layer setValue:@true forKey:@"allowsEdgeAntialiasing"];
         
         static dispatch_once_t onceToken;
         static UIImage *image;

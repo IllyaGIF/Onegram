@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTNumberInterpolator.m
 //  Lottie
@@ -39,7 +39,7 @@
   return self.delegate != nil;
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate {
   NSAssert(([delegate conformsToProtocol:@protocol(LOTNumberValueDelegate)]), @"Number Interpolator set with incorrect callback type. Expected LOTNumberValueDelegate");
   self.delegate = (id<LOTNumberValueDelegate>)delegate;
 }

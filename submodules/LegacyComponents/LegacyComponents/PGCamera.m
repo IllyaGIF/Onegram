@@ -386,7 +386,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         
         void (^takePhoto)(void) = ^
         {
-            AVCaptureConnection *imageConnection = TGAVCaptureConnectionWithMediaType(self.captureSession.imageOutput, AVMediaTypeVideo);
+            AVCaptureConnection *imageConnection = OGCompatCaptureConnection(self.captureSession.imageOutput, AVMediaTypeVideo);
             OGPlatformSetCaptureConnectionVideoMirrored(imageConnection, videoMirrored);
             
             UIInterfaceOrientation orientation = UIInterfaceOrientationPortrait;
@@ -621,7 +621,8 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 #if defined(ONEGRAM_ARMV6)
     return false;
 #else
-    return [self.captureSession.videoDevice respondsToSelector:NSSelectorFromString(@"setExposureTargetBias:completionHandler:")];
+    SEL biasSelector = NSSelectorFromString(@"setExposureTargetBias:completionHandler:");
+    return [self.captureSession.videoDevice respondsToSelector:biasSelector];
 #endif
 }
 

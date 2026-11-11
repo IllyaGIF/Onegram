@@ -10,12 +10,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-typedef void(^STPKeyboardFrameBlock)(CGRect keyboardFrame, UIView *currentlyEditedField);
+typedef void(^STPKeyboardFrameBlock)(CGRect keyboardFrame, UIView *_Nullable currentlyEditedField);
 
 @interface UIViewController (Stripe_KeyboardAvoiding)
 
-- (void)stp_beginObservingKeyboardAndInsettingScrollView:(UIScrollView *)scrollView
-                                           onChangeBlock:(STPKeyboardFrameBlock)block;
+- (void)stp_beginObservingKeyboardAndInsettingScrollView:(UIScrollView *_Nullable)scrollView
+                                           onChangeBlock:(STPKeyboardFrameBlock _Nullable)block;
 
 @end
 

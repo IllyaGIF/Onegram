@@ -4,12 +4,12 @@
 #import "MTLogging.h"
 
 static void (*loggingFunction)(NSString *, va_list args) = NULL;
-static BOOL MTLogEnabledValue = true;
+static BOOL OGMTLogSwitch = true;
 
 #undef MTLogEnabled
 #undef MTLog
 BOOL MTLogEnabled() {
-    return OGDiagnosticsEnabled() && loggingFunction != NULL && MTLogEnabledValue;
+    return OGDiagnosticsEnabled() && loggingFunction != NULL && OGMTLogSwitch;
 }
 
 void MTLog(NSString *format, ...) {
@@ -28,5 +28,5 @@ void MTLogSetLoggingFunction(void (*function)(NSString *, va_list args)) {
 }
 
 void MTLogSetEnabled(BOOL enabled) {
-    MTLogEnabledValue = enabled;
+    OGMTLogSwitch = enabled;
 }

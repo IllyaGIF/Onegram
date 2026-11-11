@@ -57,9 +57,10 @@
 
 @property (nonatomic, readonly) int32_t minAvailableMessageId;
 @property (nonatomic, readonly) bool preHistory;
+@property (nonatomic, readonly) bool paidMessagesAvailable;
 
 - (instancetype)init;
-- (instancetype)initWithManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount managementMembers:(NSArray *)managementMembers blacklistMembers:(NSArray *)blacklistMembers bannedMembers:(NSArray *)bannedMembers generalMembers:(NSArray *)generalMembers privateLink:(NSString *)privateLink migrationData:(TGConversationMigrationData *)migrationData botInfos:(NSDictionary *)botInfos stickerPack:(TGStickerPackIdReference *)stickerPack canSetStickerPack:(bool)canSetStickerPack minAvailableMessageId:(int32_t)minAvailableMessageId preHistory:(bool)preHistory;
+- (instancetype)initWithManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount managementMembers:(NSArray *)managementMembers blacklistMembers:(NSArray *)blacklistMembers bannedMembers:(NSArray *)bannedMembers generalMembers:(NSArray *)generalMembers privateLink:(NSString *)privateLink migrationData:(TGConversationMigrationData *)migrationData botInfos:(NSDictionary *)botInfos stickerPack:(TGStickerPackIdReference *)stickerPack canSetStickerPack:(bool)canSetStickerPack minAvailableMessageId:(int32_t)minAvailableMessageId preHistory:(bool)preHistory paidMessagesAvailable:(bool)paidMessagesAvailable;
 
 - (TGCachedConversationData *)updateManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount;
 
@@ -81,5 +82,6 @@
 
 - (TGCachedConversationData *)updateMinAvailableMessageId:(int32_t)minAvailableMessageId;
 - (TGCachedConversationData *)updatePreHistory:(bool)preHistory;
+- (TGCachedConversationData *)updatePaidMessagesAvailable:(bool)paidMessagesAvailable;
 
 @end

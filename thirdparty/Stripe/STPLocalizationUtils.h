@@ -14,10 +14,10 @@
  Acts like NSLocalizedString but tries to find the string in the Stripe
  bundle first if possible.
  */
-+ (NSString *)localizedStripeStringForKey:(NSString *)key;
++ (NSString *_Nonnull)localizedStripeStringForKey:(NSString *_Nonnull)key;
 
 @end
 
-static inline NSString * STPLocalizedString(NSString* key, NSString * __unused comment) {
+static inline NSString * _Nonnull STPLocalizedString(NSString* _Nonnull key, NSString * _Nullable __unused comment) {
     return [STPLocalizationUtils localizedStripeStringForKey:key];
 }

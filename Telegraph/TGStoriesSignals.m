@@ -12,6 +12,8 @@
 #import "TGSharedPhotoSignals.h"
 #import "TGSharedVideoSignals.h"
 #import "TGSharedMediaUtils.h"
+#import "TGTelegramNetworking.h"
+#import "TLRPCmessages_sendMessage_manual.h"
 
 @implementation TGStoriesPage
 
@@ -45,6 +47,44 @@
 }
 
 @end
+
+@implementation TGStoryViewer
+
+- (instancetype)initWithUserId:(int64_t)userId date:(int32_t)date hasReaction:(bool)hasReaction reaction:(NSString *)reaction blocked:(bool)blocked
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _userId = userId;
+        _date = date;
+        _hasReaction = hasReaction;
+        _reaction = reaction;
+        _blocked = blocked;
+    }
+    return self;
+}
+
+@end
+
+@implementation TGStoryViewersPage
+
+- (instancetype)initWithCount:(int32_t)count viewsCount:(int32_t)viewsCount reactionsCount:(int32_t)reactionsCount viewers:(NSArray *)viewers nextOffset:(NSString *)nextOffset
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _count = count;
+        _viewsCount = viewsCount;
+        _reactionsCount = reactionsCount;
+        _viewers = viewers == nil ? @[] : viewers;
+        _nextOffset = nextOffset.length != 0 ? nextOffset : nil;
+    }
+    return self;
+}
+
+@end
+
+static NSArray *TGStoriesCachedAvailableReactions = nil;
 
 static NSArray *TGStoriesNumberArray(NSArray *values)
 {
@@ -257,6 +297,69 @@ static int64_t TGStoriesRandomId(void)
     return [[TGTLDynamicRpc requestSignalWithMethod:@"stories.togglePinned" parameters:@{@"peer": inputPeer, @"id": storyIds, @"pinned": @(pinned)}] map:^id(NSArray *result)
     {
         return TGStoriesNumberArray([result isKindOfClass:[NSArray class]] ? result : nil);
+    }];
+}
+
++ (SSignal *)sendReaction:(NSString *)reaction toStory:(TGStoryItem *)story
+{
+    id inputPeer = story == nil ? nil : [self inputPeerForPeerId:story.peerId];
+    if (inputPeer == nil)
+        return [SSignal fail:nil];
+    TGTLDynamicObject *reactionObject = reaction.length != 0 ? [TGTLDynamicObject objectWithConstructor:@"reactionEmoji" fields:@{@"emoticon": reaction}] : [TGTLDynamicObject objectWithConstructor:@"reactionEmpty" fields:nil];
+    NSMutableDictionary *parameters = [[NSMutableDictionary alloc] init];
+    parameters[@"peer"] = inputPeer;
+    parameters[@"story_id"] = @(story.storyId);
+    parameters[@"reaction"] = reactionObject;
+    if (reaction.length != 0)
+        parameters[@"add_to_recent"] = @true;
+    return [TGTLDynamicRpc requestSignalWithMethod:@"stories.sendReaction" parameters:parameters];
+}
+
++ (SSignal *)viewersForStory:(TGStoryItem *)story offset:(NSString *)offset limit:(int32_t)limit
+{
+    id inputPeer = story == nil ? nil : [self inputPeerForPeerId:story.peerId];
+    if (inputPeer == nil)
+        return [SSignal fail:nil];
+    NSDictionary *parameters = @{@"peer": inputPeer, @"id": @(story.storyId), @"offset": offset ?: @"", @"limit": @(limit), @"reactions_first": @true};
+    return [[TGTLDynamicRpc requestSignalWithMethod:@"stories.getStoryViewsList" parameters:parameters] mapToSignal:^SSignal *(TGTLDynamicObject *result)
+    {
+        if (![result isConstructor:@"stories.storyViewsList"])
+            return [SSignal fail:nil];
+        [self processUsers:[result arrayField:@"users"] chats:[result arrayField:@"chats"]];
+        NSMutableArray *viewers = [[NSMutableArray alloc] init];
+        for (TGTLDynamicObject *view in [result arrayField:@"views"])
+        {
+            if (![view isKindOfClass:[TGTLDynamicObject class]] || ![view isConstructor:@"storyView"])
+                continue;
+            TGTLDynamicObject *reaction = [view objectField:@"reaction"];
+            bool hasReaction = reaction != nil && ![reaction isConstructor:@"reactionEmpty"];
+            bool blocked = [view flag:@"blocked"] || [view flag:@"blocked_my_stories_from"];
+            [viewers addObject:[[TGStoryViewer alloc] initWithUserId:TGPeerIdFromUserId([view int64Field:@"user_id"]) date:[view int32Field:@"date"] hasReaction:hasReaction reaction:hasReaction ? TGStoryReactionEmoticon(reaction) : nil blocked:blocked]];
+        }
+        return [SSignal single:[[TGStoryViewersPage alloc] initWithCount:[result int32Field:@"count"] viewsCount:[result int32Field:@"views_count"] reactionsCount:[result int32Field:@"reactions_count"] viewers:viewers nextOffset:[result stringField:@"next_offset"]]];
+    }];
+}
+
++ (SSignal *)availableReactions
+{
+    @synchronized([TGStoriesSignals class])
+    {
+        if (TGStoriesCachedAvailableReactions != nil)
+            return [SSignal single:TGStoriesCachedAvailableReactions];
+    }
+
+    TLRPCmessages_getAvailableReactions_manual *request = [[TLRPCmessages_getAvailableReactions_manual alloc] init];
+    request.hashValue = 0;
+    return [[[TGTelegramNetworking instance] requestSignal:request] mapToSignal:^SSignal *(TLmessages_AvailableReactions_manual *result)
+    {
+        if (![result isKindOfClass:[TLmessages_AvailableReactions_manual class]] || result.activeEmojis.count == 0)
+            return [SSignal fail:nil];
+        NSArray *reactions = [result.activeEmojis copy];
+        @synchronized([TGStoriesSignals class])
+        {
+            TGStoriesCachedAvailableReactions = reactions;
+        }
+        return [SSignal single:reactions];
     }];
 }
 

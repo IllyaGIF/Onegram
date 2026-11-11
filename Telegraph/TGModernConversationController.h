@@ -164,6 +164,7 @@ typedef enum {
 - (void)setIsAlwaysBroadcasting:(bool)isBroadcasting;
 - (void)setInputDisabled:(bool)inputDisabled;
 - (void)setIsChannel:(bool)isChannel;
+- (void)setPaidMessageStars:(int64_t)paidMessageStars;
 - (void)updateControllerShouldHideInputTextByDefault;
 
 - (void)openEmbed:(TGWebPageMediaAttachment *)webPage forMessageId:(int32_t)messageId peerId:(int64_t)peerId;

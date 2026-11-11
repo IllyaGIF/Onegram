@@ -1,12 +1,10 @@
-#ifndef TGIOS6_RTC_BASE_NETWORK_MONITOR_FACTORY_H
-#define TGIOS6_RTC_BASE_NETWORK_MONITOR_FACTORY_H
+#ifndef OG_COMPAT_RTC_BASE_NETWORK_MONITOR_FACTORY_H
+#define OG_COMPAT_RTC_BASE_NETWORK_MONITOR_FACTORY_H
 
 namespace rtc {
 
-class NetworkMonitorFactory {
-public:
-	virtual ~NetworkMonitorFactory() {
-	}
+struct NetworkMonitorFactory {
+	virtual ~NetworkMonitorFactory() = default;
 };
 
 struct NetworkRoute {

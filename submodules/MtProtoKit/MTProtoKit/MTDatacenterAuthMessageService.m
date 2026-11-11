@@ -103,7 +103,7 @@ nil];
     return serverPublicKeys;
 }
 
-static NSDictionary *selectPublicKey(NSArray *fingerprints, NSArray *publicKeys)
+static NSDictionary *OGMatchServerKey(NSArray *fingerprints, NSArray *publicKeys)
 {
     for (NSNumber *nFingerprint in fingerprints)
     {
@@ -311,7 +311,7 @@ typedef enum {
         
         if ([_nonce isEqualToData:resPqMessage.nonce])
         {
-            NSDictionary *publicKey = selectPublicKey(resPqMessage.serverPublicKeyFingerprints, _publicKeys);
+            NSDictionary *publicKey = OGMatchServerKey(resPqMessage.serverPublicKeyFingerprints, _publicKeys);
             
             if (publicKey == nil && mtProto.cdn && resPqMessage.serverPublicKeyFingerprints.count == 1 && _publicKeys.count == 1) {
                 publicKey = @{@"key": _publicKeys[0][@"key"], @"fingerprint": resPqMessage.serverPublicKeyFingerprints[0]};

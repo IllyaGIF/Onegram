@@ -82,15 +82,11 @@
 {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
-        NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6InvalidPeer")];
-        if (invalidPeerMarker.length != 0 && conversation.isChannel) {
+        if (conversation.isChannel && [[TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6InvalidPeer")] length] != 0)
             return [NSNull null];
-        }
-        else if (invalidPeerMarker.length != 0) {
-        }
         return [TGTelegraphInstance createInputPeerForConversation:conversation.conversationId accessHash:conversation.accessHash];
     }] mapToSignal:^SSignal *(TLInputPeer *inputPeer) {
-        if ((id)inputPeer == [NSNull null])
+        if ([(id)inputPeer isEqual:[NSNull null]])
             return [SSignal single:@[]];
         
         TLRPCmessages_getRecentLocations$messages_getRecentLocations *getRecentLocations = [[TLRPCmessages_getRecentLocations$messages_getRecentLocations alloc] init];
@@ -110,10 +106,8 @@
             return [SSignal single:parsedMessages];
         }] catch:^SSignal *(id error) {
             NSString *errorDescription = [[error description] uppercaseString];
-            if ([errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHAT_ID_INVALID"].location != NSNotFound) {
-                return [SSignal single:@[]];
-            }
-            return [SSignal fail:error];
+            bool peerRejected = [errorDescription rangeOfString:@"CHAT_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound;
+            return peerRejected ? [SSignal single:@[]] : [SSignal fail:error];
         }];
     }];
 }
@@ -121,19 +115,19 @@
 + (NSArray *)filterLiveLocationMessages:(NSArray *)messages includeExpired:(bool)includeExpired
 {
     int32_t currentTime = (int32_t)OGRemoteClockTime();
-    NSMutableDictionary *locationMessages = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *newestByAuthor = [[NSMutableDictionary alloc] init];
     for (TGMessage *message in messages)
     {
         TGLocationMediaAttachment *location = message.locationAttachment;
-        if (location.period > 0 && (includeExpired || currentTime < message.date + location.period))
-        {
-            NSNumber *fromUidKey = [NSNumber numberWithLongLong:message.fromUid];
-            TGMessage *previousMessage = [locationMessages objectForKey:fromUidKey];
-            if (previousMessage == nil || previousMessage.date < message.date)
-                [locationMessages setObject:message forKey:fromUidKey];
-        }
+        bool live = location.period > 0 && (includeExpired || currentTime < message.date + location.period);
+        if (!live)
+            continue;
+        NSNumber *author = @(message.fromUid);
+        TGMessage *kept = newestByAuthor[author];
+        if (kept == nil || kept.date < message.date)
+            newestByAuthor[author] = message;
     }
-    return locationMessages.allValues;
+    return newestByAuthor.allValues;
 }
 
 + (SSignal *)liveLocationsForPeerId:(int64_t)peerId includeExpired:(bool)includeExpired onlyLocal:(bool)onlyLocal

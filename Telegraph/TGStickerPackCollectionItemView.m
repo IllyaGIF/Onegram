@@ -14,7 +14,7 @@
 {
     UIImageView *_unreadView;
     TGImageView *_imageView;
-    UILabel *_altLabel;
+    UILabel *_emojiLabel;
     TGAnimatedStickerView *_animatedView;
     UILabel *_titleLabel;
     UILabel *_subtitleLabel;
@@ -30,6 +30,13 @@
 @implementation TGStickerPackCollectionItemView
 
 
+- (void)og_compat_presentImage:(bool)imageVisible emoji:(NSString *)emoji
+{
+    _imageView.hidden = !imageVisible;
+    _emojiLabel.hidden = emoji == nil;
+    _emojiLabel.text = emoji;
+}
+
 - (instancetype)initWithFrame:(CGRect)frame
 {
     self = [super initWithFrame:frame];
@@ -39,12 +46,12 @@
         _imageView.contentMode = UIViewContentModeScaleAspectFit;
         [self.editingContentView addSubview:_imageView];
         
-        _altLabel = [[UILabel alloc] init];
-        _altLabel.backgroundColor = [UIColor clearColor];
-        _altLabel.textAlignment = NSTextAlignmentCenter;
-        _altLabel.font = [UIFont systemFontOfSize:24.0f];
-        _altLabel.hidden = true;
-        [self.editingContentView addSubview:_altLabel];
+        _emojiLabel = [[UILabel alloc] init];
+        _emojiLabel.backgroundColor = [UIColor clearColor];
+        _emojiLabel.textAlignment = NSTextAlignmentCenter;
+        _emojiLabel.font = [UIFont systemFontOfSize:24.0f];
+        _emojiLabel.hidden = true;
+        [self.editingContentView addSubview:_emojiLabel];
         
         _titleLabel = [[UILabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
@@ -73,7 +80,7 @@
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
     _subtitleLabel.textColor = presentation.pallete.collectionMenuVariantColor;
-    _altLabel.textColor = presentation.pallete.collectionMenuTextColor;
+    _emojiLabel.textColor = presentation.pallete.collectionMenuTextColor;
     _checkView.image = presentation.images.collectionMenuCheckImage;
     _reorderingControl.image = presentation.images.collectionMenuReorderIcon;
     _unreadView.image = presentation.images.collectionMenuUnreadIcon;
@@ -85,9 +92,7 @@
     [super prepareForReuse];
     
     [_imageView reset];
-    _imageView.hidden = false;
-    _altLabel.hidden = true;
-    _altLabel.text = nil;
+    [self og_compat_presentImage:true emoji:nil];
     [_animatedView reset];
     _animatedView.hidden = true;
 }
@@ -192,31 +197,27 @@
         NSString *legacyThumbnailUri = [documentMedia.thumbnailInfo imageUrlForLargestSize:NULL];
         if (legacyThumbnailUri != nil)
             [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-        [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]]];
-        [uri appendFormat:@"&size=%d", documentMedia.size];
-        if (documentMedia.mimeType.length != 0)
-            [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMedia.mimeType]];
+        [uri appendFormat:@"&fileName=%@&size=%d", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]], documentMedia.size];
+        NSString *documentMimeType = documentMedia.mimeType;
+        if (documentMimeType.length != 0)
+            [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMimeType]];
         
         [uri appendFormat:@"&width=68&height=68"];
         [uri appendFormat:@"&highQuality=1"];
         
         NSString *alt = @"";
-        for (id attribute in documentMedia.attributes)
+        NSUInteger stickerAt = [(documentMedia.attributes ?: @[]) indexOfObjectPassingTest:^BOOL(id attribute, __unused NSUInteger idx, __unused BOOL *stop)
         {
-            if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
-            {
-                alt = ((TGDocumentAttributeSticker *)attribute).alt;
-                break;
-            }
-        }
+            return [attribute isKindOfClass:[TGDocumentAttributeSticker class]];
+        }];
+        if (stickerAt != NSNotFound)
+            alt = ((TGDocumentAttributeSticker *)[documentMedia.attributes objectAtIndex:stickerAt]).alt;
         bool animated = [TGAnimatedStickerView isAnimatedStickerDocument:documentMedia];
         bool showAltFallback = !animated && alt.length != 0 && [documentMedia.mimeType isEqualToString:@"video/webm"];
         if (animated)
         {
             [_imageView reset];
-            _imageView.hidden = true;
-            _altLabel.hidden = true;
-            _altLabel.text = nil;
+            [self og_compat_presentImage:false emoji:nil];
             if (_animatedView == nil)
             {
                 _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:_imageView.frame];
@@ -231,17 +232,13 @@
             [_animatedView reset];
             _animatedView.hidden = true;
             [_imageView reset];
-            _imageView.hidden = true;
-            _altLabel.hidden = false;
-            _altLabel.text = alt;
+            [self og_compat_presentImage:false emoji:alt];
         }
         else
         {
             [_animatedView reset];
             _animatedView.hidden = true;
-            _imageView.hidden = false;
-            _altLabel.hidden = true;
-            _altLabel.text = nil;
+            [self og_compat_presentImage:true emoji:nil];
             [_imageView loadUri:uri withOptions:@{}];
         }
     }
@@ -300,7 +297,7 @@
     [super layoutSubviews];
     
     _imageView.frame = CGRectMake(13.0f + leftInset , CGFloor((self.frame.size.height - 34.0f) / 2.0f), 34.0f, 34.0f);
-    _altLabel.frame = _imageView.frame;
+    _emojiLabel.frame = _imageView.frame;
     _animatedView.frame = _imageView.frame;
     _activityIndicator.center = _imageView.center;
     

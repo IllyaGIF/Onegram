@@ -10,7 +10,7 @@
 
 @interface NSBundle (Stripe_AppName)
 
-+ (NSString*)stp_applicationName;
++ (NSString*_Nullable)stp_applicationName;
 
 @end
 

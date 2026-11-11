@@ -16,7 +16,7 @@
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier:@"<HockeyAppIdentifier>"];
+    [[BITHockeyManager sharedHockeyManager] configureWithIdentifier:@"HOCKEYAPP_IDENTIFIER_PLACEHOLDER"];
     [[BITHockeyManager sharedHockeyManager] startManager];
     [[BITHockeyManager sharedHockeyManager].authenticator
      authenticateInstallation];

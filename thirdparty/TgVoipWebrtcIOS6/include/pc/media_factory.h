@@ -1,14 +1,12 @@
-#ifndef TGIOS6_PC_MEDIA_FACTORY_H
-#define TGIOS6_PC_MEDIA_FACTORY_H
+#ifndef OG_COMPAT_PC_MEDIA_FACTORY_H
+#define OG_COMPAT_PC_MEDIA_FACTORY_H
 
 #include <memory>
 
 namespace webrtc {
 
-class MediaFactory {
-public:
-	virtual ~MediaFactory() {
-	}
+struct MediaFactory {
+	virtual ~MediaFactory() = default;
 };
 
 } // namespace webrtc

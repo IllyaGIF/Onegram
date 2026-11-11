@@ -1,12 +1,11 @@
-#ifndef TGIOS6_API_ASYNC_DNS_RESOLVER_H
-#define TGIOS6_API_ASYNC_DNS_RESOLVER_H
+#ifndef OG_COMPAT_API_ASYNC_DNS_RESOLVER_H
+#define OG_COMPAT_API_ASYNC_DNS_RESOLVER_H
 
 namespace webrtc {
 
 class AsyncDnsResolverFactoryInterface {
 public:
-	virtual ~AsyncDnsResolverFactoryInterface() {
-	}
+	virtual ~AsyncDnsResolverFactoryInterface() = default;
 };
 
 class BasicAsyncResolverFactory : public AsyncDnsResolverFactoryInterface {

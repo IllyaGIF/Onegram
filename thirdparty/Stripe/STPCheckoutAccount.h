@@ -11,13 +11,13 @@
 
 @interface STPCheckoutAccount : NSObject
 
-+ (instancetype)accountWithData:(NSData *)data
-                             URLResponse:(NSURLResponse *)response;
++ (instancetype _Nullable)accountWithData:(NSData *_Nullable)data
+                             URLResponse:(NSURLResponse *_Nullable)response;
 
-@property(nonatomic, readonly)NSString *email;
-@property(nonatomic, readonly)NSString *phone;
-@property(nonatomic, readonly)NSString *csrfToken;
-@property(nonatomic, readonly)NSString *sessionID;
-@property(nonatomic, readonly)STPCard *card;
+@property(nonatomic, readonly)NSString *_Nonnull email;
+@property(nonatomic, readonly)NSString *_Nonnull phone;
+@property(nonatomic, readonly)NSString *_Nonnull csrfToken;
+@property(nonatomic, readonly)NSString *_Nonnull sessionID;
+@property(nonatomic, readonly)STPCard *_Nonnull card;
 
 @end

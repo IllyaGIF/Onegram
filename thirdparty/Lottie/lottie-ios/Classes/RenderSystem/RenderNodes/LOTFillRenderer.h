@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTFillRenderer.h
 //  Lottie
@@ -12,7 +12,7 @@
 
 @interface LOTFillRenderer : LOTRenderNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  shapeFill:(LOTShapeFill *)fill;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  shapeFill:(LOTShapeFill *_Nonnull)fill;
 
 @end

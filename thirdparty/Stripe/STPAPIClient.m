@@ -10,6 +10,7 @@
 #import <sys/utsname.h>
 
 #import "STPAPIClient.h"
+#import "OGStripeCompat.h"
 #import "STPAPIClient+ApplePay.h"
 #import "STPFormEncoder.h"
 #import "STPBankAccount.h"
@@ -57,7 +58,7 @@ static NSString *const stripeAPIVersion = @"2015-10-12";
 @interface STPAPIClient()
 #endif
 @property (nonatomic, readwrite) NSURL *apiURL;
-@property (nonatomic, readwrite) id urlSession;
+@property (nonatomic, readwrite) OGStripeURLSession urlSession;
 @end
 
 @implementation STPAPIClient
@@ -247,66 +248,59 @@ static NSString *const stripeAPIVersion = @"2015-10-12";
 @implementation Stripe (ApplePay)
 
 + (BOOL)canSubmitPaymentRequest:(PKPaymentRequest *)paymentRequest {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    if (![self deviceSupportsApplePay]) {
-        return NO;
-    }
-    if (paymentRequest == nil) {
-        return NO;
-    }
-    if (paymentRequest.merchantIdentifier == nil) {
-        return NO;
-    }
-    return [[[paymentRequest.paymentSummaryItems lastObject] amount] floatValue] > 0;
-#else
-    return NO;
+    BOOL canSubmit = NO;
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
+    canSubmit = [self deviceSupportsApplePay]
+        && paymentRequest != nil
+        && paymentRequest.merchantIdentifier != nil
+        && [[[paymentRequest.paymentSummaryItems lastObject] amount] floatValue] > 0;
 #endif
+    return canSubmit;
 }
 
-+ (NSArray *)supportedPKPaymentNetworks {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    NSArray *supportedNetworks = @[PKPaymentNetworkAmex, PKPaymentNetworkMasterCard, PKPaymentNetworkVisa];
++ (OG_COMPAT_GENERIC(NSArray, NSString *) *)supportedPKPaymentNetworks {
+    NSArray *supportedNetworks = @[];
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
+    supportedNetworks = @[PKPaymentNetworkAmex, PKPaymentNetworkMasterCard, PKPaymentNetworkVisa];
     if ((&PKPaymentNetworkDiscover) != NULL) {
         supportedNetworks = [supportedNetworks arrayByAddingObject:PKPaymentNetworkDiscover];
     }
-    return supportedNetworks;
-#else
-    return @[];
 #endif
+    return supportedNetworks;
 }
 
 + (BOOL)deviceSupportsApplePay {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    return [PKPaymentAuthorizationViewController class] && [PKPaymentAuthorizationViewController canMakePaymentsUsingNetworks:[self supportedPKPaymentNetworks]];
-#else
-    return NO;
+    BOOL supported = NO;
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
+    supported = [PKPaymentAuthorizationViewController class] && [PKPaymentAuthorizationViewController canMakePaymentsUsingNetworks:[self supportedPKPaymentNetworks]];
 #endif
+    return supported;
 }
 
 + (PKPaymentRequest *)paymentRequestWithMerchantIdentifier:(NSString *)merchantIdentifier {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    if (![PKPaymentRequest class]) {
-        return nil;
+    PKPaymentRequest *paymentRequest = nil;
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
+    if ([PKPaymentRequest class]) {
+        paymentRequest = [PKPaymentRequest new];
+        [paymentRequest setMerchantIdentifier:merchantIdentifier];
+        [paymentRequest setSupportedNetworks:[self supportedPKPaymentNetworks]];
+        [paymentRequest setMerchantCapabilities:PKMerchantCapability3DS];
+        [paymentRequest setCountryCode:@"US"];
+        [paymentRequest setCurrencyCode:@"USD"];
     }
-    PKPaymentRequest *paymentRequest = [PKPaymentRequest new];
-    [paymentRequest setMerchantIdentifier:merchantIdentifier];
-    [paymentRequest setSupportedNetworks:[self supportedPKPaymentNetworks]];
-    [paymentRequest setMerchantCapabilities:PKMerchantCapability3DS];
-    [paymentRequest setCountryCode:@"US"];
-    [paymentRequest setCurrencyCode:@"USD"];
-    return paymentRequest;
-#else
-    return nil;
 #endif
+    return paymentRequest;
 }
 
 + (void)createTokenWithPayment:(PKPayment *)payment
                     completion:(STPTokenCompletionBlock)handler {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
     [[STPAPIClient sharedClient] createTokenWithPayment:payment completion:handler];
 #else
-    if (handler != nil)
-        handler(nil, [NSError errorWithDomain:@"Stripe" code:0 userInfo:nil]);
+    if (handler != nil) {
+        NSError *error = [NSError errorWithDomain:@"Stripe" code:0 userInfo:nil];
+        handler(nil, error);
+    }
 #endif
 }
 

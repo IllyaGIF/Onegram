@@ -31,6 +31,36 @@
 
 const NSTimeInterval TGVideoMessageMaximumDuration = 60.0;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+static UIImage *OGVideoMessageFrameImage(NSURL *url, CGSize maximumSize, CMTime time)
+{
+    AVAsset *asset = [[AVURLAsset alloc] initWithURL:url options:nil];
+    if (asset == nil)
+        return nil;
+    
+    AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
+    generator.maximumSize = maximumSize;
+    generator.appliesPreferredTrackTransform = true;
+    CGImageRef imageRef = [generator copyCGImageAtTime:time actualTime:NULL error:NULL];
+    if (imageRef == NULL)
+        return nil;
+    
+    UIImage *frameImage = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return frameImage;
+}
+#endif
+
+static UIImage *OGVideoMessageBlackImage(CGSize size)
+{
+    UIGraphicsBeginImageContextWithOptions(size, true, 1.0f);
+    [[UIColor blackColor] setFill];
+    UIRectFill(CGRectMake(0.0f, 0.0f, size.width, size.height));
+    UIImage *blackImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return blackImage;
+}
+
 typedef enum
 {
     TGVideoMessageTransitionTypeUsual,
@@ -74,7 +104,7 @@ typedef enum
     bool _locked;
     bool _positionChangeLocked;
     bool _alreadyStarted;
-    bool _recordingDidStart;
+    bool _recordingActive;
     bool _finishing;
     
     CGRect _controlsFrame;
@@ -259,14 +289,9 @@ typedef enum
     CGRect fadeFrame = CGRectMake(0.0f, 0.0f, _wrapperView.frame.size.width, _wrapperView.frame.size.height);
     if (type != TGVideoMessageTransitionTypeLegacy)
     {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id effect = nil;
-#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
         if (type == TGVideoMessageTransitionTypeSimplified)
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-            effect = nil;
 #endif
-        
         _blurView = [[UIView alloc] initWithFrame:CGRectZero];
         [_wrapperView addSubview:_blurView];
         
@@ -454,10 +479,6 @@ typedef enum
     TGVideoMessageTransitionType type = [self _transitionType];
     if (type == TGVideoMessageTransitionTypeUsual)
     {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id effect = nil;
-#endif
-        
         UIView *rootView = _transitionInView();
         rootView.superview.backgroundColor = [UIColor whiteColor];
         
@@ -948,41 +969,19 @@ typedef enum
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (thumbnailImage == nil && url != nil)
-    {
-        AVAsset *asset = [[AVURLAsset alloc] initWithURL:url options:nil];
-        AVAssetImageGenerator *generator = asset == nil ? nil : [[AVAssetImageGenerator alloc] initWithAsset:asset];
-        generator.appliesPreferredTrackTransform = true;
-        generator.maximumSize = CGSizeMake(240.0f, 240.0f);
-        CMTime time = duration > 0.1 ? CMTimeMakeWithSeconds(0.1, 30) : kCMTimeZero;
-        CGImageRef imageRef = [generator copyCGImageAtTime:time actualTime:NULL error:NULL];
-        if (imageRef != NULL)
-        {
-            thumbnailImage = [UIImage imageWithCGImage:imageRef];
-            CGImageRelease(imageRef);
-        }
-    }
+        thumbnailImage = OGVideoMessageFrameImage(url, CGSizeMake(240.0f, 240.0f), duration > 0.1 ? CMTimeMakeWithSeconds(0.1, 30) : kCMTimeZero);
 #endif
 
     if (thumbnailImage == nil)
         thumbnailImage = [TGVideoMessageCaptureController startImage];
 
     if (thumbnailImage == nil)
-    {
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(240.0f, 240.0f), true, 1.0f);
-        [[UIColor blackColor] setFill];
-        UIRectFill(CGRectMake(0.0f, 0.0f, 240.0f, 240.0f));
-        thumbnailImage = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    }
+        thumbnailImage = OGVideoMessageBlackImage(CGSizeMake(240.0f, 240.0f));
     
     CGFloat minSize = MIN(thumbnailImage.size.width, thumbnailImage.size.height);
     CGFloat maxSize = MAX(thumbnailImage.size.width, thumbnailImage.size.height);
     
-    UIImage *image = TGPhotoEditorCrop(thumbnailImage, nil, UIImageOrientationUp, 0.0f, CGRectMake((maxSize - minSize) / 2.0f, 0.0f, minSize, minSize), false, CGSizeMake(240.0f, 240.0f), thumbnailImage.size, true);
-    if (image == nil)
-    {
-        image = thumbnailImage;
-    }
+    UIImage *image = TGPhotoEditorCrop(thumbnailImage, nil, UIImageOrientationUp, 0.0f, CGRectMake((maxSize - minSize) / 2.0f, 0.0f, minSize, minSize), false, CGSizeMake(240.0f, 240.0f), thumbnailImage.size, true) ?: thumbnailImage;
     
     NSDictionary *fileDictionary = [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:NULL];
     NSUInteger fileSize = (NSUInteger)[fileDictionary fileSize];
@@ -1007,17 +1006,11 @@ typedef enum
         {
             bool generatedImage = false;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-            AVAsset *asset = [[AVURLAsset alloc] initWithURL:url options:nil];
-            if (asset != nil) {
-                AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                imageGenerator.maximumSize = dimensions;
-                imageGenerator.appliesPreferredTrackTransform = true;
-                CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMakeWithSeconds(trimStartValue, 24) actualTime:nil error:nil];
-                if (imageRef != nil) {
-                    image = [UIImage imageWithCGImage:imageRef];
-                    CGImageRelease(imageRef);
-                    generatedImage = true;
-                }
+            UIImage *trimmedFrame = OGVideoMessageFrameImage(url, dimensions, CMTimeMakeWithSeconds(trimStartValue, 24));
+            if (trimmedFrame != nil)
+            {
+                image = trimmedFrame;
+                generatedImage = true;
             }
 #endif
             if (!generatedImage) {
@@ -1224,7 +1217,7 @@ typedef enum
 {
     if (_finishing || _stopped)
         return;
-    _recordingDidStart = true;
+    _recordingActive = true;
     [self startRecordingTimer];
     __weak TGVideoMessageCaptureController *weakSelf = self;
     [_activityDisposable setDisposable:[[[SSignal complete] delay:0.3 onQueue:[SQueue mainQueue]] startWithNext:nil error:nil completed:^{
@@ -1241,7 +1234,7 @@ typedef enum
 
 - (void)capturePipelineRecordingDidStop:(TGVideoCameraPipeline *)__unused capturePipeline duration:(NSTimeInterval)duration liveUploadData:(id)liveUploadData thumbnailImage:(UIImage *)thumbnailImage thumbnails:(NSDictionary *)thumbnails
 {
-    _recordingDidStart = false;
+    _recordingActive = false;
     if (_finishing && _dismissed)
         return;
     if (_stopped && duration > 0.33)
@@ -1277,7 +1270,7 @@ typedef enum
     TGLegacyLog(@"VIDEOMESSAGE capture failed: %@", error);
     if (_finishing)
         return;
-    _recordingDidStart = false;
+    _recordingActive = false;
     _automaticDismiss = true;
     _gpuAvailable = false;
     [self stopRecordingTimer];
@@ -1326,7 +1319,7 @@ typedef enum
             TGDispatchOnMainThread(^{
                 __strong TGVideoMessageCaptureController *strongSelf = weakSelf;
                 if (strongSelf != nil) {
-                    if (!strongSelf->_recordingDidStart) {
+                    if (!strongSelf->_recordingActive) {
                         return;
                     }
                     strongSelf->_automaticDismiss = true;

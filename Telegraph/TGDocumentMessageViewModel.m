@@ -76,54 +76,42 @@ static CTFontRef textFontForSize(CGFloat size)
     return font;
 }
 
-static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *document)
+static NSString *OGCompatDocumentDisplayName(TGDocumentMediaAttachment *document)
 {
-    NSString *fileName = document.fileName.length == 0 ? @"file" : document.fileName;
-    if ([fileName pathExtension].length != 0)
-        return fileName;
+    static NSDictionary *extensionsByMime = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        extensionsByMime = @{
+            @"application/pdf": @"pdf", @"application/x-rar-compressed": @"rar", @"application/x-7z-compressed": @"7z",
+            @"application/gzip": @"gz", @"application/x-tar": @"tar", @"application/vnd.android.package-archive": @"apk",
+            @"application/x-debian-package": @"deb", @"application/x-itunes-ipa": @"ipa", @"application/octet-stream+ipa": @"ipa",
+            @"text/plain": @"txt", @"text/html": @"html", @"text/css": @"css",
+            @"text/javascript": @"js", @"application/javascript": @"js", @"application/json": @"json",
+            @"application/xml": @"xml", @"text/xml": @"xml",
+            @"image/jpeg": @"jpg", @"image/png": @"png", @"image/gif": @"gif", @"image/webp": @"webp",
+            @"audio/mpeg": @"mp3", @"audio/mp4": @"m4a", @"audio/ogg": @"ogg",
+            @"video/mp4": @"mp4", @"video/quicktime": @"mov"
+        };
+    });
     
-    NSString *mimeType = [document.mimeType lowercaseString];
-    bool zipMime = [mimeType isEqualToString:@"application/zip"] || [mimeType isEqualToString:@"application/x-zip-compressed"];
-    if (zipMime)
-        return [fileName stringByAppendingPathExtension:(document.size > 1024 * 1024 ? @"ipa" : @"zip")];
+    NSString *name = document.fileName.length == 0 ? @"file" : document.fileName;
+    if ([name pathExtension].length != 0)
+        return name;
     
-    NSDictionary *mimeExtensions = @{
-        @"application/pdf": @"pdf",
-        @"application/x-rar-compressed": @"rar",
-        @"application/x-7z-compressed": @"7z",
-        @"application/gzip": @"gz",
-        @"application/x-tar": @"tar",
-        @"application/vnd.android.package-archive": @"apk",
-        @"application/x-debian-package": @"deb",
-        @"application/x-itunes-ipa": @"ipa",
-        @"application/octet-stream+ipa": @"ipa",
-        @"text/plain": @"txt",
-        @"text/html": @"html",
-        @"text/css": @"css",
-        @"text/javascript": @"js",
-        @"application/javascript": @"js",
-        @"application/json": @"json",
-        @"application/xml": @"xml",
-        @"text/xml": @"xml",
-        @"image/jpeg": @"jpg",
-        @"image/png": @"png",
-        @"image/gif": @"gif",
-        @"image/webp": @"webp",
-        @"audio/mpeg": @"mp3",
-        @"audio/mp4": @"m4a",
-        @"audio/ogg": @"ogg",
-        @"video/mp4": @"mp4",
-        @"video/quicktime": @"mov"
-    };
-    NSString *extension = mimeExtensions[mimeType];
-    if (extension.length != 0)
-        return [fileName stringByAppendingPathExtension:extension];
+    NSString *mime = [document.mimeType lowercaseString];
+    bool large = document.size > 1024 * 1024;
+    if ([@[@"application/zip", @"application/x-zip-compressed"] containsObject:mime])
+        return [name stringByAppendingPathExtension:large ? @"ipa" : @"zip"];
     
-    bool genericMime = mimeType.length == 0 || [mimeType isEqualToString:@"application/octet-stream"];
-    if (genericMime && document.size > 1024 * 1024)
-        return [fileName stringByAppendingPathExtension:@"ipa"];
+    NSString *known = extensionsByMime[mime];
+    if (known.length != 0)
+        return [name stringByAppendingPathExtension:known];
     
-    return fileName;
+    if (large && (mime.length == 0 || [mime isEqualToString:@"application/octet-stream"]))
+        return [name stringByAppendingPathExtension:@"ipa"];
+    
+    return name;
 }
 
 static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document, TGMessage *message, NSString *legacyThumbnailCacheUri, CGSize dimensions)
@@ -171,7 +159,7 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
         _legacyThumbnailCacheUri = [document.thumbnailInfo imageUrlForPreviewWithSize:&dimensions];
         NSString *filePreviewUri = TGDocumentMessagePreviewUri(document, message, _legacyThumbnailCacheUri, dimensions);
         
-        _titleText = TGIOS6DisplayFileNameForDocument(document);
+        _titleText = OGCompatDocumentDisplayName(document);
         
         _documentNameModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? _context.presentation.pallete.chatIncomingAccentColor : _context.presentation.pallete.chatOutgoingAccentColor) font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:145.0f truncateInTheMiddle:true];
         [_contentModel addSubmodel:_documentNameModel];
@@ -339,7 +327,7 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
     }
     
     _sizeText = sizeString;
-    _titleText = TGIOS6DisplayFileNameForDocument(document);
+    _titleText = OGCompatDocumentDisplayName(document);
     
     bool rebind = false;
     CGSize dimensions = CGSizeZero;
@@ -347,7 +335,7 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
     NSString *previewUri = TGDocumentMessagePreviewUri(document, message, newLegacyThumbnailCacheUri, dimensions);
     if (!TGStringCompare(newLegacyThumbnailCacheUri, _legacyThumbnailCacheUri) || !TGStringCompare(previewUri, _imageModel.uri))
     {
-        _titleText = TGIOS6DisplayFileNameForDocument(document);
+        _titleText = OGCompatDocumentDisplayName(document);
         
         [_contentModel setNeedsSubmodelContentsUpdate];
         _legacyThumbnailCacheUri = newLegacyThumbnailCacheUri;
@@ -598,7 +586,7 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
     } else {
         textSize.width = MAX(textSize.width, MIN(containerSize.width, infoWidth + sizeWidth + previewSize.width + 16.0f));
         
-        if (infoWidth < FLT_EPSILON) {
+        if (infoWidth < FLT_EPSILON && ![self reactionsShareTimeRow]) {
             textSize.height -= 12.0f;
         }
     }
@@ -875,7 +863,10 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
         return 0;
     }
     
-    return 3;
+    if ([self _mediaActivationAreaContainsPoint:convertedPoint] || (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, convertedPoint)) || (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, convertedPoint)) || (_viaUserModel && CGRectContainsPoint(_viaUserModel.frame, convertedPoint)))
+        return 3;
+    
+    return 0;
 }
 
 - (void)gestureRecognizer:(TGDoubleTapGestureRecognizer *)__unused recognizer didBeginAtPoint:(CGPoint)point
@@ -891,6 +882,16 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
 - (void)gestureRecognizerDidFail:(TGDoubleTapGestureRecognizer *)__unused recognizer
 {
     [self clearLinkSelection];
+}
+
+- (bool)_mediaActivationAreaContainsPoint:(CGPoint)point
+{
+    CGPoint contentOrigin = _contentModel.frame.origin;
+    if (_imageModel != nil && CGRectContainsPoint(CGRectInset(CGRectOffset(_imageModel.frame, -contentOrigin.x, -contentOrigin.y), -4.0f, -4.0f), point))
+        return true;
+    if (_iconModel != nil && CGRectContainsPoint(CGRectInset(CGRectOffset(_iconModel.frame, -contentOrigin.x, -contentOrigin.y), -4.0f, -4.0f), point))
+        return true;
+    return false;
 }
 
 - (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
@@ -925,9 +926,8 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
         }
         else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
             [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
-        else if (_textModel.frame.size.height <= FLT_EPSILON || point.y < CGRectGetMinY(_textModel.frame)) {
+        else if ([self _mediaActivationAreaContainsPoint:point])
             [self activateMedia];
-        }
     }
 }
 

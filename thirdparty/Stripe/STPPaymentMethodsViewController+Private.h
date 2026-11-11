@@ -7,6 +7,7 @@
 //
 
 #import "Stripe.h"
+#import "OGStripeCompat.h"
 #import "STPPromise.h"
 #import "STPPaymentMethod.h"
 #import "STPBackendAPIAdapter.h"
@@ -17,7 +18,7 @@
 
 - (instancetype)initWithConfiguration:(STPPaymentConfiguration *)configuration
                            apiAdapter:(id<STPBackendAPIAdapter>)apiAdapter
-                       loadingPromise:(STPPromise *)loadingPromise
+                       loadingPromise:(OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *)loadingPromise
                                 theme:(STPTheme *)theme
                              delegate:(id<STPPaymentMethodsViewControllerDelegate>)delegate;
 

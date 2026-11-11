@@ -259,7 +259,7 @@ static void *openGLESContextQueueKey;
 #if defined(ONEGRAM_ARMV6) || TARGET_IPHONE_SIMULATOR
     return NO;
 #else
-    return TGIOS4CVOpenGLESTextureCacheAvailable();
+    return OGCompatTextureCacheAvailable();
 #endif
 }
 

@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTLayerContainer.m
 //  Lottie
@@ -166,7 +166,7 @@
     }
     
     if (image) {
-      _wrapperLayer.contents = (__bridge id )(image.CGImage);
+      _wrapperLayer.contents = (__bridge id _Nullable)(image.CGImage);
     } else {
       NSLog(@"%s: Warn: image not found: %@", __PRETTY_FUNCTION__, asset.imageName);
     }
@@ -178,7 +178,7 @@
 - (void)_setImageForAsset:(LOTAsset *)asset {
   if (asset.imageName) {
     NSArray *components = [asset.imageName componentsSeparatedByString:@"."];
-    NSImage *image = [NSImage imageNamed:[components objectAtIndex:0]];
+    NSImage *image = [NSImage imageNamed:components.firstObject];
     if (image) {
       NSWindow *window = [NSApp mainWindow];
       CGFloat desiredScaleFactor = [window backingScaleFactor];
@@ -268,7 +268,7 @@
   }
 }
 
-- (void)searchNodesForKeypath:(LOTKeypath * )keypath {
+- (void)searchNodesForKeypath:(LOTKeypath * _Nonnull)keypath {
   if (_contentsGroup == nil && [keypath pushKey:self.layerName]) {
     // Matches self.
     if ([keypath pushKey:@"Transform"]) {
@@ -293,8 +293,8 @@
   [_contentsGroup searchNodesForKeypath:keypath];
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate
-              forKeypath:(LOTKeypath * )keypath {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate
+              forKeypath:(LOTKeypath * _Nonnull)keypath {
   if ([keypath pushKey:self.layerName]) {
     // Matches self.
     if ([keypath pushKey:@"Transform"]) {

@@ -7,6 +7,7 @@
 //
 
 #import "STPFormTextField.h"
+#import "OGStripeCompat.h"
 #import "STPCardValidator.h"
 #import "STPPhoneNumberValidator.h"
 #import "NSString+Stripe.h"
@@ -16,7 +17,7 @@
 
 #define FAUXPAS_IGNORED_IN_METHOD(...)
 
-@interface STPTextFieldDelegateProxy : STPDelegateProxy
+@interface STPTextFieldDelegateProxy : OG_COMPAT_GENERIC(STPDelegateProxy, UITextFieldDelegate)
 @property(nonatomic, assign)STPFormTextFieldAutoFormattingBehavior autoformattingBehavior;
 @property(nonatomic, assign)BOOL selectionEnabled;
 @end
@@ -109,7 +110,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
         case STPFormTextFieldAutoFormattingBehaviorNone:
         case STPFormTextFieldAutoFormattingBehaviorExpiration:
             self.textFormattingBlock = nil;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
+#if OG_COMPAT_STRIPE_HAS_CONTENT_TYPE
             if ([self respondsToSelector:@selector(setTextContentType:)]) {
                 self.textContentType = nil;
             }
@@ -139,7 +140,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
                 }
                 return [attributedString copy];
             };
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
+#if OG_COMPAT_STRIPE_HAS_CONTENT_TYPE
             if ([self respondsToSelector:@selector(setTextContentType:)]) {
                 self.textContentType = UITextContentTypeCreditCardNumber;
             }
@@ -156,7 +157,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
                 NSDictionary *attributes = [[self class] attributesForAttributedString:inputString];
                 return [[NSAttributedString alloc] initWithString:phoneNumber attributes:attributes];
             };
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
+#if OG_COMPAT_STRIPE_HAS_CONTENT_TYPE
             if ([self respondsToSelector:@selector(setTextContentType:)]) {
                 self.textContentType = UITextContentTypeTelephoneNumber;
             }
@@ -198,12 +199,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 
 - (void)setText:(NSString *)text {
     NSString *nonNilText = text ?: @"";
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    NSDictionary *attributes = self.defaultTextAttributes;
-#else
-    NSDictionary *attributes = @{ NSFontAttributeName: self.font ?: [UIFont systemFontOfSize:17.0f], NSForegroundColorAttributeName: self.textColor ?: [UIColor blackColor] };
-#endif
-    NSAttributedString *attributed = [[NSAttributedString alloc] initWithString:nonNilText attributes:attributes];
+    NSAttributedString *attributed = [[NSAttributedString alloc] initWithString:nonNilText attributes:OGCompatBaseTextAttributes(self)];
     [self setAttributedText:attributed];
 }
 
@@ -251,11 +247,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 }
 
 - (NSDictionary *)placeholderTextAttributes {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    NSMutableDictionary *defaultAttributes = [[self defaultTextAttributes] mutableCopy];
-#else
-    NSMutableDictionary *defaultAttributes = [@{ NSFontAttributeName: self.font ?: [UIFont systemFontOfSize:17.0f], NSForegroundColorAttributeName: self.textColor ?: [UIColor blackColor] } mutableCopy];
-#endif
+    NSMutableDictionary *defaultAttributes = [OGCompatBaseTextAttributes(self) mutableCopy];
     if (self.placeholderColor) {
         defaultAttributes[NSForegroundColorAttributeName] = self.placeholderColor;
     }
@@ -308,7 +300,7 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 }
 
 // Fixes a weird issue related to our custom override of deleteBackwards. This only affects the simulator and iPads with custom keyboards.
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
 - (NSArray *)keyCommands {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability);
     return @[[UIKeyCommand keyCommandWithInput:@"\b" modifierFlags:UIKeyModifierCommand action:@selector(commandDeleteBackwards)]];

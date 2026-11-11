@@ -16,7 +16,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     TGImageView *_imageView;
     TGAnimatedStickerView *_animatedView;
     UILabel *_altLabel;
-    bool _showAltFallback;
+    bool _usesEmojiFallback;
     
     NSString *_uri;
     
@@ -26,6 +26,35 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     NSInteger _altTick;
 }
 @end
+
+NSString *OGCompatStickerPreviewUri(TGDocumentMediaAttachment *documentMedia)
+{
+    NSMutableArray *query = [[NSMutableArray alloc] init];
+    if (documentMedia.documentId != 0)
+    {
+        [query addObject:[[NSString alloc] initWithFormat:@"documentId=%" PRId64 "", documentMedia.documentId]];
+        
+        TGMediaOriginInfo *originInfo = documentMedia.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:documentMedia];
+        if (originInfo != nil)
+            [query addObject:[@"origin_info=" stringByAppendingString:[originInfo stringRepresentation]]];
+    }
+    else
+        [query addObject:[[NSString alloc] initWithFormat:@"localDocumentId=%" PRId64 "", documentMedia.localDocumentId]];
+    [query addObject:[[NSString alloc] initWithFormat:@"accessHash=%" PRId64 "", documentMedia.accessHash]];
+    [query addObject:[[NSString alloc] initWithFormat:@"datacenterId=%" PRId32 "", (int32_t)documentMedia.datacenterId]];
+    
+    NSString *thumbnailLocation = [documentMedia.thumbnailInfo imageUrlForLargestSize:NULL];
+    if (thumbnailLocation != nil)
+        [query addObject:[@"legacyThumbnailUri=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:thumbnailLocation]]];
+    [query addObject:[@"fileName=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]]]];
+    [query addObject:[[NSString alloc] initWithFormat:@"size=%d", documentMedia.size]];
+    NSString *documentMimeType = documentMedia.mimeType;
+    if (documentMimeType.length != 0)
+        [query addObject:[@"mimeType=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:documentMimeType]]];
+    [query addObject:@"width=132&height=132"];
+    [query addObject:@"highQuality=1"];
+    return [@"sticker-preview://?" stringByAppendingString:[query componentsJoinedByString:@"&"]];
+}
 
 @implementation TGStickersCollectionCell
 
@@ -48,13 +77,13 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         [_wrapperView addSubview:_imageView];
         
         _altLabel = [[UILabel alloc] init];
-        _altLabel.backgroundColor = [UIColor clearColor];
-        _altLabel.textColor = [UIColor blackColor];
-        _altLabel.textAlignment = NSTextAlignmentCenter;
         _altLabel.font = [UIFont systemFontOfSize:32.0f];
+        _altLabel.textAlignment = NSTextAlignmentCenter;
+        _altLabel.textColor = [UIColor blackColor];
+        _altLabel.backgroundColor = [UIColor clearColor];
         [_wrapperView addSubview:_altLabel];
         
-        TGSetLayerRasterizationScale(_wrapperView.layer, TGScreenScaling());
+        OGCompatLayerSetRasterizationScale(_wrapperView.layer, TGScreenScaling());
     }
     return self;
 }
@@ -74,42 +103,17 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 - (void)prepareForReuse
 {
     [super prepareForReuse];
+    _sticker = nil;
+    _uri = nil;
     [_animatedView reset];
     [_imageView reset];
-    _uri = nil;
-    _sticker = nil;
 }
 
 - (void)setSticker:(TGDocumentMediaAttachment *)documentMedia associations:(NSArray *)associations mask:(bool)mask
 {
     _sticker = documentMedia;
     
-    NSMutableString *uri = [[NSMutableString alloc] initWithString:@"sticker-preview://?"];
-    if (documentMedia.documentId != 0)
-    {
-        [uri appendFormat:@"documentId=%" PRId64 "", documentMedia.documentId];
-        
-        TGMediaOriginInfo *originInfo = documentMedia.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:documentMedia];
-        if (originInfo != nil)
-            [uri appendFormat:@"&origin_info=%@", [originInfo stringRepresentation]];
-    }
-    else
-    {
-        [uri appendFormat:@"localDocumentId=%" PRId64 "", documentMedia.localDocumentId];
-    }
-    [uri appendFormat:@"&accessHash=%" PRId64 "", documentMedia.accessHash];
-    [uri appendFormat:@"&datacenterId=%" PRId32 "", (int32_t)documentMedia.datacenterId];
-    
-    NSString *legacyThumbnailUri = [documentMedia.thumbnailInfo imageUrlForLargestSize:NULL];
-    if (legacyThumbnailUri != nil)
-        [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-    [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]]];
-    [uri appendFormat:@"&size=%d", documentMedia.size];
-    if (documentMedia.mimeType.length != 0)
-        [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMedia.mimeType]];
-    
-    [uri appendFormat:@"&width=132&height=132"];
-    [uri appendFormat:@"&highQuality=1"];
+    NSString *uri = OGCompatStickerPreviewUri(documentMedia);
     
     NSString *alt = @"";
     for (id attribute in documentMedia.attributes)
@@ -140,13 +144,13 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     _associations = stickerAssociations;
     
     NSString *currentAlt = alt;
-    if (currentAlt.length != 0 && [currentAlt characterAtIndex:0] == 0x2639)
+    if (currentAlt.length > 0 && [currentAlt characterAtIndex:0] == 0x2639)
         currentAlt = @"\u2639\ufe0f";
     
     bool animated = !mask && [TGAnimatedStickerView isAnimatedStickerDocument:documentMedia];
-    _showAltFallback = !mask && !animated && currentAlt.length != 0 && [documentMedia.mimeType isEqualToString:@"video/webm"];
-    _imageView.hidden = _showAltFallback || animated;
-    _altLabel.hidden = !_showAltFallback;
+    _usesEmojiFallback = !mask && !animated && currentAlt.length != 0 && [documentMedia.mimeType isEqualToString:@"video/webm"];
+    _imageView.hidden = _usesEmojiFallback || animated;
+    _altLabel.hidden = !_usesEmojiFallback;
     if (animated)
     {
         if (_animatedView == nil)
@@ -163,10 +167,10 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         _animatedView.hidden = true;
         [_animatedView reset];
     }
-    if (_showAltFallback || animated)
+    if (_usesEmojiFallback || animated)
     {
-        _uri = nil;
         [_imageView reset];
+        _uri = nil;
     }
     else if (![uri isEqualToString:_uri])
     {
@@ -198,7 +202,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 
 - (void)performTransitionIn
 {
-    TGSetLayerShouldRasterize(_wrapperView.layer, false);
+    OGCompatLayerSetShouldRasterize(_wrapperView.layer, false);
     
     CGRect targetAltFrame = _altLabel.frame;
     _altLabel.frame = CGRectOffset(_altLabel.frame, 0, 20);
@@ -208,7 +212,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         _altLabel.frame = targetAltFrame;
     } completion:^(__unused BOOL finished)
     {
-        TGSetLayerShouldRasterize(_wrapperView.layer, true);
+        OGCompatLayerSetShouldRasterize(_wrapperView.layer, true);
     }];
 }
 
@@ -241,10 +245,8 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     _imageView.frame = self.bounds;
     if (_animatedView != nil && CGAffineTransformIsIdentity(_animatedView.transform))
         _animatedView.frame = self.bounds;
-    if (_showAltFallback)
-        _altLabel.frame = self.bounds;
-    else
-        _altLabel.frame = CGRectMake(self.bounds.size.width - _altLabel.frame.size.width, self.bounds.size.height - _altLabel.frame.size.height + 4.0f, _altLabel.frame.size.width, _altLabel.frame.size.height);
+    CGSize altSize = _altLabel.frame.size;
+    _altLabel.frame = _usesEmojiFallback ? self.bounds : CGRectMake(self.bounds.size.width - altSize.width, self.bounds.size.height - altSize.height + 4.0f, altSize.width, altSize.height);
 }
 
 @end

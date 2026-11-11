@@ -7,6 +7,7 @@
 //
 
 #import "STPCardValidator.h"
+#import "OGStripeCompat.h"
 #import "STPBINRange.h"
 
 @implementation STPCardValidator
@@ -29,7 +30,7 @@ static NSCharacterSet *invertedAsciiDigitCharacterSet() {
     return stringByRemovingCharactersFromSet(string, set);
 }
 
-static NSString * stringByRemovingCharactersFromSet(NSString * string, NSCharacterSet * cs) {
+static NSString * _Nonnull stringByRemovingCharactersFromSet(NSString * _Nonnull string, NSCharacterSet * _Nonnull cs) {
     NSRange range = [string rangeOfCharacterFromSet:cs];
     if (range.location != NSNotFound) {
         NSMutableString *newString = [[string substringWithRange:NSMakeRange(0, range.location)] mutableCopy];
@@ -133,7 +134,7 @@ static NSString * stringByRemovingCharactersFromSet(NSString * string, NSCharact
     }
 }
 
-+ (STPCardValidationState)validationStateForNumber:(NSString *)cardNumber
++ (STPCardValidationState)validationStateForNumber:(NSString *_Nonnull)cardNumber
                                validatingCardBrand:(BOOL)validatingCardBrand {
     
     NSString *sanitizedNumber = [self stringByRemovingSpacesFromString:cardNumber];
@@ -157,7 +158,7 @@ static NSString * stringByRemovingCharactersFromSet(NSString * string, NSCharact
     }
 }
 
-+ (STPCardValidationState)validationStateForCard:(STPCardParams *)card inCurrentYear:(NSInteger)currentYear currentMonth:(NSInteger)currentMonth {
++ (STPCardValidationState)validationStateForCard:(STPCardParams *_Nonnull)card inCurrentYear:(NSInteger)currentYear currentMonth:(NSInteger)currentMonth {
     STPCardValidationState numberValidation = [self validationStateForNumber:card.number validatingCardBrand:YES];
     NSString *expMonthString = [NSString stringWithFormat:@"%02lu", (unsigned long)card.expMonth];
     STPCardValidationState expMonthValidation = [self validationStateForExpirationMonth:expMonthString];
@@ -169,7 +170,7 @@ static NSString * stringByRemovingCharactersFromSet(NSString * string, NSCharact
     STPCardBrand brand = [self brandForNumber:card.number];
     STPCardValidationState cvcValidation = [self validationStateForCVC:card.cvc cardBrand:brand];
 
-    NSArray *states = @[@(numberValidation),
+    OG_COMPAT_GENERIC(NSArray, NSNumber *) *states = @[@(numberValidation),
                                     @(expMonthValidation),
                                     @(expYearValidation),
                                     @(cvcValidation)];
@@ -216,15 +217,15 @@ static NSString * stringByRemovingCharactersFromSet(NSString * string, NSCharact
 }
 
 + (NSSet *)possibleBrandsForNumber:(NSString *)cardNumber {
-    NSArray *binRanges = [STPBINRange binRangesForNumber:cardNumber];
+    OG_COMPAT_GENERIC(NSArray, STPBINRange *) *binRanges = [STPBINRange binRangesForNumber:cardNumber];
     NSMutableSet *possibleBrands = [NSMutableSet setWithArray:[binRanges valueForKeyPath:@"brand"]];
     [possibleBrands removeObject:@(STPCardBrandUnknown)];
     return [possibleBrands copy];
 }
 
-+ (NSSet *)lengthsForCardBrand:(STPCardBrand)brand {
++ (OG_COMPAT_GENERIC(NSSet, NSNumber *)*)lengthsForCardBrand:(STPCardBrand)brand {
     NSMutableSet *set = [NSMutableSet set];
-    NSArray *binRanges = [STPBINRange binRangesForBrand:brand];
+    OG_COMPAT_GENERIC(NSArray, STPBINRange *) *binRanges = [STPBINRange binRangesForBrand:brand];
     for (STPBINRange *binRange in binRanges) {
         [set addObject:@(binRange.length)];
     }

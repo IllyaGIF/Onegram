@@ -19,28 +19,16 @@ public:
 	_thread(thread),
 	_valueHolder(std::make_unique<ValueHolder>()) {
 		assert(_thread != nullptr);
-		ValueHolder *valueHolder = _valueHolder.get();
-		Generator generatorCopy(std::forward<Generator>(generator));
-		_thread->PostTask([valueHolder, generatorCopy]() mutable {
-			valueHolder->_value = generatorCopy();
-		});
+		_thread->PostTask(InitTask<Generator>(_valueHolder.get(), std::forward<Generator>(generator)));
 	}
 
 	~ThreadLocalObject() {
-		std::shared_ptr<ValueHolder> valueHolder(_valueHolder.release());
-		_thread->PostTask([valueHolder](){
-			valueHolder->_value.reset();
-		});
+		_thread->PostTask(ReleaseTask(std::shared_ptr<ValueHolder>(_valueHolder.release())));
 	}
 
 	template <typename FunctorT>
 	void perform(FunctorT &&functor) {
-		ValueHolder *valueHolder = _valueHolder.get();
-		FunctorT f(std::forward<FunctorT>(functor));
-		_thread->PostTask([valueHolder, f]() mutable {
-			assert(valueHolder->_value);
-			f(valueHolder->_value.get());
-		});
+		_thread->PostTask(PerformTask<FunctorT>(_valueHolder.get(), std::forward<FunctorT>(functor)));
 	}
 
 	T *getSyncAssumingSameThread() {
@@ -52,6 +40,44 @@ public:
 private:
 	struct ValueHolder {
 		std::shared_ptr<T> _value;
+	};
+
+	template <typename Generator>
+	struct InitTask {
+		InitTask(ValueHolder *target, Generator &&source) : target(target), source(std::forward<Generator>(source)) {
+		}
+
+		void operator()() {
+			target->_value = source();
+		}
+
+		ValueHolder *target;
+		Generator source;
+	};
+
+	struct ReleaseTask {
+		explicit ReleaseTask(std::shared_ptr<ValueHolder> owner) : owner(owner) {
+		}
+
+		void operator()() const {
+			owner->_value.reset();
+		}
+
+		std::shared_ptr<ValueHolder> owner;
+	};
+
+	template <typename FunctorT>
+	struct PerformTask {
+		PerformTask(ValueHolder *target, FunctorT &&action) : target(target), action(std::forward<FunctorT>(action)) {
+		}
+
+		void operator()() {
+			assert(target->_value);
+			action(target->_value.get());
+		}
+
+		ValueHolder *target;
+		FunctorT action;
 	};
 
 	rtc::Thread *_thread = nullptr;

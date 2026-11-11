@@ -198,6 +198,8 @@ static inline TGMessageSortKey TGTaggedMessageSortKeyExtract(NSData *data, int32
 @property (nonatomic) int64_t cid;
 @property (nonatomic) int64_t groupedId;
 @property (nonatomic) int64_t savedPeerId;
+@property (nonatomic, readonly) int64_t storyReplyPeerId;
+@property (nonatomic, readonly) int32_t storyReplyStoryId;
 @property (nonatomic, copy) NSString *text;
 @property (nonatomic) NSTimeInterval date;
 @property (nonatomic) NSTimeInterval editDate;
@@ -270,6 +272,8 @@ static inline TGMessageSortKey TGTaggedMessageSortKeyExtract(NSData *data, int32
 
 - (int32_t)actualDate;
 - (NSString *)caption;
+
+- (void)setStoryReplyPeerId:(int64_t)peerId storyId:(int32_t)storyId;
 
 @end
 

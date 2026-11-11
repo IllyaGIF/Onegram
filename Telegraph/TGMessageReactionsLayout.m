@@ -34,7 +34,7 @@ TGMessageReactionsMetrics TGMessageReactionsCurrentMetrics(void)
         metrics.lineSpacing = TGMessageFontMetric(4.0f);
         metrics.topSpacing = TGMessageFontMetric(3.0f);
         metrics.timeSpacing = TGMessageFontMetric(4.0f);
-        metrics.timeRowSpacing = TGMessageFontMetric(1.0f);
+        metrics.timeRowSpacing = TGMessageFontMetric(3.0f);
         metrics.leadingOffset = -TGMessageFontMetric(1.0f);
     }
     return metrics;
@@ -579,7 +579,7 @@ static UIImage *TGMessageReactionPillImage(TGMessageReactionItem *item, TGMessag
         CGFloat lineWidth = [lineWidths[lineIndex] floatValue];
         if (isLastLine && trailingOnLastLine && hasTrailing)
         {
-            trailingFrame = CGRectMake(availableWidth - trailingWidth, y + floorf((lineHeight - trailingHeight) / 2.0f), trailingWidth, trailingHeight);
+            trailingFrame = CGRectMake(availableWidth - trailingWidth, y + lineHeight - trailingHeight, trailingWidth, trailingHeight);
             lineWidth += trailingSpacing + trailingWidth;
         }
         width = MAX(width, lineWidth);

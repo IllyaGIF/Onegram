@@ -3503,7 +3503,7 @@ static id mediaIdForItem(id<TGSharedMediaItem> item)
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
     if (iosMajorVersion() >= 9)
     {
-        if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
+        if (self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
         {
             [self registerForPreviewingWithDelegate:(id)self sourceView:self.view];
         }

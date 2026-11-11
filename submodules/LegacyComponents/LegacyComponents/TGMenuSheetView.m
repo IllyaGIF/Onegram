@@ -41,7 +41,18 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
 {
     UIView *_effectView;
     UIImageView *_imageView;
+    UIImageView *_surfaceView;
+    UIImage *(^_surfaceImage)(CGSize size);
+    CGFloat _surfaceCornerRadius;
+    CGSize _surfaceSize;
+    UIColor *_fillColor;
+    bool _surfaceSuppressed;
+    bool _traitsHidden;
 }
+
+- (void)setPallete:(TGMenuSheetPallete *)pallete;
+- (void)setSurfaceSuppressed:(bool)suppressed;
+
 @end
 
 @implementation TGMenuSheetBackgroundView
@@ -59,9 +70,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
             {
                 self.layer.cornerRadius = TGMenuSheetCornerRadius;
                 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
                 _effectView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
                 _effectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
                 _effectView.frame = self.bounds;
                 [self addSubview:_effectView];
@@ -80,9 +89,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
             {
                 self.layer.cornerRadius = TGMenuSheetCornerRadius;
                 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
                 _effectView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
                 _effectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
                 _effectView.frame = self.bounds;
                 [self addSubview:_effectView];
@@ -103,16 +110,70 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
     if (_effectView != nil)
         return;
     
-    self.layer.cornerRadius = enabled ? TGMenuSheetCornerRadius : 0.0f;
+    CGFloat cornerRadius = _surfaceView != nil && _surfaceCornerRadius > FLT_EPSILON ? _surfaceCornerRadius : TGMenuSheetCornerRadius;
+    self.layer.cornerRadius = enabled ? cornerRadius : 0.0f;
 }
 
 - (void)updateTraitsWithSizeClass:(UIUserInterfaceSizeClass)sizeClass
 {
     bool hidden = (sizeClass == UIUserInterfaceSizeClassRegular);
+    _traitsHidden = hidden;
     _effectView.hidden = hidden;
     _imageView.hidden = hidden;
+    [self updateSurfaceVisibility];
     
     [self setMaskEnabled:!hidden];
+}
+
+- (void)setPallete:(TGMenuSheetPallete *)pallete
+{
+    _fillColor = pallete.backgroundColor;
+    _surfaceImage = [pallete.surfaceImage copy];
+    _surfaceCornerRadius = pallete.surfaceCornerRadius;
+    if (_surfaceImage != nil && _surfaceView == nil)
+    {
+        _surfaceView = [[UIImageView alloc] initWithFrame:self.bounds];
+        _surfaceView.userInteractionEnabled = false;
+        [self insertSubview:_surfaceView atIndex:0];
+    }
+    else if (_surfaceImage == nil && _surfaceView != nil)
+    {
+        [_surfaceView removeFromSuperview];
+        _surfaceView = nil;
+    }
+    _surfaceSize = CGSizeZero;
+    [self updateSurfaceVisibility];
+    [self setMaskEnabled:!_traitsHidden];
+    [self setNeedsLayout];
+}
+
+- (void)setSurfaceSuppressed:(bool)suppressed
+{
+    _surfaceSuppressed = suppressed;
+    [self updateSurfaceVisibility];
+}
+
+- (void)updateSurfaceVisibility
+{
+    bool surfaceVisible = _surfaceView != nil && !_surfaceSuppressed && !_traitsHidden;
+    _surfaceView.hidden = !surfaceVisible;
+    if (_surfaceSuppressed || surfaceVisible)
+        self.backgroundColor = [UIColor clearColor];
+    else if (_fillColor != nil)
+        self.backgroundColor = _fillColor;
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    if (_surfaceView == nil || _surfaceView.hidden)
+        return;
+    CGSize size = self.bounds.size;
+    _surfaceView.frame = self.bounds;
+    if (size.width < 1.0f || size.height < 1.0f || CGSizeEqualToSize(size, _surfaceSize))
+        return;
+    _surfaceSize = size;
+    _surfaceView.image = _surfaceImage(size);
 }
 
 @end
@@ -213,7 +274,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
                 [self insertSubview:_mainBackgroundView atIndex:0];
                 
                 if (_pallete != nil)
-                    _mainBackgroundView.backgroundColor = _pallete.backgroundColor;
+                    [_mainBackgroundView setPallete:_pallete];
                 
                 _scrollView = [[TGMenuSheetScrollView alloc] initWithFrame:CGRectZero];
                 if (iosMajorVersion() >= 11)
@@ -230,6 +291,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
             
             if (itemView.requiresClearBackground)
             {
+                [_mainBackgroundView setSurfaceSuppressed:true];
                 _mainBackgroundView.backgroundColor = [UIColor clearColor];
                 _expectsPreciseContentTouch = true;
             }
@@ -249,7 +311,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
                 [self insertSubview:_headerBackgroundView atIndex:0];
                 
                 if (_pallete != nil)
-                    _headerBackgroundView.backgroundColor = _pallete.backgroundColor;
+                    [_headerBackgroundView setPallete:_pallete];
             }
             
             [_headerBackgroundView addSubview:itemView];
@@ -269,7 +331,7 @@ const CGFloat TGMenuSheetInterSectionSpacing = 8.0f;
                 [self insertSubview:_footerBackgroundView atIndex:0];
                 
                 if (_pallete != nil)
-                    _footerBackgroundView.backgroundColor = _pallete.backgroundColor;
+                    [_footerBackgroundView setPallete:_pallete];
             }
             
             [_footerBackgroundView addSubview:itemView];

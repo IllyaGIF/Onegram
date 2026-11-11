@@ -6,8 +6,9 @@
 //
 
 #import "PKPayment+Stripe.h"
+#import "OGStripeCompat.h"
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 @implementation PKPayment (Stripe)
 
 - (BOOL)stp_isSimulated {

@@ -16,7 +16,7 @@
 @property (nonatomic, readwrite) NSString *bankName;
 @property (nonatomic, readwrite) NSString *fingerprint;
 @property (nonatomic) STPBankAccountStatus status;
-@property (nonatomic, readwrite, copy) NSDictionary *allResponseFields;
+@property (nonatomic, readwrite, copy) NSDictionary *_Nonnull allResponseFields;
 
 @end
 

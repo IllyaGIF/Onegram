@@ -1,21 +1,19 @@
-#ifndef TGIOS6_RTC_BASE_SSL_FINGERPRINT_H
-#define TGIOS6_RTC_BASE_SSL_FINGERPRINT_H
+#ifndef OG_COMPAT_RTC_BASE_SSL_FINGERPRINT_H
+#define OG_COMPAT_RTC_BASE_SSL_FINGERPRINT_H
 
 #include <memory>
 #include <string>
 
 namespace rtc {
 
-class SSLFingerprint {
-public:
-	SSLFingerprint() {
-	}
-
-	explicit SSLFingerprint(const std::string &algorithm) : algorithm(algorithm) {
-	}
-
+struct SSLFingerprint {
 	std::string algorithm;
 	std::string digest;
+
+	SSLFingerprint() = default;
+
+	explicit SSLFingerprint(const std::string &algorithmName) : algorithm(algorithmName) {
+	}
 };
 
 } // namespace rtc

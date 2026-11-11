@@ -626,7 +626,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)transactionUpdateFeededChannels:(NSDictionary *)feededChannels newlyJoinedFeedId:(int32_t)newlyJoinedFeedId synchronizeFeededChannels:(bool)synchronizeFeededChannels;
 - (void)transactionCalculateUnreadChats;
 
-- (void)ios6FlushDeferredBackgroundUpdates;
+- (void)flushDeferredBackgroundUpdates;
 
 - (void)transactionAddMessages:(NSArray *)addMessages
            notifyAddedMessages:(bool)notifyAddedMessages

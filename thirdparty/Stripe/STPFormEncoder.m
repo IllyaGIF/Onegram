@@ -7,6 +7,7 @@
 //
 
 #import "STPFormEncoder.h"
+#import "OGStripeCompat.h"
 #import "STPBankAccountParams.h"
 #import "STPCardParams.h"
 
@@ -25,22 +26,22 @@ FOUNDATION_EXPORT NSString * STPQueryStringFromParameters(NSDictionary *paramete
     return [camelCaseParam copy];
 }
 
-+ (NSData *)formEncodedDataForObject:(NSObject<STPFormEncodable> *)object {
++ (NSData *_Nonnull)formEncodedDataForObject:(NSObject<STPFormEncodable> *_Nonnull)object {
     NSDictionary *keyPairs = [self keyPairDictionaryForObject:object];
     NSString *rootObjectName = [object.class rootObjectName];
     NSDictionary *dict = rootObjectName != nil ? @{ rootObjectName: keyPairs } : keyPairs;
     return [STPQueryStringFromParameters(dict) dataUsingEncoding:NSUTF8StringEncoding];
 }
 
-+ (NSDictionary *)keyPairDictionaryForObject:(NSObject<STPFormEncodable> *)object {
++ (NSDictionary *)keyPairDictionaryForObject:(NSObject<STPFormEncodable> *_Nonnull)object {
     NSMutableDictionary *keyPairs = [NSMutableDictionary dictionary];
-    [[object.class propertyNamesToFormFieldNamesMapping] enumerateKeysAndObjectsUsingBlock:^(NSString * propertyName, NSString * formFieldName, __unused BOOL * stop) {
+    [[object.class propertyNamesToFormFieldNamesMapping] enumerateKeysAndObjectsUsingBlock:^(NSString * _Nonnull propertyName, NSString *  _Nonnull formFieldName, __unused BOOL * _Nonnull stop) {
         id value = [self formEncodableValueForObject:[object valueForKey:propertyName]];
         if (value) {
             keyPairs[formFieldName] = value;
         }
     }];
-    [object.additionalAPIParameters enumerateKeysAndObjectsUsingBlock:^(id additionalFieldName, id additionalFieldValue, __unused BOOL * stop) {
+    [object.additionalAPIParameters enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull additionalFieldName, id  _Nonnull additionalFieldValue, __unused BOOL * _Nonnull stop) {
         id value = [self formEncodableValueForObject:additionalFieldValue];
         if (value) {
             keyPairs[additionalFieldName] = value;
@@ -70,8 +71,7 @@ FOUNDATION_EXPORT NSString * STPQueryStringFromParameters(NSDictionary *paramete
 
 // This code is adapted from https://github.com/AFNetworking/AFNetworking/blob/master/AFNetworking/AFURLRequestSerialization.m . The only modifications are to replace the AF namespace with the STP namespace to avoid collisions with apps that are using both Stripe and AFNetworking.
 NSString * STPPercentEscapedStringFromString(NSString *string) {
-    static NSString * const kSTPCharactersToEncode = @":/?#[]@!$&'()*+,;=";
-    NSMutableString *escaped = [[NSMutableString alloc] init];
+    NSMutableString *escaped = [NSMutableString string];
     static NSUInteger const batchSize = 50;
     NSUInteger index = 0;
     while (index < string.length) {
@@ -82,10 +82,7 @@ NSString * STPPercentEscapedStringFromString(NSString *string) {
         NSRange range = NSMakeRange(index, length);
         range = [string rangeOfComposedCharacterSequencesForRange:range];
         NSString *substring = [string substringWithRange:range];
-        CFStringRef encoded = CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)substring, NULL, (__bridge CFStringRef)kSTPCharactersToEncode, kCFStringEncodingUTF8);
-        if (encoded != NULL) {
-            [escaped appendString:(__bridge_transfer NSString *)encoded];
-        }
+        OGCompatAppendPercentEscaped(escaped, substring);
         index += range.length;
     }
     return escaped;

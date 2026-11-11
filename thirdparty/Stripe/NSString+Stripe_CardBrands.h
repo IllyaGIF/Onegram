@@ -11,7 +11,7 @@
 
 @interface NSString (Stripe_CardBrands)
 
-+ (instancetype)stp_stringWithCardBrand:(STPCardBrand)brand;
++ (instancetype _Nonnull)stp_stringWithCardBrand:(STPCardBrand)brand;
 
 @end
 

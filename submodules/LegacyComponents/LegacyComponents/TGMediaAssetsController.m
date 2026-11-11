@@ -685,7 +685,7 @@
                     
                     SSignal *assetSignal = inlineSignal;
                     SSignal *imageSignal = assetSignal;
-                    if (adjustments != nil && adjustments.sendAsGif)
+                    if (adjustments.sendAsGif)
                     {
                         [signals addObject:[inlineThumbnailSignal(asset) map:^NSDictionary *(UIImage *image)
                         {
@@ -694,10 +694,10 @@
                             dict[@"previewImage"] = image;
                             dict[@"livePhoto"] = @true;
                             dict[@"asset"] = asset;
-                            if (adjustments != nil)
+                            if (adjustments)
                                 dict[@"adjustments"] = adjustments;
                             
-                            if (adjustments != nil && adjustments.paintingData.stickers.count > 0)
+                            if (adjustments.paintingData.stickers.count != 0)
                                 dict[@"stickers"] = adjustments.paintingData.stickers;
                             
                             if (timer != nil)
@@ -743,7 +743,7 @@
                             dict[@"type"] = @"editedPhoto";
                             dict[@"image"] = image;
                             
-                            if (adjustments != nil && adjustments.paintingData.stickers.count > 0)
+                            if (adjustments.paintingData.stickers.count != 0)
                                 dict[@"stickers"] = adjustments.paintingData.stickers;
                             
                             if (timer != nil)
@@ -786,7 +786,7 @@
                         dict[@"dimensions"] = [NSValue valueWithCGSize:dimensions];
                         dict[@"duration"] = @(duration);
                         
-                        if (adjustments != nil && adjustments.paintingData.stickers.count > 0)
+                        if (adjustments.paintingData.stickers.count != 0)
                             dict[@"stickers"] = adjustments.paintingData.stickers;
                         
                         id generatedItem = descriptionGenerator(dict, caption, entities, nil);
@@ -802,7 +802,7 @@
                     
                     UIImage *(^cropVideoThumbnail)(UIImage *, CGSize, CGSize, bool) = ^UIImage *(UIImage *image, CGSize targetSize, CGSize sourceSize, bool resize)
                     {
-                        if (adjustments != nil && ([adjustments cropAppliedForAvatar:false] || adjustments.hasPainting))
+                        if (adjustments && ([adjustments cropAppliedForAvatar:false] || adjustments.hasPainting))
                         {
                             CGRect scaledCropRect = CGRectMake(adjustments.cropRect.origin.x * image.size.width / adjustments.originalSize.width, adjustments.cropRect.origin.y * image.size.height / adjustments.originalSize.height, adjustments.cropRect.size.width * image.size.width / adjustments.originalSize.width, adjustments.cropRect.size.height * image.size.height / adjustments.originalSize.height);
                             return TGPhotoEditorCrop(image, adjustments.paintingData.image, adjustments.cropOrientation, 0, scaledCropRect, adjustments.cropMirrored, targetSize, sourceSize, resize);
@@ -829,7 +829,7 @@
                     
                     TGMediaVideoConversionPreset preset = [TGMediaVideoConverter presetFromAdjustments:adjustments];
                     CGSize dimensions = [TGMediaVideoConverter dimensionsFor:asset.originalSize adjustments:adjustments preset:preset];
-                    NSTimeInterval duration = (adjustments != nil && adjustments.trimApplied) ? (adjustments.trimEndValue - adjustments.trimStartValue) : asset.videoDuration;
+                    NSTimeInterval duration = adjustments.trimApplied ? (adjustments.trimEndValue - adjustments.trimStartValue) : asset.videoDuration;
                     
                     [signals addObject:[thumbnailSignal map:^id(UIImage *image)
                     {
@@ -838,12 +838,12 @@
                         dict[@"document"] = @false;
                         dict[@"asset"] = asset;
                         dict[@"previewImage"] = image;
-                        if (adjustments != nil)
+                        if (adjustments)
                             dict[@"adjustments"] = adjustments;
                         dict[@"dimensions"] = [NSValue valueWithCGSize:dimensions];
                         dict[@"duration"] = @(duration);
                         
-                        if (adjustments != nil && adjustments.paintingData.stickers.count > 0)
+                        if (adjustments.paintingData.stickers.count != 0)
                             dict[@"stickers"] = adjustments.paintingData.stickers;
                         
                         if (timer != nil)

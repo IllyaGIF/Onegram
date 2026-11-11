@@ -87,10 +87,8 @@
     NSString *legacyThumbnailUri = [documentMedia.thumbnailInfo imageUrlForLargestSize:NULL];
     if (legacyThumbnailUri != nil)
         [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-    [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]]];
-    [uri appendFormat:@"&size=%d", documentMedia.size];
-    if (documentMedia.mimeType.length != 0)
-        [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMedia.mimeType]];
+    NSString *mimeComponent = documentMedia.mimeType.length != 0 ? [NSString stringWithFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMedia.mimeType]] : @"";
+    [uri appendFormat:@"&fileName=%@&size=%d%@", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]], documentMedia.size, mimeComponent];
     
     [uri appendFormat:@"&width=124&height=124"];
     [uri appendFormat:@"&dimwidth=%d&dimheight=%d", (int)[documentMedia pictureSize].width, (int)[documentMedia pictureSize].height];

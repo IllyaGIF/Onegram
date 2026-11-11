@@ -7,6 +7,7 @@
 //
 
 #import "STPCustomer.h"
+#import "OGStripeCompat.h"
 #import "StripeError.h"
 #import "STPCard.h"
 
@@ -14,7 +15,7 @@
 
 @property(nonatomic, copy)NSString *stripeID;
 @property(nonatomic) id<STPSource> defaultSource;
-@property(nonatomic) NSArray *sources;
+@property(nonatomic) OG_COMPAT_GENERIC(NSArray, id<STPSource>) *sources;
 
 @end
 
@@ -22,7 +23,7 @@
 
 + (instancetype)customerWithStripeID:(NSString *)stripeID
                        defaultSource:(id<STPSource>)defaultSource
-                             sources:(NSArray *)sources {
+                             sources:(OG_COMPAT_GENERIC(NSArray, id<STPSource>) *)sources {
     STPCustomer *customer = [self new];
     customer.stripeID = stripeID;
     customer.defaultSource = defaultSource;
@@ -34,16 +35,16 @@
 
 @interface STPCustomerDeserializer()
 
-@property(nonatomic)STPCustomer *customer;
-@property(nonatomic)NSError *error;
+@property(nonatomic)STPCustomer *_Nullable customer;
+@property(nonatomic)NSError *_Nullable error;
 
 @end
 
 @implementation STPCustomerDeserializer
 
-- (instancetype)initWithData:(NSData *)data
-                 urlResponse:(__unused NSURLResponse *)urlResponse
-                       error:(NSError *)error {
+- (instancetype)initWithData:(NSData *_Nullable)data
+                 urlResponse:(__unused NSURLResponse *_Nullable)urlResponse
+                       error:(NSError *_Nullable)error {
     if (error) {
         return [self initWithError:error];
     }

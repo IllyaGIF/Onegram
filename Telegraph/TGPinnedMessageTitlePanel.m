@@ -16,86 +16,131 @@
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Core/OGSurfaceRenderer.h"
 
-static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
+static UIImage *OGPinnedPanelClassicBackdrop(void)
 {
-    static UIImage *image = nil;
+    static UIImage *cachedBackdrop = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        CGSize size = CGSizeMake(2.0f, 29.0f);
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+        CGSize canvas = CGSizeMake(2.0f, 29.0f);
+        UIGraphicsBeginImageContextWithOptions(canvas, false, 0.0f);
         CGContextRef context = UIGraphicsGetCurrentContext();
 
-        NSArray *colors = @[(id)UIColorRGB(0xf8fafc).CGColor, (id)UIColorRGB(0xdce2e8).CGColor, (id)UIColorRGB(0xaeb8c2).CGColor];
-        CGFloat locations[] = {0.0f, 0.48f, 1.0f};
-        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-        CGGradientRef gradient = CGGradientCreateWithColors(colorSpace, (__bridge CFArrayRef)colors, locations);
+        CGFloat stops[] = {0.0f, 0.48f, 1.0f};
+        NSArray *gradientColors = @[(id)UIColorRGB(0xf8fafc).CGColor, (id)UIColorRGB(0xdce2e8).CGColor, (id)UIColorRGB(0xaeb8c2).CGColor];
+        CGColorSpaceRef rgbSpace = CGColorSpaceCreateDeviceRGB();
+        CGGradientRef gradient = CGGradientCreateWithColors(rgbSpace, (__bridge CFArrayRef)gradientColors, stops);
         if (context != NULL)
         {
-            CGContextDrawLinearGradient(context, gradient, CGPointZero, CGPointMake(0.0f, size.height), 0);
+            CGContextDrawLinearGradient(context, gradient, CGPointZero, CGPointMake(0.0f, canvas.height), 0);
         }
 
         CGGradientRelease(gradient);
-        CGColorSpaceRelease(colorSpace);
+        CGColorSpaceRelease(rgbSpace);
 
-        CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.9f).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, 0.0f, size.width, 1.0f));
-        CGContextSetFillColorWithColor(context, UIColorRGB(0x6d7884).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, size.height - 1.0f, size.width, 1.0f));
-        CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.35f).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, size.height - 2.0f, size.width, 1.0f));
+        CGFloat lineOffsets[] = {0.0f, canvas.height - 1.0f, canvas.height - 2.0f};
+        UIColor *lineColors[] = {UIColorRGBA(0xffffff, 0.9f), UIColorRGB(0x6d7884), UIColorRGBA(0xffffff, 0.35f)};
+        for (int lineIndex = 0; lineIndex < 3; lineIndex++)
+        {
+            CGContextSetFillColorWithColor(context, lineColors[lineIndex].CGColor);
+            CGContextFillRect(context, CGRectMake(0.0f, lineOffsets[lineIndex], canvas.width, 1.0f));
+        }
 
-        image = UIGraphicsGetImageFromCurrentImageContext();
+        cachedBackdrop = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
     });
-    return image;
+    return cachedBackdrop;
 }
 
-@interface TGPinnedMessageChevronView : UIView
+static UIImage *OGPinnedPanelThemedBackdrop(UIColor *tint)
 {
-    UIColor *_color;
+    return [TGPresentation classicIOS6ThemedImage:OGPinnedPanelClassicBackdrop() tintColor:tint alpha:0.85f];
 }
 
-@property (nonatomic, strong) UIColor *color;
+static UIColor *OGPinnedPanelRuleColor(UIColor *paletteColor, UIColor *regularColor)
+{
+    if (![TGPresentation classicThemeStyle])
+        return regularColor;
+    return [TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? paletteColor : UIColorRGB(0x6d7884);
+}
+
+static UIColor *OGPinnedPanelFillColor(UIColor *regularColor)
+{
+    return [TGPresentation classicThemeStyle] ? [UIColor clearColor] : regularColor;
+}
+
+static UILabel *OGPinnedMenuLabel(UIFont *font, UIColor *textColor)
+{
+    UILabel *label = [[UILabel alloc] init];
+    label.backgroundColor = [UIColor clearColor];
+    label.font = font;
+    label.textColor = textColor;
+    return label;
+}
+
+static UILabel *OGPinnedMenuBadgeLabel(NSInteger number, CGFloat minimumScale)
+{
+    UILabel *label = OGPinnedMenuLabel(TGMediumSystemFontOfSize(12.0f), [UIColor whiteColor]);
+    label.textAlignment = NSTextAlignmentCenter;
+    label.text = [NSString stringWithFormat:@"%d", (int)number];
+    label.adjustsFontSizeToFitWidth = true;
+    if ([label respondsToSelector:@selector(setMinimumScaleFactor:)])
+        OGPlatformSetLabelMinimumScaleFactor(label, minimumScale);
+    else
+        label.minimumFontSize = label.font.pointSize * minimumScale;
+    return label;
+}
+
+static UIView *OGPinnedMenuBadgeBackground(CGFloat radius)
+{
+    UIView *badge = [[UIView alloc] init];
+    badge.userInteractionEnabled = false;
+    badge.backgroundColor = TGAccentColor();
+    badge.layer.cornerRadius = radius;
+    return badge;
+}
+
+static CGRect OGPinnedMenuRuleFrame(CGRect bounds, CGFloat leadingInset)
+{
+    return CGRectMake(leadingInset, bounds.size.height - TGScreenPixel, bounds.size.width - leadingInset, TGScreenPixel);
+}
+
+@interface OGPinnedChevronView : UIView
+
+@property (nonatomic, strong) UIColor *strokeColor;
 
 @end
 
 
-@implementation TGPinnedMessageChevronView
+@implementation OGPinnedChevronView
 
 - (instancetype)init
 {
     self = [super initWithFrame:CGRectZero];
     if (self != nil)
     {
-        self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = false;
-        _color = UIColorRGB(0xb5b5b5);
+        self.backgroundColor = [UIColor clearColor];
+        _strokeColor = UIColorRGB(0xb5b5b5);
     }
     return self;
 }
 
-- (void)setColor:(UIColor *)color
+- (void)setStrokeColor:(UIColor *)strokeColor
 {
-    _color = color;
+    _strokeColor = strokeColor;
     [self setNeedsDisplay];
-}
-
-- (UIColor *)color
-{
-    return _color;
 }
 
 - (void)drawRect:(CGRect)__unused rect
 {
     CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextSetStrokeColorWithColor(context, _color.CGColor);
+    CGPoint tip[] = {CGPointMake(1.0f, 1.0f), CGPointMake(6.0f, 7.0f), CGPointMake(1.0f, 13.0f)};
+    CGContextSetStrokeColorWithColor(context, _strokeColor.CGColor);
     CGContextSetLineWidth(context, 1.5f);
     CGContextSetLineCap(context, kCGLineCapRound);
     CGContextSetLineJoin(context, kCGLineJoinRound);
-    CGContextMoveToPoint(context, 1.0f, 1.0f);
-    CGContextAddLineToPoint(context, 6.0f, 7.0f);
-    CGContextAddLineToPoint(context, 1.0f, 13.0f);
+    CGContextAddLines(context, tip, 3);
     CGContextStrokePath(context);
 }
 
@@ -104,10 +149,10 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 
 @interface TGPinnedMessagesMenuHeaderItemView ()
 {
-    UILabel *_titleLabel;
-    UIView *_countBackgroundView;
-    UILabel *_countLabel;
-    UIView *_separatorView;
+    UIView *_countBadge;
+    UILabel *_headlineLabel;
+    UILabel *_countText;
+    UIView *_bottomRule;
 }
 
 @end
@@ -120,47 +165,32 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     self = [super initWithType:TGMenuSheetItemTypeDefault];
     if (self != nil)
     {
-        NSString *title = TGLocalized(@"Channel.AdminLogFilter.EventsPinned");
-        if ([title isEqualToString:@"Channel.AdminLogFilter.EventsPinned"])
-            title = TGLocalized(@"Conversation.PinnedMessage");
+        NSString *headline = TGLocalized(@"Channel.AdminLogFilter.EventsPinned");
+        if ([headline isEqualToString:@"Channel.AdminLogFilter.EventsPinned"])
+            headline = TGLocalized(@"Conversation.PinnedMessage");
 
-        _titleLabel = [[UILabel alloc] init];
-        _titleLabel.backgroundColor = [UIColor clearColor];
-        _titleLabel.font = TGMediumSystemFontOfSize(17.0f);
-        _titleLabel.textColor = UIColorRGB(0x222222);
-        _titleLabel.text = title;
-        _titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-        [self addSubview:_titleLabel];
+        _headlineLabel = OGPinnedMenuLabel(TGMediumSystemFontOfSize(17.0f), UIColorRGB(0x222222));
+        _headlineLabel.text = headline;
+        _headlineLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        [self addSubview:_headlineLabel];
 
-        _countBackgroundView = [[UIView alloc] init];
-        _countBackgroundView.userInteractionEnabled = false;
-        _countBackgroundView.backgroundColor = TGAccentColor();
-        _countBackgroundView.layer.cornerRadius = 12.0f;
-        [self addSubview:_countBackgroundView];
+        _countBadge = OGPinnedMenuBadgeBackground(12.0f);
+        [self addSubview:_countBadge];
 
-        _countLabel = [[UILabel alloc] init];
-        _countLabel.backgroundColor = [UIColor clearColor];
-        _countLabel.font = TGMediumSystemFontOfSize(12.0f);
-        _countLabel.textColor = [UIColor whiteColor];
-        _countLabel.textAlignment = NSTextAlignmentCenter;
-        _countLabel.text = [NSString stringWithFormat:@"%d", (int)messageCount];
-        _countLabel.adjustsFontSizeToFitWidth = true;
-        if ([_countLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            OGPlatformSetLabelMinimumScaleFactor(_countLabel, 0.7f);
-        else
-            _countLabel.minimumFontSize = _countLabel.font.pointSize * 0.7f;
-        [_countBackgroundView addSubview:_countLabel];
+        _countText = OGPinnedMenuBadgeLabel((NSInteger)messageCount, 0.7f);
+        [_countBadge addSubview:_countText];
 
-        _separatorView = [[UIView alloc] init];
-        _separatorView.backgroundColor = UIColorRGB(0xd9d9d9);
-        [self addSubview:_separatorView];
+        _bottomRule = [[UIView alloc] init];
+        _bottomRule.backgroundColor = UIColorRGB(0xd9d9d9);
+        [self addSubview:_bottomRule];
     }
     return self;
 }
 
 - (CGFloat)preferredHeightForWidth:(CGFloat)__unused width screenHeight:(CGFloat)__unused screenHeight
 {
-    return 52.0f;
+    static const CGFloat headerHeight = 52.0f;
+    return headerHeight;
 }
 
 - (bool)requiresDivider
@@ -170,27 +200,28 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 
 - (void)setDark
 {
-    _titleLabel.textColor = [UIColor whiteColor];
-    _separatorView.backgroundColor = UIColorRGB(0x383838);
+    _headlineLabel.textColor = [UIColor whiteColor];
+    _bottomRule.backgroundColor = UIColorRGB(0x383838);
 }
 
 - (void)setPallete:(TGMenuSheetPallete *)pallete
 {
-    _titleLabel.textColor = pallete.textColor;
-    _countBackgroundView.backgroundColor = pallete.accentColor;
-    _separatorView.backgroundColor = pallete.separatorColor;
+    _headlineLabel.textColor = pallete.textColor;
+    _countBadge.backgroundColor = pallete.accentColor;
+    _bottomRule.backgroundColor = pallete.separatorColor;
 }
 
 - (void)layoutSubviews
 {
     [super layoutSubviews];
 
-    CGFloat countSize = 24.0f;
-    _countBackgroundView.frame = CGRectMake(self.bounds.size.width - 16.0f - countSize, 14.0f, countSize, countSize);
-    _countBackgroundView.layer.cornerRadius = countSize / 2.0f;
-    _countLabel.frame = _countBackgroundView.bounds;
-    _titleLabel.frame = CGRectMake(16.0f, 0.0f, self.bounds.size.width - 16.0f - countSize - 26.0f, self.bounds.size.height);
-    _separatorView.frame = CGRectMake(16.0f, self.bounds.size.height - TGScreenPixel, self.bounds.size.width - 16.0f, TGScreenPixel);
+    CGRect area = self.bounds;
+    CGFloat diameter = 24.0f;
+    _countBadge.frame = CGRectMake(area.size.width - 16.0f - diameter, 14.0f, diameter, diameter);
+    _countBadge.layer.cornerRadius = diameter / 2.0f;
+    _countText.frame = _countBadge.bounds;
+    _headlineLabel.frame = CGRectMake(16.0f, 0.0f, area.size.width - 16.0f - diameter - 26.0f, area.size.height);
+    _bottomRule.frame = OGPinnedMenuRuleFrame(area, 16.0f);
 }
 
 @end
@@ -198,11 +229,11 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 
 @interface TGPinnedMessageMenuItemView ()
 {
-    UIView *_indexBackgroundView;
-    UILabel *_indexLabel;
-    UILabel *_messageLabel;
-    TGPinnedMessageChevronView *_chevronView;
-    UIView *_separatorView;
+    UIView *_indexBadge;
+    UILabel *_indexText;
+    UILabel *_bodyLabel;
+    OGPinnedChevronView *_disclosureView;
+    UIView *_bottomRule;
 }
 
 @end
@@ -215,52 +246,37 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     self = [super initWithTitle:@"" type:TGMenuSheetButtonTypeDefault action:action];
     if (self != nil)
     {
-        _button.accessibilityLabel = title;
         _button.titleLabel.adjustsFontSizeToFitWidth = false;
+        _button.accessibilityLabel = title;
 
-        _indexBackgroundView = [[UIView alloc] init];
-        _indexBackgroundView.userInteractionEnabled = false;
-        _indexBackgroundView.backgroundColor = TGAccentColor();
-        _indexBackgroundView.layer.cornerRadius = 14.0f;
-        [self addSubview:_indexBackgroundView];
+        _indexBadge = OGPinnedMenuBadgeBackground(14.0f);
+        [self addSubview:_indexBadge];
 
-        _indexLabel = [[UILabel alloc] init];
-        _indexLabel.backgroundColor = [UIColor clearColor];
-        _indexLabel.font = TGMediumSystemFontOfSize(12.0f);
-        _indexLabel.textColor = [UIColor whiteColor];
-        _indexLabel.textAlignment = NSTextAlignmentCenter;
-        _indexLabel.text = [NSString stringWithFormat:@"%d", (int)index + 1];
-        _indexLabel.adjustsFontSizeToFitWidth = true;
-        if ([_indexLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            OGPlatformSetLabelMinimumScaleFactor(_indexLabel, 0.65f);
-        else
-            _indexLabel.minimumFontSize = _indexLabel.font.pointSize * 0.65f;
-        [_indexBackgroundView addSubview:_indexLabel];
+        _indexText = OGPinnedMenuBadgeLabel((int)index + 1, 0.65f);
+        [_indexBadge addSubview:_indexText];
 
-        _messageLabel = [[UILabel alloc] init];
-        _messageLabel.userInteractionEnabled = false;
-        _messageLabel.backgroundColor = [UIColor clearColor];
-        _messageLabel.font = TGSystemFontOfSize(15.5f);
-        _messageLabel.textColor = UIColorRGB(0x222222);
-        _messageLabel.numberOfLines = 2;
-        _messageLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-        _messageLabel.text = title;
-        [self addSubview:_messageLabel];
+        _bodyLabel = OGPinnedMenuLabel(TGSystemFontOfSize(15.5f), UIColorRGB(0x222222));
+        _bodyLabel.userInteractionEnabled = false;
+        _bodyLabel.numberOfLines = 2;
+        _bodyLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        _bodyLabel.text = title;
+        [self addSubview:_bodyLabel];
 
-        _chevronView = [[TGPinnedMessageChevronView alloc] init];
-        [self addSubview:_chevronView];
+        _disclosureView = [[OGPinnedChevronView alloc] init];
+        [self addSubview:_disclosureView];
 
-        _separatorView = [[UIView alloc] init];
-        _separatorView.userInteractionEnabled = false;
-        _separatorView.backgroundColor = UIColorRGB(0xd9d9d9);
-        [self addSubview:_separatorView];
+        _bottomRule = [[UIView alloc] init];
+        _bottomRule.userInteractionEnabled = false;
+        _bottomRule.backgroundColor = UIColorRGB(0xd9d9d9);
+        [self addSubview:_bottomRule];
     }
     return self;
 }
 
 - (CGFloat)preferredHeightForWidth:(CGFloat)__unused width screenHeight:(CGFloat)__unused screenHeight
 {
-    return 64.0f;
+    static const CGFloat rowHeight = 64.0f;
+    return rowHeight;
 }
 
 - (bool)requiresDivider
@@ -271,39 +287,40 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 - (void)setDark
 {
     [super setDark];
-    _messageLabel.textColor = [UIColor whiteColor];
-    _separatorView.backgroundColor = UIColorRGB(0x383838);
-    _chevronView.color = UIColorRGB(0x666666);
+    _bodyLabel.textColor = [UIColor whiteColor];
+    _bottomRule.backgroundColor = UIColorRGB(0x383838);
+    _disclosureView.strokeColor = UIColorRGB(0x666666);
 }
 
 - (void)setPallete:(TGMenuSheetPallete *)pallete
 {
     [super setPallete:pallete];
-    _messageLabel.textColor = pallete.textColor;
-    _indexBackgroundView.backgroundColor = pallete.accentColor;
-    _separatorView.backgroundColor = pallete.separatorColor;
-    _chevronView.color = pallete.secondaryTextColor;
+    _bodyLabel.textColor = pallete.textColor;
+    _indexBadge.backgroundColor = pallete.accentColor;
+    _bottomRule.backgroundColor = pallete.separatorColor;
+    _disclosureView.strokeColor = pallete.secondaryTextColor;
 }
 
 - (void)layoutSubviews
 {
     [super layoutSubviews];
 
-    CGFloat indexSize = 28.0f;
-    _indexBackgroundView.frame = CGRectMake(14.0f, floor((self.bounds.size.height - indexSize) / 2.0f), indexSize, indexSize);
-    _indexBackgroundView.layer.cornerRadius = indexSize / 2.0f;
-    _indexLabel.frame = _indexBackgroundView.bounds;
-    _messageLabel.frame = CGRectMake(54.0f, 8.0f, self.bounds.size.width - 54.0f - 34.0f, self.bounds.size.height - 16.0f);
-    _chevronView.frame = CGRectMake(self.bounds.size.width - 21.0f, floor((self.bounds.size.height - 14.0f) / 2.0f), 8.0f, 14.0f);
-    _separatorView.frame = CGRectMake(54.0f, self.bounds.size.height - TGScreenPixel, self.bounds.size.width - 54.0f, TGScreenPixel);
+    CGRect area = self.bounds;
+    CGFloat diameter = 28.0f;
+    _indexBadge.frame = CGRectMake(14.0f, floor((area.size.height - diameter) / 2.0f), diameter, diameter);
+    _indexBadge.layer.cornerRadius = diameter / 2.0f;
+    _indexText.frame = _indexBadge.bounds;
+    _bodyLabel.frame = CGRectMake(54.0f, 8.0f, area.size.width - 54.0f - 34.0f, area.size.height - 16.0f);
+    _disclosureView.frame = CGRectMake(area.size.width - 21.0f, floor((area.size.height - 14.0f) / 2.0f), 8.0f, 14.0f);
+    _bottomRule.frame = OGPinnedMenuRuleFrame(area, 54.0f);
 }
 
 @end
 
 @interface TGPinnedMessageTitlePanel () {
     TGModenConcersationReplyAssociatedPanel *_replyPanel;
-    UIView *_separatorView;
-    UIImageView *_classicIOS6BackgroundView;
+    UIView *_bottomRule;
+    UIImageView *_classicBackdropView;
     UIView *_brandedBackgroundClipView;
     UIImageView *_brandedBackgroundView;
     UIImageView *_brandedIndicatorView;
@@ -324,17 +341,15 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     self = [super initWithFrame:CGRectMake(0.0f, 0.0f, 320.0f, [TGPresentation brandedIOS6PinnedPanelAvailable] ? [TGPresentation brandedIOS6PinnedPanelHeight] : 29.0f)];
     if (self != nil) {
         _message = message;
-        self.clipsToBounds = true;
+        self.layer.masksToBounds = true;
 
-        UIImage *classicBackgroundImage = TGClassicIOS6PinnedPanelBackgroundImage();
-        classicBackgroundImage = [TGPresentation classicIOS6ThemedImage:classicBackgroundImage tintColor:TGPresentation.current.pallete.barBackgroundColor alpha:0.85f];
-        _classicIOS6BackgroundView = [[UIImageView alloc] initWithImage:classicBackgroundImage];
-        _classicIOS6BackgroundView.userInteractionEnabled = false;
-        _classicIOS6BackgroundView.hidden = ![TGPresentation classicIOS6Style];
-        [self addSubview:_classicIOS6BackgroundView];
+        _classicBackdropView = [[UIImageView alloc] initWithImage:OGPinnedPanelThemedBackdrop(TGPresentation.current.pallete.barBackgroundColor)];
+        _classicBackdropView.userInteractionEnabled = false;
+        _classicBackdropView.hidden = ![TGPresentation classicThemeStyle];
+        [self addSubview:_classicBackdropView];
         
         _replyPanel = [[TGModenConcersationReplyAssociatedPanel alloc] initWithMessage:message];
-        _replyPanel.compactMode = true;
+        [_replyPanel setCompactMode:true];
         [_replyPanel setSendAreaWidth:14.0f - TGRetinaPixel attachmentAreaWidth:6.0f];
         _replyPanel.largeDismissButton = true;
         __weak TGPinnedMessageTitlePanel *weakSelf = self;
@@ -351,11 +366,11 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
             }
         };
         [self addSubview:_replyPanel];
-        self.backgroundColor = [TGPresentation classicIOS6Style] ? [UIColor clearColor] : UIColorRGB(0xf7f7f7);
+        self.backgroundColor = OGPinnedPanelFillColor(UIColorRGB(0xf7f7f7));
         
-        _separatorView = [[UIView alloc] init];
-        _separatorView.backgroundColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? TGPresentation.current.pallete.barSeparatorColor : UIColorRGB(0x6d7884)) : TGSeparatorColor();
-        [self addSubview:_separatorView];
+        _bottomRule = [[UIView alloc] init];
+        _bottomRule.backgroundColor = OGPinnedPanelRuleColor(TGPresentation.current.pallete.barSeparatorColor, TGSeparatorColor());
+        [self addSubview:_bottomRule];
 
         _brandedBackgroundClipView = [[UIView alloc] init];
         _brandedBackgroundClipView.userInteractionEnabled = false;
@@ -430,15 +445,15 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     _brandedCloseButton.hidden = !brandedStyle || _compactHeader;
     _compactChevronView.hidden = !brandedStyle || !_compactHeader;
     _replyPanel.hidden = brandedStyle;
-    _separatorView.hidden = brandedStyle;
+    _bottomRule.hidden = brandedStyle;
     _brandedBackgroundSize = CGSizeZero;
     _brandedBubbleWidth = 0.0f;
     if (!brandedStyle)
         return;
 
     OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
-    _classicIOS6BackgroundView.hidden = true;
-    self.backgroundColor = [UIColor clearColor];
+    _classicBackdropView.hidden = true;
+    [self setBackgroundColor:[UIColor clearColor]];
     _brandedIndicatorView.image = [TGPresentation brandedIOS6PinnedIndicatorImage];
     _brandedIconView.image = [TGPresentation brandedIOS6PinnedIconImage];
     [_brandedCloseButton setImage:[TGPresentation brandedIOS6PinnedCloseImage] forState:UIControlStateNormal];
@@ -476,12 +491,12 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 {
     [super setPresentation:presentation];
     
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    _classicIOS6BackgroundView.hidden = !classicIOS6Style;
-    if (classicIOS6Style)
-        _classicIOS6BackgroundView.image = [TGPresentation classicIOS6ThemedImage:TGClassicIOS6PinnedPanelBackgroundImage() tintColor:presentation.pallete.barBackgroundColor alpha:0.85f];
-    self.backgroundColor = classicIOS6Style ? [UIColor clearColor] : presentation.pallete.barBackgroundColor;
-    _separatorView.backgroundColor = classicIOS6Style ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.barSeparatorColor : UIColorRGB(0x6d7884)) : presentation.pallete.barSeparatorColor;
+    BOOL classicLook = [TGPresentation classicThemeStyle];
+    _classicBackdropView.hidden = !classicLook;
+    if (classicLook)
+        _classicBackdropView.image = OGPinnedPanelThemedBackdrop(presentation.pallete.barBackgroundColor);
+    self.backgroundColor = OGPinnedPanelFillColor(presentation.pallete.barBackgroundColor);
+    _bottomRule.backgroundColor = OGPinnedPanelRuleColor(presentation.pallete.barSeparatorColor, presentation.pallete.barSeparatorColor);
     _replyPanel.pallete = presentation.associatedInputPanelPallete;
     [self updateBrandedStyle];
 }
@@ -493,7 +508,10 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 }
 
 - (void)setMessageCount:(NSUInteger)messageCount {
-    _replyPanel.compactPrefix = messageCount > 1 ? [NSString stringWithFormat:@"%d", (int)messageCount] : nil;
+    NSString *countPrefix = nil;
+    if (messageCount > 1)
+        countPrefix = [NSString stringWithFormat:@"%d", (int)messageCount];
+    _replyPanel.compactPrefix = countPrefix;
     _brandedTextLabel.text = _replyPanel.contentText;
 }
 
@@ -559,10 +577,11 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     [super layoutSubviews];
     
     CGFloat separatorHeight = TGScreenPixel;
-    _separatorView.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
-    _classicIOS6BackgroundView.frame = self.bounds;
+    _bottomRule.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
+    _classicBackdropView.frame = self.bounds;
     
-    _replyPanel.frame = CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, 28.0f);
+    UIEdgeInsets insets = self.safeAreaInset;
+    _replyPanel.frame = CGRectMake(insets.left, 0.0f, self.frame.size.width - insets.left - insets.right, 28.0f);
 
     if ([TGPresentation brandedIOS6PinnedPanelAvailable])
         [self layoutBrandedContent];

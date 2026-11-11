@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTPolystarAnimator.m
 //  Lottie
@@ -25,8 +25,8 @@ const CGFloat kPOLYSTAR_MAGIC_NUMBER = .47829f;
   LOTNumberInterpolator *_rotationInterpolator;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                             shapeStar:(LOTShapeStar *)shapeStar {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                             shapeStar:(LOTShapeStar *_Nonnull)shapeStar {
   self = [super initWithInputNode:inputNode keyName:shapeStar.keyname];
   if (self) {
     _outerRadiusInterpolator = [[LOTNumberInterpolator alloc] initWithKeyframes:shapeStar.outerRadius.keyframes];

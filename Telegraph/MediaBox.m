@@ -16,24 +16,24 @@ static int32_t fileSize(NSString *path) {
 }
 
 @interface MediaBox () {
-    NSString * _basePath;
+    NSString *_basePath;
     
-    SQueue * _statusQueue;
-    SQueue * _concurrentQueue;
-    SQueue * _dataQueue;
-    SQueue * _cacheQueue;
+    SQueue *_statusQueue;
+    SQueue *_concurrentQueue;
+    SQueue *_dataQueue;
+    SQueue *_cacheQueue;
     
-    NSMutableDictionary * _statusContexts;
-    NSMutableDictionary * _dataContexts;
+    NSMutableDictionary *_statusContexts;
+    NSMutableDictionary *_dataContexts;
     
-    SVariable * _wrappedFetchResource;
+    SVariable *_wrappedFetchResource;
 }
 
 @end
 
 @implementation MediaBox
 
-- ( instancetype)initWithBasePath:(NSString * )basePath {
+- (instancetype)initWithBasePath:(NSString *)basePath {
     self = [super init];
     if (self != nil) {
         _basePath = basePath;
@@ -63,11 +63,11 @@ static int32_t fileSize(NSString *path) {
     [_wrappedFetchResource set:[SSignal single:[fetchResource copy]]];
 }
 
-- (NSString * )fileNameForId:(id<MediaResourceId>)resourceId {
+- (NSString *)fileNameForId:(id<MediaResourceId>)resourceId {
     return [resourceId uniqueId];
 }
 
-- (ResourceStorePaths * )storePathsForId:(id<MediaResourceId>)resourceId {
+- (ResourceStorePaths *)storePathsForId:(id<MediaResourceId>)resourceId {
     return [[ResourceStorePaths alloc] initWithPartial:[[_basePath stringByAppendingPathComponent:[self fileNameForId:resourceId]] stringByAppendingString:@"_partial"] complete:[_basePath stringByAppendingPathComponent:[self fileNameForId:resourceId]]];
 }
 
@@ -161,7 +161,7 @@ static int32_t fileSize(NSString *path) {
     }];
 }
 
-- (SSignal *)resourceData:(id<MediaResource> )resource pathExtension:(NSString * )pathExtension {
+- (SSignal *)resourceData:(id<MediaResource>)resource pathExtension:(NSString *)pathExtension {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
         SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
         

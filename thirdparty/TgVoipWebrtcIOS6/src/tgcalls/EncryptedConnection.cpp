@@ -9,6 +9,8 @@
 
 #include "Ios6DiagnosticLog.h"
 
+#define OG_COMPAT_ENC_TRACE(format, ...) syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc." format, ##__VA_ARGS__)
+
 namespace tgcalls {
 namespace {
 
@@ -72,30 +74,56 @@ bool ConstTimeIsDifferent(const void *a, const void *b, size_t size) {
     return different;
 }
 
-bool MessageRequiresAck(const Message &message) {
-	const auto data = &message.data;
-	if (const auto value = absl::get_if<CandidatesListMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<VideoFormatsMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<RequestVideoMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<RemoteMediaStateMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<AudioDataMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<VideoDataMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<UnstructuredDataMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<VideoParametersMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<RemoteBatteryLevelIsLowMessage>(data)) {
-		return value->kRequiresAck;
-	} else if (const auto value = absl::get_if<RemoteNetworkStatusMessage>(data)) {
-		return value->kRequiresAck;
-	}
+inline unsigned long AsULong(size_t value) {
+	return (unsigned long)value;
+}
+
+inline int AsFlag(bool value) {
+	return value ? 1 : 0;
+}
+
+template <typename... Alternatives>
+struct AlternativeList {
+};
+
+bool AckRequiredAmong(const Message &, AlternativeList<>) {
 	return false;
+}
+
+template <typename First, typename... Rest>
+bool AckRequiredAmong(const Message &message, AlternativeList<First, Rest...>) {
+	if (absl::get_if<First>(&message.data) != nullptr) {
+		return First::kRequiresAck;
+	}
+	return AckRequiredAmong(message, AlternativeList<Rest...>());
+}
+
+bool MessageRequiresAck(const Message &message) {
+	return AckRequiredAmong(message, AlternativeList<
+		CandidatesListMessage,
+		VideoFormatsMessage,
+		RequestVideoMessage,
+		RemoteMediaStateMessage,
+		AudioDataMessage,
+		VideoDataMessage,
+		UnstructuredDataMessage,
+		VideoParametersMessage,
+		RemoteBatteryLevelIsLowMessage,
+		RemoteNetworkStatusMessage>());
+}
+
+template <typename Packet, typename Payload>
+void AppendDecrypted(absl::optional<Packet> &to, Payload &&payload, uint32_t incomingSeq) {
+	decltype(Packet::main) entry;
+	entry.message = std::move(payload);
+	entry.counter = CounterFromSeq(incomingSeq);
+	if (to) {
+		to->additional.push_back(std::move(entry));
+		return;
+	}
+	Packet first;
+	first.main = std::move(entry);
+	to = std::move(first);
 }
 
 rtc::CopyOnWriteBuffer SerializeRawMessageWithSeq(
@@ -275,7 +303,7 @@ absl::optional<rtc::CopyOnWriteBuffer> EncryptedConnection::decryptRawPacket(rtc
 
 auto EncryptedConnection::prepareForSending(const Message &message)
 -> absl::optional<EncryptedPacket> {
-    const auto messageRequiresAck = MessageRequiresAck(message);
+    const bool messageRequiresAck = MessageRequiresAck(message);
 
     const auto singleMessagePacket = !haveAdditionalMessages() && !messageRequiresAck;
     const auto maybeSeq = computeNextSeq(messageRequiresAck, singleMessagePacket);
@@ -289,54 +317,54 @@ auto EncryptedConnection::prepareForSending(const Message &message)
 }
 
 absl::optional<EncryptedConnection::EncryptedPacket> EncryptedConnection::prepareForSendingRawMessage(rtc::CopyOnWriteBuffer &message, bool messageRequiresAck) {
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.enter size=%lu ack=%d",
-        (unsigned long)message.size(),
-        messageRequiresAck ? 1 : 0);
+    OG_COMPAT_ENC_TRACE("prepareRaw.enter size=%lu ack=%d",
+        AsULong(message.size()),
+        AsFlag(messageRequiresAck));
     const auto singleMessagePacket = !haveAdditionalMessages() && !messageRequiresAck;
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.beforeSeq single=%d additional=%d",
-        singleMessagePacket ? 1 : 0,
-        haveAdditionalMessages() ? 1 : 0);
+    OG_COMPAT_ENC_TRACE("prepareRaw.beforeSeq single=%d additional=%d",
+        AsFlag(singleMessagePacket),
+        AsFlag(haveAdditionalMessages()));
     const auto maybeSeq = computeNextSeq(messageRequiresAck, singleMessagePacket);
     if (!maybeSeq) {
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.noSeq");
+        OG_COMPAT_ENC_TRACE("prepareRaw.noSeq");
         return absl::nullopt;
     }
     const auto seq = *maybeSeq;
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.seq seq=%u", seq);
+    OG_COMPAT_ENC_TRACE("prepareRaw.seq seq=%u", seq);
     auto serialized = SerializeRawMessageWithSeq(message, seq, singleMessagePacket);
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.serialized size=%lu", (unsigned long)serialized.size());
+    OG_COMPAT_ENC_TRACE("prepareRaw.serialized size=%lu", AsULong(serialized.size()));
     
-    auto result = prepareForSendingMessageInternal(serialized, seq, messageRequiresAck);
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareRaw.exit has=%d", result ? 1 : 0);
-    return result;
+    auto sent = prepareForSendingMessageInternal(serialized, seq, messageRequiresAck);
+    OG_COMPAT_ENC_TRACE("prepareRaw.exit has=%d", AsFlag(sent.has_value()));
+    return sent;
 }
 	    
 absl::optional<EncryptedConnection::EncryptedPacket> EncryptedConnection::prepareForSendingMessageInternal(rtc::CopyOnWriteBuffer &serialized, uint32_t seq, bool messageRequiresAck) {
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.enter size=%lu seq=%u ack=%d",
-        (unsigned long)serialized.size(),
+    OG_COMPAT_ENC_TRACE("prepareInternal.enter size=%lu seq=%u ack=%d",
+        AsULong(serialized.size()),
         seq,
-        messageRequiresAck ? 1 : 0);
+        AsFlag(messageRequiresAck));
     if (!enoughSpaceInPacket(serialized, 0)) {
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.tooLarge size=%lu", (unsigned long)serialized.size());
+        OG_COMPAT_ENC_TRACE("prepareInternal.tooLarge size=%lu", AsULong(serialized.size()));
         return LogError("Too large packet: ", std::to_string(serialized.size()));
     }
     const auto notYetAckedCopy = messageRequiresAck
         ? serialized
         : rtc::CopyOnWriteBuffer();
     if (!messageRequiresAck) {
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.noAck.skipAppend size=%lu additional=%d",
-            (unsigned long)serialized.size(),
-            haveAdditionalMessages() ? 1 : 0);
-        auto result = encryptPrepared(serialized);
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.noAck.afterEncrypt bytes=%lu", (unsigned long)result.bytes.size());
-        return result;
+        OG_COMPAT_ENC_TRACE("prepareInternal.noAck.skipAppend size=%lu additional=%d",
+            AsULong(serialized.size()),
+            AsFlag(haveAdditionalMessages()));
+        auto packet = encryptPrepared(serialized);
+        OG_COMPAT_ENC_TRACE("prepareInternal.noAck.afterEncrypt bytes=%lu", AsULong(packet.bytes.size()));
+        return packet;
     }
     const auto type = uint8_t(serialized.cdata()[4]);
     const auto sendEnqueued = !_myNotYetAckedMessages.empty();
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.ack type=%u enqueued=%d notAcked=%lu",
+    OG_COMPAT_ENC_TRACE("prepareInternal.ack type=%u enqueued=%d notAcked=%lu",
         (unsigned int)type,
-        sendEnqueued ? 1 : 0,
-        (unsigned long)_myNotYetAckedMessages.size());
+        AsFlag(sendEnqueued),
+        AsULong(_myNotYetAckedMessages.size()));
     if (sendEnqueued) {
         RTC_LOG(LS_INFO) << logHeader()
             << "Enqueue SEND:type" << type << "#" << CounterFromSeq(seq);
@@ -345,24 +373,23 @@ absl::optional<EncryptedConnection::EncryptedPacket> EncryptedConnection::prepar
             << "Add SEND:type" << type << "#" << CounterFromSeq(seq);
         appendAdditionalMessages(serialized);
     }
-	MessageForResend resend;
-	resend.data = notYetAckedCopy;
-	resend.lastSent = rtc::TimeMillis();
-    _myNotYetAckedMessages.push_back(resend);
+    _myNotYetAckedMessages.push_back(MessageForResend());
+    _myNotYetAckedMessages.back().data = notYetAckedCopy;
+    _myNotYetAckedMessages.back().lastSent = rtc::TimeMillis();
     if (!sendEnqueued) {
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.ack.beforeEncrypt size=%lu notAcked=%lu",
-            (unsigned long)serialized.size(),
-            (unsigned long)_myNotYetAckedMessages.size());
-        auto result = encryptPrepared(serialized);
-        syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.ack.afterEncrypt bytes=%lu counter=%u",
-            (unsigned long)result.bytes.size(),
-            result.counter);
-        return result;
+        OG_COMPAT_ENC_TRACE("prepareInternal.ack.beforeEncrypt size=%lu notAcked=%lu",
+            AsULong(serialized.size()),
+            AsULong(_myNotYetAckedMessages.size()));
+        auto packet = encryptPrepared(serialized);
+        OG_COMPAT_ENC_TRACE("prepareInternal.ack.afterEncrypt bytes=%lu counter=%u",
+            AsULong(packet.bytes.size()),
+            packet.counter);
+        return packet;
     }
     for (auto &queued : _myNotYetAckedMessages) {
         queued.lastSent = 0;
     }
-    syslog(LOG_NOTICE, "IOS6WEBRTC cxx.enc.prepareInternal.ack.service");
+    OG_COMPAT_ENC_TRACE("prepareInternal.ack.service");
     return prepareForSendingService(0);
 }
 
@@ -539,12 +566,9 @@ bool EncryptedConnection::registerIncomingCounter(uint32_t incomingCounter) {
     const auto eraseTill = std::find_if(list.begin(), list.end(), [&](uint32_t counter) {
         return (counter + kKeepIncomingCountersCount > incomingCounter);
     });
-    if (eraseTill != list.begin()) {
-        list.erase(list.begin(), eraseTill);
-    }
+    list.erase(list.begin(), eraseTill);
 
-    const auto insertPosition = std::lower_bound(list.begin(), list.end(), incomingCounter);
-    list.insert(insertPosition, incomingCounter);
+    list.insert(std::lower_bound(list.begin(), list.end(), incomingCounter), incomingCounter);
     return true;
 }
 
@@ -899,7 +923,7 @@ auto EncryptedConnection::processRawPacket(
     );
 
     rtc::ByteBufferReader reader(
-        reinterpret_cast<const char *>(fullBuffer.data() + 4), // Skip seq.
+        reinterpret_cast<const char *>(fullBuffer.data()) + 4, // Skip seq.
         fullBuffer.size() - 4);
 
     syslog(
@@ -1193,32 +1217,14 @@ void EncryptedConnection::appendReceivedMessage(
         absl::optional<DecryptedPacket> &to,
         Message &&message,
         uint32_t incomingSeq) {
-    DecryptedMessage decrypted;
-	decrypted.message = std::move(message);
-	decrypted.counter = CounterFromSeq(incomingSeq);
-    if (to) {
-        to->additional.push_back(std::move(decrypted));
-    } else {
-        DecryptedPacket packet;
-		packet.main = std::move(decrypted);
-		to = packet;
-    }
+    AppendDecrypted(to, std::move(message), incomingSeq);
 }
 
 void EncryptedConnection::appendReceivedRawMessage(
         absl::optional<DecryptedRawPacket> &to,
         rtc::CopyOnWriteBuffer &&message,
         uint32_t incomingSeq) {
-    DecryptedRawMessage decrypted;
-	decrypted.message = std::move(message);
-	decrypted.counter = CounterFromSeq(incomingSeq);
-    if (to) {
-        to->additional.push_back(std::move(decrypted));
-    } else {
-        DecryptedRawPacket packet;
-		packet.main = std::move(decrypted);
-		to = packet;
-    }
+    AppendDecrypted(to, std::move(message), incomingSeq);
 }
 
 const char *EncryptedConnection::logHeader() const {
@@ -1281,7 +1287,7 @@ auto EncryptedConnection::DelayIntervalsByType(Type type) -> DelayIntervals {
 
 rtc::CopyOnWriteBuffer EncryptedConnection::SerializeEmptyMessageWithSeq(uint32_t seq) {
     auto result = rtc::CopyOnWriteBuffer(5);
-    uint8_t *bytes = reinterpret_cast<uint8_t *>(result.MutableData());
+    auto bytes = static_cast<uint8_t *>(result.MutableData());
     WriteSeq(bytes, seq);
     bytes[4] = kEmptyId;
     return result;

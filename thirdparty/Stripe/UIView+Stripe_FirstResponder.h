@@ -10,7 +10,7 @@
 
 @interface UIView (Stripe_FirstResponder)
 
-- (UIView *)stp_findFirstResponder;
+- (UIView *_Nullable)stp_findFirstResponder;
 
 @end
 

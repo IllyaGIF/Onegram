@@ -2858,7 +2858,7 @@
 
 @end
 
-@implementation TLCodexFolderPeer
+@implementation TLFolderPeerEntry
 
 - (int32_t)TLconstructorSignature
 {
@@ -2909,7 +2909,7 @@
 
 @end
 
-@implementation TLUpdate$updateMessageReactionsCodex
+@implementation TLUpdate$updateMessageReactionsSummary
 
 - (int32_t)TLconstructorSignature
 {

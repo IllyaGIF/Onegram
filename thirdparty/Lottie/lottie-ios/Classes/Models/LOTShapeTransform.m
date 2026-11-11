@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeTransform.m
 //  LottieAnimator
@@ -22,21 +22,21 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *position = [jsonDictionary objectForKey:@2];
+  NSDictionary *position = jsonDictionary[@"p"];
   if (position) {
     _position = [[LOTKeyframeGroup alloc] initWithData:position];
   }
   
-  NSDictionary *anchor = [jsonDictionary objectForKey:@2];
+  NSDictionary *anchor = jsonDictionary[@"a"];
   if (anchor) {
     _anchor = [[LOTKeyframeGroup alloc] initWithData:anchor];
   }
   
-  NSDictionary *scale = [jsonDictionary objectForKey:@2];
+  NSDictionary *scale = jsonDictionary[@"s"];
   if (scale) {
     _scale = [[LOTKeyframeGroup alloc] initWithData:scale];
     [_scale remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -44,7 +44,7 @@
     }];
   }
   
-  NSDictionary *rotation = [jsonDictionary objectForKey:@2];
+  NSDictionary *rotation = jsonDictionary[@"r"];
   if (rotation) {
     _rotation = [[LOTKeyframeGroup alloc] initWithData:rotation];
     [_rotation remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -52,7 +52,7 @@
     }];
   }
   
-  NSDictionary *opacity = [jsonDictionary objectForKey:@2];
+  NSDictionary *opacity = jsonDictionary[@"o"];
   if (opacity) {
     _opacity = [[LOTKeyframeGroup alloc] initWithData:opacity];
     [_opacity remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -60,11 +60,11 @@
     }];
   }
   
-  NSString *name = [jsonDictionary objectForKey:@2];
+  NSString *name = jsonDictionary[@"nm"];
   
-  NSDictionary *skew = [jsonDictionary objectForKey:@2];
+  NSDictionary *skew = jsonDictionary[@"sk"];
   BOOL hasSkew = (skew && [skew[@"k"] isEqual:@0] == NO);
-  NSDictionary *skewAxis = [jsonDictionary objectForKey:@2];
+  NSDictionary *skewAxis = jsonDictionary[@"sa"];
   BOOL hasSkewAxis = (skewAxis && [skewAxis[@"k"] isEqual:@0] == NO);
   
   if (hasSkew || hasSkewAxis) {

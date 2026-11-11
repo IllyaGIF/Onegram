@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTScene.h
 //  LottieAnimator
@@ -17,34 +17,34 @@
 @interface LOTComposition : NSObject
 
 /// Load animation by name from the default bundle, Images are also loaded from the bundle
-+ ( instancetype)animationNamed:( NSString *)animationName;
++ (instancetype _Nullable)animationNamed:(NSString *_Nonnull)animationName NS_SWIFT_NAME(init(name:));
 
 /// Loads animation by name from specified bundle, Images are also loaded from the bundle
-+ ( instancetype)animationNamed:( NSString *)animationName
-                              inBundle:( NSBundle *)bundle;
++ (instancetype _Nullable)animationNamed:(NSString *_Nonnull)animationName
+                              inBundle:(NSBundle *_Nonnull)bundle NS_SWIFT_NAME(init(name:bundle:));
 
 /// Loads an animation from a specific file path. WARNING Do not use a web URL for file path.
-+ ( instancetype)animationWithFilePath:( NSString *)filePath;
++ (instancetype _Nullable)animationWithFilePath:(NSString *_Nonnull)filePath NS_SWIFT_NAME(init(filePath:));
 
 /// Creates an animation from the deserialized JSON Dictionary
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON;
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nonnull)animationJSON NS_SWIFT_NAME(init(json:));
 
 /// Creates an animation from the deserialized JSON Dictionary, images are loaded from the specified bundle
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON
-                                 inBundle:( NSBundle *)bundle;
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nullable)animationJSON
+                                 inBundle:(NSBundle *_Nullable)bundle NS_SWIFT_NAME(init(json:bundle:));
 
-- (instancetype )initWithJSON:(NSDictionary * )jsonDictionary
-                      withAssetBundle:(NSBundle * )bundle;
+- (instancetype _Nonnull)initWithJSON:(NSDictionary * _Nullable)jsonDictionary
+                      withAssetBundle:(NSBundle * _Nullable)bundle;
 
 @property (nonatomic, readonly) CGRect compBounds;
-@property (nonatomic, readonly) NSNumber *startFrame;
-@property (nonatomic, readonly) NSNumber *endFrame;
-@property (nonatomic, readonly) NSNumber *framerate;
+@property (nonatomic, readonly) NSNumber *_Nullable startFrame;
+@property (nonatomic, readonly) NSNumber *_Nullable endFrame;
+@property (nonatomic, readonly) NSNumber *_Nullable framerate;
 @property (nonatomic, readonly) NSTimeInterval timeDuration;
-@property (nonatomic, readonly) LOTLayerGroup *layerGroup;
-@property (nonatomic, readonly) LOTAssetGroup *assetGroup;
-@property (nonatomic, readwrite) NSString *rootDirectory;
-@property (nonatomic, readonly) NSBundle *assetBundle;
-@property (nonatomic, copy) NSString *cacheKey;
+@property (nonatomic, readonly) LOTLayerGroup *_Nullable layerGroup;
+@property (nonatomic, readonly) LOTAssetGroup *_Nullable assetGroup;
+@property (nonatomic, readwrite) NSString *_Nullable rootDirectory;
+@property (nonatomic, readonly) NSBundle *_Nullable assetBundle;
+@property (nonatomic, copy) NSString *_Nullable cacheKey;
 
 @end

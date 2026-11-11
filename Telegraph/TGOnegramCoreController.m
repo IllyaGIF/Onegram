@@ -90,7 +90,7 @@ static const CGFloat TGOnegramCoreMethodSubtitleTop = 32.0f;
 {
     [super layoutSubviews];
 
-    bool classic = [TGPresentation classicIOS6Style];
+    bool classic = [TGPresentation classicThemeStyle];
     CGRect contentFrame = [self classicIOS6GroupedFrame];
     CGFloat originX = contentFrame.origin.x + TGOnegramCoreMethodHorizontalInset + (classic ? 0.0f : self.safeAreaInset.left);
     CGFloat maxX = CGRectGetMaxX(contentFrame) - TGOnegramCoreMethodHorizontalInset - (classic ? 0.0f : self.safeAreaInset.right);

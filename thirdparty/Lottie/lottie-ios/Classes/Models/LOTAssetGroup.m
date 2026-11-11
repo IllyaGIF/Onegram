@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAssetGroup.m
 //  Pods
@@ -11,20 +11,20 @@
 #import "LOTAsset.h"
 
 @implementation LOTAssetGroup {
-  NSMutableDictionary *_assetMap;
-  NSDictionary *_assetJSONMap;
+  OG_COMPAT_GENERIC(NSMutableDictionary, NSString *, LOTAsset *) *_assetMap;
+  OG_COMPAT_GENERIC(NSDictionary, NSString *, NSDictionary *) *_assetJSONMap;
 }
 
-- (instancetype )initWithJSON:(NSArray * )jsonArray
-                      withAssetBundle:(NSBundle * )bundle
-                        withFramerate:(NSNumber * )framerate {
+- (instancetype _Nonnull)initWithJSON:(NSArray * _Nonnull)jsonArray
+                      withAssetBundle:(NSBundle * _Nullable)bundle
+                        withFramerate:(NSNumber * _Nonnull)framerate {
   self = [super init];
   if (self) {
     _assetBundle = bundle;
     _assetMap = [NSMutableDictionary dictionary];
     NSMutableDictionary *assetJSONMap = [NSMutableDictionary dictionary];
-    for (NSDictionary *assetDictionary in jsonArray) {
-      NSString *referenceID = [assetDictionary objectForKey:@2];
+    for (OG_COMPAT_GENERIC(NSDictionary, NSString *, NSString *) *assetDictionary in jsonArray) {
+      NSString *referenceID = assetDictionary[@"id"];
       if (referenceID) {
         assetJSONMap[referenceID] = assetDictionary;
       }
@@ -35,7 +35,7 @@
 }
 
 - (void)buildAssetNamed:(NSString *)refID
-          withFramerate:(NSNumber * )framerate {
+          withFramerate:(NSNumber * _Nonnull)framerate {
   
   if ([self assetModelForID:refID]) {
     return;
@@ -51,7 +51,7 @@
   }
 }
 
-- (void)finalizeInitializationWithFramerate:(NSNumber * )framerate {
+- (void)finalizeInitializationWithFramerate:(NSNumber * _Nonnull)framerate {
   for (NSString *refID in _assetJSONMap.allKeys) {
     [self buildAssetNamed:refID withFramerate:framerate];
   }
@@ -70,7 +70,7 @@
         obj.rootDirectory = rootDirectory;
     }
 #else
-    [_assetMap enumerateKeysAndObjectsUsingBlock:^(NSString *  key, LOTAsset *  obj, BOOL *  stop) {
+    [_assetMap enumerateKeysAndObjectsUsingBlock:^(NSString * _Nonnull key, LOTAsset * _Nonnull obj, BOOL * _Nonnull stop) {
         obj.rootDirectory = rootDirectory;
     }];
 #endif

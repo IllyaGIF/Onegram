@@ -33,6 +33,8 @@
 #import "TGWallpapersCollectionItem.h"
 #import "TGVariantCollectionItem.h"
 #import "TGSwitchCollectionItem.h"
+#import "TGDialogFiltersController.h"
+#import "TGDialogFilterIcons.h"
 #import "TGCommentCollectionItem.h"
 #import "TGVersionCollectionItem.h"
 
@@ -886,6 +888,7 @@ static NSUInteger TGLogCountLinesAtPath(NSString *path, bool ignoreHeaders)
     TGDisclosureActionCollectionItem *_notificationsItem;
     TGDisclosureActionCollectionItem *_privacySettingsItem;
     TGDisclosureActionCollectionItem *_chatSettingsItem;
+    TGDisclosureActionCollectionItem *_dialogFiltersItem;
     TGDisclosureActionCollectionItem *_devicesItem;
     TGDisclosureActionCollectionItem *_callSettingsItem;
     TGDisclosureActionCollectionItem *_savedMessagesItem;
@@ -940,12 +943,6 @@ static const CGFloat TGAccountSettingsBrandedDetailsTextScale = 1.2f;
     [super setPresentation:presentation];
     if ([self isViewLoaded])
         [self setRightBarButtonItem:[self editBarButtonItem] animated:false];
-}
-
-static NSString *TGAccountGroqApiKeyDefaultsKey(void)
-{
-    int64_t userId = TGTelegraphInstance.clientUserId;
-    return userId != 0 ? [NSString stringWithFormat:@"TGGroqAPIKey.%lld", userId] : @"TGGroqAPIKey";
 }
 
 - (id)initWithUid:(int64_t)uid
@@ -1030,6 +1027,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [settingsItems addObject:(_notificationsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.NotificationsAndSounds") action:@selector(notificationsAndSoundsPressed)])];
     [settingsItems addObject:(_privacySettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.PrivacySettings") action:@selector(privacySettingsPressed)])];
     [settingsItems addObject:(_chatSettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.ChatSettings") action:@selector(chatSettingsPressed)])];
+    [settingsItems addObject:(_dialogFiltersItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"DialogFilters.Title") action:@selector(dialogFiltersPressed)])];
     [settingsItems addObject:(_devicesItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Devices") action:@selector(devicesPressed)])];
     [settingsItems addObject:_wallpapersItem];
     [settingsItems addObject:_languageItem];
@@ -1210,6 +1208,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     _notificationsItem.icon = TGImageNamed(@"SettingsNotificationsIcon.png");
     _privacySettingsItem.icon = TGImageNamed(@"SettingsPrivacyIcon.png");
     _chatSettingsItem.icon = TGImageNamed(@"SettingsDataIcon.png");
+    _dialogFiltersItem.icon = TGDialogFilterSettingsIcon();
     _devicesItem.icon = TGImageNamed(@"ios6style/SettingsDevicesIcon.png");
     _wallpapersItem.icon = TGImageNamed(@"SettingsWallpaperIcon.png");
     _stickerSettingsItem.icon = TGImageNamed(@"SettingsStickersIcon.png");
@@ -1241,6 +1240,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _privacySettingsItem.brandedSettingsIconName = @"SettingsFeklaPrivacy";
         _chatSettingsItem.brandedSettingsStyle = true;
         _chatSettingsItem.brandedSettingsIconName = @"SettingsFeklaDataMemory";
+        _dialogFiltersItem.brandedSettingsStyle = true;
         _devicesItem.brandedSettingsStyle = true;
         _devicesItem.brandedSettingsIconName = @"SettingsFeklaDevices";
         _wallpapersItem.brandedSettingsStyle = true;
@@ -1480,6 +1480,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     _privacySettingsItem.subtitle = modern ? TGLocalized(@"OnegramSettings.PrivacyInfo") : nil;
     _notificationsItem.subtitle = modern ? TGLocalized(@"OnegramSettings.NotificationsInfo") : nil;
     _chatSettingsItem.subtitle = modern ? TGLocalized(@"OnegramSettings.DataInfo") : nil;
+    _dialogFiltersItem.subtitle = modern ? TGLocalized(@"DialogFilters.SettingsInfo") : nil;
     _devicesItem.subtitle = modern ? TGLocalized(@"OnegramSettings.DevicesInfo") : nil;
     _callSettingsItem.subtitle = modern ? TGLocalized(@"OnegramSettings.CallsInfo") : nil;
     _onegramSettingsItem.subtitle = modern ? TGLocalized(@"OnegramSettings.OnegramInfo") : nil;
@@ -1555,7 +1556,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 
     [self updateAccountsSection];
 
-    NSMutableArray *mainItems = [[NSMutableArray alloc] initWithObjects:_accountItem, _wallpapersItem, _privacySettingsItem, _notificationsItem, _chatSettingsItem, _devicesItem, nil];
+    NSMutableArray *mainItems = [[NSMutableArray alloc] initWithObjects:_accountItem, _wallpapersItem, _privacySettingsItem, _notificationsItem, _chatSettingsItem, _dialogFiltersItem, _devicesItem, nil];
     if (_callSettingsItem != nil)
         [mainItems addObject:_callSettingsItem];
     [mainItems addObject:_modernLanguageItem];
@@ -1912,6 +1913,11 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [self.navigationController pushViewController:controller animated:true];
 }
 
+- (void)dialogFiltersPressed
+{
+    [self.navigationController pushViewController:[[TGDialogFiltersController alloc] init] animated:true];
+}
+
 - (void)stickerSettingsPressed {
     [self.navigationController pushViewController:[[TGStickerPacksSettingsController alloc] initWithEditing:false masksMode:false] animated:true];
 }
@@ -1929,19 +1935,6 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 - (void)mySettingsPressed
 {
     [self.navigationController pushViewController:[[TGSettingsController alloc] init] animated:true];
-}
-
-- (void)groqApiKeyPressed
-{
-    [TGCustomAlertView presentSecureTextInputAlertWithTitle:@"Groq API key" message:@"The key is stored only on this device and is sent directly to Groq." placeholder:@"gsk_..." text:[[NSUserDefaults standardUserDefaults] stringForKey:TGAccountGroqApiKeyDefaultsKey()] cancelButtonTitle:@"Cancel" okButtonTitle:@"Save" completionBlock:^(NSString *enteredKey)
-    {
-        NSString *key = [(enteredKey ?: @"") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (key.length != 0)
-            [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGAccountGroqApiKeyDefaultsKey()];
-        else
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGAccountGroqApiKeyDefaultsKey()];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-    }];
 }
 
 static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *document)
@@ -2396,6 +2389,7 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     _notificationsItem.title = TGLocalized(@"Settings.NotificationsAndSounds");
     _privacySettingsItem.title = TGLocalized(@"Settings.PrivacySettings");
     _chatSettingsItem.title = TGLocalized(@"Settings.ChatSettings");
+    _dialogFiltersItem.title = TGLocalized(@"DialogFilters.Title");
     
     _stickerSettingsItem.title = TGLocalized(@"ChatSettings.Stickers");
     

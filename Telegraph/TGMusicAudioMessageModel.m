@@ -569,6 +569,12 @@ static CTFontRef textFontForSize(CGFloat size)
 }
 
 
+- (bool)_mediaActivationAreaContainsPoint:(CGPoint)point
+{
+    CGPoint contentOrigin = _contentModel.frame.origin;
+    return _iconModel != nil && CGRectContainsPoint(CGRectInset(CGRectOffset(_iconModel.frame, -contentOrigin.x, -contentOrigin.y), -4.0f, -4.0f), point);
+}
+
 - (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
 {
     if (recognizer.state != UIGestureRecognizerStateBegan)
@@ -728,9 +734,8 @@ static CTFontRef textFontForSize(CGFloat size)
             }
             else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
                 [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
-            else if (_textModel.frame.size.height <= FLT_EPSILON || point.y < CGRectGetMinY(_textModel.frame)) {
+            else if ([self _mediaActivationAreaContainsPoint:point])
                 [self activateMedia];
-            }
         }
     }
 }
@@ -761,11 +766,10 @@ static CTFontRef textFontForSize(CGFloat size)
         }
     }
     
-    if (_textModel.frame.size.height < FLT_EPSILON || point.y < CGRectGetMinY(_textModel.frame)) {
+    if ([self _mediaActivationAreaContainsPoint:point])
         return 3;
-    }
     
-    return false;
+    return 0;
 }
 
 - (void)gestureRecognizer:(TGDoubleTapGestureRecognizer *)__unused recognizer didBeginAtPoint:(CGPoint)point

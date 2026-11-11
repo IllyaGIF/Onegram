@@ -50,6 +50,8 @@
 #import "TGPreparedForwardedMessage.h"
 
 #import "TGPreparedContactMessage.h"
+#import "TGPreparedPollMessage.h"
+#import "TGPollMediaAttachment.h"
 #import "TGPreparedLocalDocumentMessage.h"
 #import "TGPreparedRemoteDocumentMessage.h"
 #import "TGPreparedDownloadImageMessage.h"
@@ -60,14 +62,6 @@
 #import "TGPreparedAssetImageMessage.h"
 #import "TGPreparedAssetVideoMessage.h"
 #import "TGPreparedDownloadExternalDocumentMessage.h"
-
-static NSString *TGGroqApiKeyDefaultsKey(void)
-{
-    int64_t userId = TGTelegraphInstance.clientUserId;
-    return userId != 0 ? [NSString stringWithFormat:@"TGGroqAPIKey.%lld", userId] : @"TGGroqAPIKey";
-}
-
-static NSString * const TGIOS6GroqTranscriptionURL = @"https://twelvium-groq-transcribe.lkola2715.workers.dev";
 
 #import "TGForwardTargetController.h"
 
@@ -89,6 +83,7 @@ static NSString * const TGIOS6GroqTranscriptionURL = @"https://twelvium-groq-tra
 #import "TGInternalGifSearchResult.h"
 
 #import "TGMediaStoreContext.h"
+#import "TGStoryViewerController.h"
 #import "TGModernSendCommonMessageActor.h"
 #import "TGWebSearchController.h"
 #import "TGWebSearchInternalImageResult.h"
@@ -182,14 +177,50 @@ static NSString * const TGIOS6GroqTranscriptionURL = @"https://twelvium-groq-tra
 #import "TGSendMessageSignals.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
 #import "TGPluginHost.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesConfirmation.h"
 
 #ifdef DEBUG
 #   define DEBUG_DONOTREAD
 #endif
 
-static bool TGIOS6MessageMatchesMediaPeer(TGMessage *message, int64_t peerId)
+static bool OGMessageInvolvesPeer(TGMessage *message, int64_t peerId)
 {
-    return peerId == 0 || message.fromUid == peerId || message.toUid == peerId || message.cid == peerId;
+    if (peerId == 0)
+        return true;
+    return message.cid == peerId || message.toUid == peerId || message.fromUid == peerId;
+}
+
+static NSString *OGMessageKey(int64_t peerId, int32_t mid)
+{
+    return [[NSString alloc] initWithFormat:@"%lld:%d", peerId, mid];
+}
+
+static void OGApplyEditTarget(TGPreparedMessage *preparedMessage, id description)
+{
+    NSDictionary *target = description[@"message"];
+    preparedMessage.targetPeerId = [target[@"cid"] longLongValue];
+    preparedMessage.targetMessageId = [target[@"mid"] intValue];
+}
+
+static NSMutableDictionary *OGAssetBaseDescription(NSString *assetIdentifier, CGSize thumbnailSize, bool document, NSData *thumbnailData)
+{
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithCapacity:4];
+    [dict setObject:[NSValue valueWithCGSize:thumbnailSize] forKey:@"thumbnailSize"];
+    [dict setObject:[NSNumber numberWithBool:document] forKey:@"document"];
+    [dict setValue:assetIdentifier forKey:@"assetIdentifier"];
+    [dict setValue:thumbnailData forKey:@"thumbnailData"];
+    return dict;
+}
+
+static TGReplyMarkupAttachment *OGReplyMarkupAttachmentOrNil(TGBotReplyMarkup *markup)
+{
+    return markup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:markup];
+}
+
+static int64_t OGGroupIdOfDescription(NSDictionary *description)
+{
+    return [[description objectForKey:@"groupedId"] longLongValue];
 }
 
 typedef enum {
@@ -230,14 +261,12 @@ static NSString *addGameShareHash(NSString *url, NSString *addHash) {
 @implementation TGGenericModernConversationCompanionReference
 @end
 
-static TGGenericModernConversationCompanion *TGIOS4ResolveGenericModernConversationCompanion(TGGenericModernConversationCompanionReference *reference)
+static TGGenericModernConversationCompanion *OGGenericCompanionFromBox(TGGenericModernConversationCompanionReference *reference)
 {
-    TGGenericModernConversationCompanion *result = nil;
     @synchronized (reference)
     {
-        result = reference.value;
+        return reference.value;
     }
-    return result;
 }
 
 @interface TGGenericModernConversationCompanion () <TGCreateContactControllerDelegate, TGAddToExistingContactControllerDelegate>
@@ -304,7 +333,10 @@ static TGGenericModernConversationCompanion *TGIOS4ResolveGenericModernConversat
     NSString *_networkStatusText;
     
     id<SDisposable> _frequentLiveLocationSubscription;
-    TGGenericModernConversationCompanionReference *_ios4LifetimeReference;
+    TGGenericModernConversationCompanionReference *_ogLifetimeBox;
+
+    int64_t _paidMessageStars;
+    id _paidMessagesPriceObserver;
 }
 
 @end
@@ -327,8 +359,8 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
     self = [super init];
     if (self != nil)
     {
-        _ios4LifetimeReference = [[TGGenericModernConversationCompanionReference alloc] init];
-        _ios4LifetimeReference.value = self;
+        _ogLifetimeBox = [[TGGenericModernConversationCompanionReference alloc] init];
+        _ogLifetimeBox.value = self;
         _conversationId = conversation.conversationId;
         self.viewContext.conversationForUnreadCalculations = conversation;
         
@@ -337,6 +369,14 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         
         _getMessageForMentionDisposable = [[SMetaDisposable alloc] init];
         _networkStatusDisposable = [[SMetaDisposable alloc] init];
+
+        TGGenericModernConversationCompanionReference *paidMessagesReference = _ogLifetimeBox;
+        _paidMessagesPriceObserver = [[NSNotificationCenter defaultCenter] addObserverForName:TGPaidMessagesPriceChangedNotification object:nil queue:nil usingBlock:^(NSNotification *notification)
+        {
+            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(paidMessagesReference);
+            if (strongSelf != nil && [notification.userInfo[TGPaidMessagesPeerIdKey] longLongValue] == [strongSelf paidMessagesPricePeerId])
+                [strongSelf paidMessagesPriceChanged:[notification.userInfo[TGPaidMessagesStarsKey] longLongValue]];
+        }];
         
         TGMessageModernConversationItemLocalUserId = TGTelegraphInstance.clientUserId;
         
@@ -345,7 +385,7 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         
         TG_SYNCHRONIZED_INIT(_processingDownloadMids);
         
-        TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+        TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
         
         _toastPanel = [[SVariable alloc] init];
         [_toastPanel set:[SSignal single:nil]];
@@ -369,7 +409,7 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         }];
         
         _primaryPanelDisposable = [[panelSignal deliverOn:[SQueue mainQueue]] startWithNext:^(TGModernConversationTitlePanel *panel) {
-            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
             if (strongSelf != nil) {
                 TGModernConversationController *controller = strongSelf.controller;
                 [controller setSecondaryTitlePanel:panel animated:true];
@@ -377,7 +417,7 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         }];
         
         [_callbackInProgressPanel set:[[self.callbackInProgress.signal delay:0.2 onQueue:[SQueue mainQueue]] map:^id(id next) {
-            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
             if (strongSelf != nil) {
                 if (next != nil) {
                     if (strongSelf->_callbackInProgressToastPanel == nil) {
@@ -430,10 +470,12 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
 - (void)dealloc
 {
     [self.actionHandle reset];
-    @synchronized (_ios4LifetimeReference)
+    @synchronized (_ogLifetimeBox)
     {
-        _ios4LifetimeReference.value = nil;
+        _ogLifetimeBox.value = nil;
     }
+    if (_paidMessagesPriceObserver != nil)
+        [[NSNotificationCenter defaultCenter] removeObserver:_paidMessagesPriceObserver];
 
     TGProgressWindow *progressWindow = _progressWindow;
     TGDispatchOnMainThread(^
@@ -540,6 +582,104 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
 
 - (void)_setupOutgoingMessage:(TGMessage *)__unused message {
     
+}
+
+- (int64_t)paidMessageStars
+{
+    @synchronized (_ogLifetimeBox)
+    {
+        return _paidMessageStars;
+    }
+}
+
+- (void)setPaidMessageStars:(int64_t)paidMessageStars
+{
+    paidMessageStars = MAX(0, paidMessageStars);
+    @synchronized (_ogLifetimeBox)
+    {
+        if (_paidMessageStars == paidMessageStars)
+            return;
+        _paidMessageStars = paidMessageStars;
+    }
+    TGGenericModernConversationCompanionReference *reference = _ogLifetimeBox;
+    TGDispatchOnMainThread(^
+    {
+        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(reference);
+        TGModernConversationController *controller = strongSelf.controller;
+        [controller setPaidMessageStars:paidMessageStars];
+    });
+}
+
+- (int64_t)paidMessagesPricePeerId
+{
+    return _conversationId;
+}
+
+- (void)paidMessagesPriceChanged:(int64_t)stars
+{
+    [self setPaidMessageStars:stars];
+}
+
+- (bool)_requestPaidMessagesConfirmationForPreparedMessages:(NSArray *)preparedMessages automaticallyAddToList:(bool)automaticallyAddToList intent:(TGSendMessageIntent)intent
+{
+    int64_t price = [self paidMessageStars];
+    if (price <= 0 || intent == TGSendMessageIntentEditMedia)
+        return false;
+
+    NSUInteger chargeableCount = 0;
+    bool confirmed = true;
+    for (TGPreparedMessage *preparedMessage in preparedMessages)
+    {
+        if (preparedMessage.targetMessageId != 0)
+            continue;
+        chargeableCount++;
+        if (preparedMessage.allowPaidStars < price)
+            confirmed = false;
+    }
+    if (chargeableCount == 0 || confirmed)
+        return false;
+
+    int64_t peerId = _conversationId;
+    TGGenericModernConversationCompanionReference *reference = _ogLifetimeBox;
+    TGDispatchOnMainThread(^
+    {
+        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(reference);
+        if (strongSelf == nil)
+            return;
+        TGModernConversationController *controller = strongSelf.controller;
+        [TGPaidMessagesConfirmation confirmMessagesCount:chargeableCount price:price peerId:peerId controller:controller completion:^(bool accepted)
+        {
+            TGGenericModernConversationCompanion *innerSelf = OGGenericCompanionFromBox(reference);
+            if (innerSelf == nil)
+                return;
+            if (!accepted)
+            {
+                if (intent == TGSendMessageIntentSendText)
+                {
+                    TGPreparedMessage *firstMessage = preparedMessages.firstObject;
+                    if (firstMessage.text.length != 0)
+                    {
+                        TGModernConversationController *innerController = innerSelf.controller;
+                        [innerController setInputText:firstMessage.text entities:firstMessage.entities replace:true replaceIfPrefix:false selectRange:NSMakeRange(firstMessage.text.length, 0) forceSelectRange:false];
+                    }
+                }
+                return;
+            }
+            [TGModernConversationCompanion dispatchOnMessageQueue:^
+            {
+                TGGenericModernConversationCompanion *queueSelf = OGGenericCompanionFromBox(reference);
+                if (queueSelf == nil)
+                    return;
+                for (TGPreparedMessage *preparedMessage in preparedMessages)
+                {
+                    if (preparedMessage.targetMessageId == 0)
+                        preparedMessage.allowPaidStars = price;
+                }
+                [queueSelf _sendPreparedMessages:preparedMessages automaticallyAddToList:automaticallyAddToList withIntent:intent];
+            }];
+        }];
+    });
+    return true;
 }
 
 - (bool)_messagesNeedRandomId
@@ -884,10 +1024,10 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
     
     [self _updateInputPanel];
     
-    TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+    TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
     _botReplyMarkupDisposable = [[[TGDatabaseInstance() signalBotReplyMarkupForPeerId:_conversationId] deliverOn:[SQueue mainQueue]] startWithNext:^(TGBotReplyMarkup *markup)
     {
-        TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
         if (strongSelf != nil)
         {
             TGModernConversationController *controller = strongSelf.controller;
@@ -966,6 +1106,9 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
     
     if (firstTime)
     {   
+        TGModernConversationController *paidMessagesController = self.controller;
+        [paidMessagesController setPaidMessageStars:[self paidMessageStars]];
+
         if (_moreMessagesAvailableBelow)
             [self loadMoreMessagesBelow];
         if (_moreMessagesAvailableAbove)
@@ -974,21 +1117,24 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         [[TGDownloadManager instance] requestState:self.actionHandle];
         
         TGModernConversationController *controller = self.controller;
-        if (!self.previewMode && [controller canReadHistory])
+        if (!self.previewMode)
         {
-            [TGModernConversationCompanion dispatchOnMessageQueue:^
+            if ([controller canReadHistory])
             {
-                [self _markIncomingMessagesAsReadSilent];
-            }];
-            
+                [TGModernConversationCompanion dispatchOnMessageQueue:^
+                {
+                    [self _markIncomingMessagesAsReadSilent];
+                }];
+                
                 [TGDatabaseInstance() transactionReadHistoryForPeerIds:@[[[TGReadPeerMessagesRequest alloc] initWithPeerId:_conversationId maxMessageIndex:nil date:0 length:0 unread:false]]];
-        }
-        else if (!self.previewMode)
-        {
-            [TGModernConversationCompanion dispatchOnMessageQueue:^
+            }
+            else
             {
-                _needsToReadHistory = true;
-            }];
+                [TGModernConversationCompanion dispatchOnMessageQueue:^
+                {
+                    _needsToReadHistory = true;
+                }];
+            }
         }
         
         if ((_initialScrollState == nil || _initialScrollState.messageId == 0) && _preferredInitialPositionedMessageId != 0) {
@@ -1033,10 +1179,10 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
             SSignal *signal = [SSignal single:@true];
             if (delay > 0.0)
                 signal = [[[SSignal complete] delay:delay onQueue:[SQueue mainQueue]] then:signal];
-            TGGenericModernConversationCompanionReference *reference = _ios4LifetimeReference;
+            TGGenericModernConversationCompanionReference *reference = _ogLifetimeBox;
             [_networkStatusDisposable setDisposable:[signal startWithNext:^(__unused id value)
             {
-                TGGenericModernConversationCompanion *companion = TGIOS4ResolveGenericModernConversationCompanion(reference);
+                TGGenericModernConversationCompanion *companion = OGGenericCompanionFromBox(reference);
                 [companion.controller setTitleModalProgressStatus:stateString];
             }]];
         }
@@ -1079,10 +1225,10 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
             
             if (keyString.length > 0)
             {
-                TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+                TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
                 [_stickerPacksDisposable setDisposable:[[[TGStickersSignals stickersForEmojis:@[keyString] includeRemote:TGAppDelegateInstance.stickersSuggestMode == 0 updateRemoteCached:true] deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *dictionary)
                 {
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                    TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                     if (strongSelf != nil)
                     {
                         NSMutableDictionary *result = [dictionary mutableCopy];
@@ -1360,6 +1506,9 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
                                 case TGMessageActionGameScore:
                                 case TGMessageActionCommunityChanged:
                                 case TGMessageActionPhoneCall:
+                                case TGMessageActionPaidMessagesRefunded:
+                                case TGMessageActionPaidMessagesPrice:
+                                case TGMessageActionNoPaidMessagesTokenUsed:
                                 {
                                     needsAuthor = true;
                                     break;
@@ -1570,6 +1719,9 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
                             case TGMessageActionEncryptedChatMessageScreenshot:
                             case TGMessageActionGameScore:
                             case TGMessageActionCommunityChanged:
+                            case TGMessageActionPaidMessagesRefunded:
+                            case TGMessageActionPaidMessagesPrice:
+                            case TGMessageActionNoPaidMessagesTokenUsed:
                             {
                                 needsAuthor = true;
                                 break;
@@ -1613,28 +1765,24 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
         {
             if (TGPeerIdIsUser(messageItem->_message.fromUid))
             {
-                int64_t authorUid = messageItem->_message.fromUid;
-                it = pUsers->find(authorUid);
-                if (it != pUsers->end())
+                int64_t authorKey = messageItem->_message.fromUid;
+                it = pUsers->find(authorKey);
+                if (it == pUsers->end())
                 {
-                    messageItem->_author = it->second;
+                    TGUser *storedAuthor = [TGDatabaseInstance() loadUser:authorKey];
+                    if (storedAuthor == nil && _conversationId == -6284210382LL)
+                        TGLog(@"AUTHOR missing peer=%lld mid=%d from=%lld", _conversationId, messageItem->_message.mid, authorKey);
+                    if (storedAuthor != nil)
+                        messageItem->_author = storedAuthor;
                 }
                 else
-                {
-                    TGUser *fallbackUser = [TGDatabaseInstance() loadUser:authorUid];
-                    if (fallbackUser != nil)
-                    {
-                        messageItem->_author = fallbackUser;
-                    }
-                    else if (_conversationId == -6284210382LL)
-                    {
-                        TGLog(@"AUTHOR missing peer=%lld mid=%d from=%lld", _conversationId, messageItem->_message.mid, authorUid);
-                    }
-                }
+                    messageItem->_author = it->second;
             }
-            else if (TGPeerIdIsChannel(messageItem->_message.fromUid) && channels[@(messageItem->_message.fromUid)])
+            else if (TGPeerIdIsChannel(messageItem->_message.fromUid))
             {
-                messageItem->_author = channels[@(messageItem->_message.fromUid)];
+                id channelAuthor = channels[@(messageItem->_message.fromUid)];
+                if (channelAuthor)
+                    messageItem->_author = channelAuthor;
             }
         }
     }
@@ -1873,63 +2021,48 @@ static void TGGenericModernConversationAccumulateLatestMessage(TGMessage *messag
 
 #pragma mark -
 
-static TGMessageEntity *TGIOS6MessageEntityWithRange(TGMessageEntity *entity, NSRange range)
+static TGMessageEntity *OGEntityWithRange(TGMessageEntity *entity, NSRange range)
 {
-    if ([entity isKindOfClass:[TGMessageEntityBold class]])
-        return [[TGMessageEntityBold alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityBotCommand class]])
-        return [[TGMessageEntityBotCommand alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityCashtag class]])
-        return [[TGMessageEntityCashtag alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityCode class]])
-        return [[TGMessageEntityCode alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityEmail class]])
-        return [[TGMessageEntityEmail alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityHashtag class]])
-        return [[TGMessageEntityHashtag alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityItalic class]])
-        return [[TGMessageEntityItalic alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityMention class]])
-        return [[TGMessageEntityMention alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityMentionName class]])
-        return [[TGMessageEntityMentionName alloc] initWithRange:range userId:((TGMessageEntityMentionName *)entity).userId];
-    if ([entity isKindOfClass:[TGMessageEntityPhone class]])
-        return [[TGMessageEntityPhone alloc] initWithRange:range];
-    if ([entity isKindOfClass:[TGMessageEntityPre class]])
-        return [[TGMessageEntityPre alloc] initWithRange:range language:((TGMessageEntityPre *)entity).language];
     if ([entity isKindOfClass:[TGMessageEntityTextUrl class]])
-        return [[TGMessageEntityTextUrl alloc] initWithRange:range url:((TGMessageEntityTextUrl *)entity).url];
-    if ([entity isKindOfClass:[TGMessageEntityUrl class]])
-        return [[TGMessageEntityUrl alloc] initWithRange:range];
-    
+    {
+        TGMessageEntityTextUrl *linkEntity = (TGMessageEntityTextUrl *)entity;
+        return [[TGMessageEntityTextUrl alloc] initWithRange:range url:linkEntity.url];
+    }
+    if ([entity isKindOfClass:[TGMessageEntityPre class]])
+    {
+        TGMessageEntityPre *preEntity = (TGMessageEntityPre *)entity;
+        return [[TGMessageEntityPre alloc] initWithRange:range language:preEntity.language];
+    }
+    if ([entity isKindOfClass:[TGMessageEntityMentionName class]])
+    {
+        TGMessageEntityMentionName *nameEntity = (TGMessageEntityMentionName *)entity;
+        return [[TGMessageEntityMentionName alloc] initWithRange:range userId:nameEntity.userId];
+    }
+
+    NSArray *rangeOnlyClasses = @[ [TGMessageEntityBold class], [TGMessageEntityBotCommand class], [TGMessageEntityCashtag class], [TGMessageEntityCode class], [TGMessageEntityEmail class], [TGMessageEntityHashtag class], [TGMessageEntityItalic class], [TGMessageEntityMention class], [TGMessageEntityPhone class], [TGMessageEntityUrl class] ];
+    for (Class entityClass in rangeOnlyClasses)
+    {
+        if ([entity isKindOfClass:entityClass])
+            return [[entityClass alloc] initWithRange:range];
+    }
     return nil;
 }
 
-static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRange)
+static NSArray *OGEntitiesClippedToPart(NSArray *entities, NSRange part)
 {
-    if (entities.count == 0)
-        return nil;
-    
-    NSMutableArray *result = [[NSMutableArray alloc] init];
-    NSUInteger partEnd = NSMaxRange(partRange);
-    
-    for (TGMessageEntity *entity in entities)
+    NSMutableArray *clipped = [[NSMutableArray alloc] init];
+    for (TGMessageEntity *sourceEntity in entities)
     {
-        NSRange entityRange = entity.range;
-        NSUInteger entityEnd = NSMaxRange(entityRange);
-        NSUInteger intersectionStart = MAX(entityRange.location, partRange.location);
-        NSUInteger intersectionEnd = MIN(entityEnd, partEnd);
-        
-        if (intersectionEnd <= intersectionStart)
+        NSUInteger clipStart = MAX(sourceEntity.range.location, part.location);
+        NSUInteger clipEnd = MIN(NSMaxRange(sourceEntity.range), NSMaxRange(part));
+        if (clipEnd <= clipStart)
             continue;
-        
-        NSRange shiftedRange = NSMakeRange(intersectionStart - partRange.location, intersectionEnd - intersectionStart);
-        TGMessageEntity *partEntity = TGIOS6MessageEntityWithRange(entity, shiftedRange);
-        if (partEntity != nil)
-            [result addObject:partEntity];
+
+        TGMessageEntity *clippedEntity = OGEntityWithRange(sourceEntity, NSMakeRange(clipStart - part.location, clipEnd - clipStart));
+        if (clippedEntity != nil)
+            [clipped addObject:clippedEntity];
     }
-    
-    return result.count == 0 ? nil : result;
+    return clipped.count == 0 ? nil : clipped;
 }
 
 - (void)controllerWantsToSendTextMessage:(NSString *)text entities:(NSArray *)entities asReplyToMessageId:(int32_t)replyMessageId withAttachedMessages:(NSArray *)withAttachedMessages completeGroups:(NSSet *)completeGroups disableLinkPreviews:(bool)disableLinkPreviews botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
@@ -2000,12 +2133,12 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         {
             for (NSUInteger i = 0; i < text.length; i += messagePartLimit)
             {
-                NSRange partRange = NSMakeRange(i, MIN(messagePartLimit, text.length - i));
-                NSString *substring = [text substringWithRange:partRange];
-                if (substring.length != 0)
+                NSRange chunkRange = NSMakeRange(i, MIN(messagePartLimit, text.length - i));
+                NSString *chunkText = [text substringWithRange:chunkRange];
+                if (chunkText.length != 0)
                 {
-                    NSString *resultingText = substring;
-                    NSArray *parsedEntities = entities == nil ? [TGMessage entitiesForMarkedUpText:substring resultingText:&resultingText] : TGIOS6MessageEntitiesForPart(entities, partRange);
+                    NSString *resultingText = chunkText;
+                    NSArray *parsedEntities = entities == nil ? [TGMessage entitiesForMarkedUpText:chunkText resultingText:&resultingText] : OGEntitiesClippedToPart(entities, chunkRange);
                     TGPreparedTextMessage *preparedMessage = [[TGPreparedTextMessage alloc] initWithText:resultingText replyMessage:replyMessage disableLinkPreviews:disableLinkPreviews parsedWebpage:i == 0 ? parsedWebpage : nil entities:parsedEntities botContextResult:i == 0 ? botContextResult : nil replyMarkup:i == 0 ? replyMarkup : nil];
                     preparedMessage.messageLifetime = [self messageLifetime];
                     [preparedMessages addObject:preparedMessage];
@@ -2045,13 +2178,12 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             for (TGMessage *message in withAttachedMessages)
             {
                 int64_t peerId = message.cid;
-                int64_t accessHash = 0;
-                if (accessHashes[@(peerId)] != nil) {
-                    accessHash = [accessHashes[@(peerId)] longLongValue];
-                } else {
-                    accessHash = [TGDatabaseInstance() loadConversationWithId:peerId].accessHash;
-                    accessHashes[@(peerId)] = @(accessHash);
+                NSNumber *cachedAccessHash = accessHashes[@(peerId)];
+                if (cachedAccessHash == nil) {
+                    cachedAccessHash = @([TGDatabaseInstance() loadConversationWithId:peerId].accessHash);
+                    accessHashes[@(peerId)] = cachedAccessHash;
                 }
+                int64_t accessHash = cachedAccessHash.longLongValue;
                 int64_t groupedId = 0;
                 if (message.groupedId != 0 && [completeGroups containsObject:@(message.groupedId)])
                     groupedId = message.groupedId;
@@ -2081,8 +2213,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             for (NSDictionary *batch in batches)
             {
                 bool grouped = [batch[@"grouped"] boolValue];
-                int64_t fromPeerId = [batch[@"peerId"] longLongValue];
-                int64_t fromPeerAccessHash = [batch[@"accessHash"] longLongValue];
+                NSNumber *peerValue = batch[@"peerId"];
+                NSNumber *accessHashValue = batch[@"accessHash"];
+                int64_t fromPeerId = [peerValue longLongValue];
+                int64_t fromPeerAccessHash = [accessHashValue longLongValue];
                 signal = [signal then:[[TGSendMessageSignals forwardMessagesWithMessageIds:batch[@"items"] toPeerIds:@[@([self conversationId])] fromPeerId:fromPeerId fromPeerAccessHash:fromPeerAccessHash grouped:grouped] catch:^SSignal *(__unused id error)
                 {
                     return [SSignal complete];
@@ -2367,11 +2501,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 
 - (NSDictionary *)imageDescriptionFromMediaAsset:(TGMediaAsset *)asset previewImage:(UIImage *)previewImage document:(bool)document fileName:(NSString *)fileName caption:(NSString *)caption entities:(NSArray *)entities allowRemoteCache:(bool)__unused allowRemoteCache
 {
-    if (asset == nil)
-        return nil;
-
-    NSString *assetIdentifier = asset.uniqueIdentifier;
-    if (assetIdentifier.length == 0)
+    if (asset == nil || asset.uniqueIdentifier.length == 0)
         return nil;
     
     NSData *thumbnailData = UIImageJPEGRepresentation(previewImage, 0.54f);
@@ -2379,12 +2509,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     if (CGSizeEqualToSize(dimensions, CGSizeZero))
         dimensions = previewImage.size;
     
-    NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-    dict[@"assetIdentifier"] = assetIdentifier;
-    dict[@"thumbnailSize"] = [NSValue valueWithCGSize:dimensions];
-    dict[@"document"] = @(document);
-    if (thumbnailData != nil)
-        dict[@"thumbnailData"] = thumbnailData;
+    NSMutableDictionary *dict = OGAssetBaseDescription(asset.uniqueIdentifier, dimensions, document, thumbnailData);
     
     NSMutableArray *attributes = [[NSMutableArray alloc] init];
     if (fileName.length > 0)
@@ -2404,11 +2529,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 
 - (NSDictionary *)videoDescriptionFromMediaAsset:(TGMediaAsset *)asset previewImage:(UIImage *)previewImage dimensions:(CGSize)dimensions duration:(NSTimeInterval)duration adjustments:(TGVideoEditAdjustments *)adjustments  document:(bool)document fileName:(NSString *)fileName stickers:(NSArray *)stickers caption:(NSString *)caption entities:(NSArray *)entities timer:(int32_t)timer
 {
-    if (asset == nil)
-        return nil;
-
-    NSString *assetIdentifier = asset.uniqueIdentifier;
-    if (assetIdentifier.length == 0)
+    if (asset == nil || asset.uniqueIdentifier.length == 0)
         return nil;
     
     NSData *thumbnailData = UIImageJPEGRepresentation(previewImage, 0.54f);
@@ -2422,14 +2543,9 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         document = false;
     }
     
-    NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-    dict[@"assetIdentifier"] = assetIdentifier;
+    NSMutableDictionary *dict = OGAssetBaseDescription(asset.uniqueIdentifier, dimensions, document || isAnimation, thumbnailData);
     dict[@"duration"] = @(duration);
     dict[@"dimensions"] = [NSValue valueWithCGSize:dimensions];
-    dict[@"thumbnailSize"] = [NSValue valueWithCGSize:dimensions];
-    dict[@"document"] = @((document || isAnimation));
-    if (thumbnailData != nil)
-        dict[@"thumbnailData"] = thumbnailData;
     
     if (adjustments != nil)
         dict[@"adjustments"] = adjustments;
@@ -2679,14 +2795,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             if (imageDescription[@"localImage"] != nil)
             {
                 NSDictionary *localImage = imageDescription[@"localImage"];
-                TGPreparedLocalImageMessage *imageMessage = [TGPreparedLocalImageMessage messageWithImageData:localImage[@"imageData"] imageSize:[localImage[@"imageSize"] CGSizeValue] thumbnailData:localImage[@"thumbnailData"] thumbnailSize:[localImage[@"thumbnailSize"] CGSizeValue] assetUrl:localImage[@"assetUrl"] text:localImage[@"caption"] entities:localImage[@"entities"] replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup] stickerDocuments:localImage[@"stickerDocuments"] messageLifetime:[self messageLifetime] groupedId:[imageDescription[@"groupedId"] longLongValue]];
+                TGPreparedLocalImageMessage *imageMessage = [TGPreparedLocalImageMessage messageWithImageData:localImage[@"imageData"] imageSize:[localImage[@"imageSize"] CGSizeValue] thumbnailData:localImage[@"thumbnailData"] thumbnailSize:[localImage[@"thumbnailSize"] CGSizeValue] assetUrl:localImage[@"assetUrl"] text:localImage[@"caption"] entities:localImage[@"entities"] replyMessage:replyMessage replyMarkup:OGReplyMarkupAttachmentOrNil(botReplyMarkup) stickerDocuments:localImage[@"stickerDocuments"] messageLifetime:[self messageLifetime] groupedId:OGGroupIdOfDescription(imageDescription)];
                 imageMessage.messageLifetime = localImage[@"timer"] != nil ? [localImage[@"timer"] intValue] : [self messageLifetime];
                 [preparedMessages addObject:imageMessage];
                 
                 if (imageDescription[@"message"] != nil)
                 {
-                    imageMessage.targetPeerId = [imageDescription[@"message"][@"cid"] longLongValue];
-                    imageMessage.targetMessageId = [imageDescription[@"message"][@"mid"] intValue];
+                    OGApplyEditTarget(imageMessage, imageDescription);
                     editMedia = true;
                 }
                 
@@ -2804,14 +2919,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 
                 int32_t timer = [imageDescription[@"timer"] intValue];
 
-                TGPreparedAssetImageMessage *assetImageMessage = [[TGPreparedAssetImageMessage alloc] initWithAssetIdentifier:assetImage[@"assetIdentifier"] imageInfo:nil text:assetImage[@"caption"] entities:assetImage[@"entities"] useMediaCache:[self controllerShouldCacheServerAssets] && timer <= 0 isCloud:[assetImage[@"cloud"] boolValue] document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:assetImage[@"mimeType"] attributes:assetImage[@"attributes"] replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup] messageLifetime:timer != 0 ? timer : [self messageLifetime] groupedId:[imageDescription[@"groupedId"] longLongValue]];
+                TGPreparedAssetImageMessage *assetImageMessage = [[TGPreparedAssetImageMessage alloc] initWithAssetIdentifier:assetImage[@"assetIdentifier"] imageInfo:nil text:assetImage[@"caption"] entities:assetImage[@"entities"] useMediaCache:[self controllerShouldCacheServerAssets] && timer <= 0 isCloud:[assetImage[@"cloud"] boolValue] document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:assetImage[@"mimeType"] attributes:assetImage[@"attributes"] replyMessage:replyMessage replyMarkup:OGReplyMarkupAttachmentOrNil(botReplyMarkup) messageLifetime:timer != 0 ? timer : [self messageLifetime] groupedId:OGGroupIdOfDescription(imageDescription)];
                 [assetImageMessage setImageInfoWithThumbnailData:assetImage[@"thumbnailData"] thumbnailSize:[assetImage[@"thumbnailSize"] CGSizeValue]];
                 [preparedMessages addObject:assetImageMessage];
                 
                 if (imageDescription[@"message"] != nil)
                 {
-                    assetImageMessage.targetPeerId = [imageDescription[@"message"][@"cid"] longLongValue];
-                    assetImageMessage.targetMessageId = [imageDescription[@"message"][@"mid"] intValue];
+                    OGApplyEditTarget(assetImageMessage, imageDescription);
                     editMedia = true;
                 }
                 
@@ -2828,15 +2942,14 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 int64_t localVideoId = asDocument ? 0 : localId;
                 int64_t localDocumentId = asDocument ? localId : 0;
                 
-                TGPreparedAssetVideoMessage *assetVideoMessage = [[TGPreparedAssetVideoMessage alloc] initWithAssetIdentifier:assetVideo[@"assetIdentifier"] assetURL:nil localVideoId:localVideoId imageInfo:nil duration:[assetVideo[@"duration"] doubleValue] dimensions:[assetVideo[@"dimensions"] CGSizeValue] adjustments:[assetVideo[@"adjustments"] dictionary] useMediaCache:[self controllerShouldCacheServerAssets] liveUpload:[self controllerShouldLiveUploadVideo] passthrough:false text:assetVideo[@"caption"] entities:assetVideo[@"entities"] isCloud:[assetVideo[@"cloud"] boolValue] document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:assetVideo[@"mimeType"] attributes:assetVideo[@"attributes"] replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup] stickerDocuments:assetVideo[@"stickerDocuments"] roundMessage:false groupedId:[imageDescription[@"groupedId"] longLongValue]];
+                TGPreparedAssetVideoMessage *assetVideoMessage = [[TGPreparedAssetVideoMessage alloc] initWithAssetIdentifier:assetVideo[@"assetIdentifier"] assetURL:nil localVideoId:localVideoId imageInfo:nil duration:[assetVideo[@"duration"] doubleValue] dimensions:[assetVideo[@"dimensions"] CGSizeValue] adjustments:[assetVideo[@"adjustments"] dictionary] useMediaCache:[self controllerShouldCacheServerAssets] liveUpload:[self controllerShouldLiveUploadVideo] passthrough:false text:assetVideo[@"caption"] entities:assetVideo[@"entities"] isCloud:[assetVideo[@"cloud"] boolValue] document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:assetVideo[@"mimeType"] attributes:assetVideo[@"attributes"] replyMessage:replyMessage replyMarkup:OGReplyMarkupAttachmentOrNil(botReplyMarkup) stickerDocuments:assetVideo[@"stickerDocuments"] roundMessage:false groupedId:OGGroupIdOfDescription(imageDescription)];
                 assetVideoMessage.messageLifetime = assetVideo[@"timer"] != nil ? [assetVideo[@"timer"] intValue] : [self messageLifetime];
                 [assetVideoMessage setImageInfoWithThumbnailData:assetVideo[@"thumbnailData"] thumbnailSize:[assetVideo[@"thumbnailSize"] CGSizeValue]];
                 [preparedMessages addObject:assetVideoMessage];
                 
                 if (imageDescription[@"message"] != nil)
                 {
-                    assetVideoMessage.targetPeerId = [imageDescription[@"message"][@"cid"] longLongValue];
-                    assetVideoMessage.targetMessageId = [imageDescription[@"message"][@"mid"] intValue];
+                    OGApplyEditTarget(assetVideoMessage, imageDescription);
                     editMedia = true;
                 }
                 
@@ -2853,7 +2966,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 int64_t localVideoId = asDocument ? 0 : localId;
                 int64_t localDocumentId = asDocument ? localId : 0;
                 
-                TGPreparedAssetVideoMessage *assetVideoMessage = [[TGPreparedAssetVideoMessage alloc] initWithAssetIdentifier:nil assetURL:cameraVideo[@"videoURL"] localVideoId:localVideoId imageInfo:nil duration:[cameraVideo[@"duration"] doubleValue] dimensions:[cameraVideo[@"dimensions"] CGSizeValue] adjustments:[cameraVideo[@"adjustments"] dictionary] useMediaCache:[self controllerShouldCacheServerAssets] liveUpload:[self controllerShouldLiveUploadVideo] passthrough:false text:cameraVideo[@"caption"] entities:cameraVideo[@"entities"] isCloud:false document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:cameraVideo[@"mimeType"] attributes:cameraVideo[@"attributes"] replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup] stickerDocuments:cameraVideo[@"stickerDocuments"] roundMessage:[cameraVideo[@"roundMessage"] boolValue] groupedId:[imageDescription[@"groupedId"] longLongValue]];
+                TGPreparedAssetVideoMessage *assetVideoMessage = [[TGPreparedAssetVideoMessage alloc] initWithAssetIdentifier:nil assetURL:cameraVideo[@"videoURL"] localVideoId:localVideoId imageInfo:nil duration:[cameraVideo[@"duration"] doubleValue] dimensions:[cameraVideo[@"dimensions"] CGSizeValue] adjustments:[cameraVideo[@"adjustments"] dictionary] useMediaCache:[self controllerShouldCacheServerAssets] liveUpload:[self controllerShouldLiveUploadVideo] passthrough:false text:cameraVideo[@"caption"] entities:cameraVideo[@"entities"] isCloud:false document:asDocument localDocumentId:localDocumentId fileSize:INT_MAX mimeType:cameraVideo[@"mimeType"] attributes:cameraVideo[@"attributes"] replyMessage:replyMessage replyMarkup:OGReplyMarkupAttachmentOrNil(botReplyMarkup) stickerDocuments:cameraVideo[@"stickerDocuments"] roundMessage:[cameraVideo[@"roundMessage"] boolValue] groupedId:OGGroupIdOfDescription(imageDescription)];
                 assetVideoMessage.messageLifetime = cameraVideo[@"timer"] != nil ? [cameraVideo[@"timer"] intValue] : [self messageLifetime];
                 [assetVideoMessage setImageInfoWithThumbnailData:cameraVideo[@"thumbnailData"] thumbnailSize:[cameraVideo[@"thumbnailSize"] CGSizeValue]];
                 assetVideoMessage.liveData = cameraVideo[@"liveUploadData"];
@@ -2861,8 +2974,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 
                 if (imageDescription[@"message"] != nil)
                 {
-                    assetVideoMessage.targetPeerId = [imageDescription[@"message"][@"cid"] longLongValue];
-                    assetVideoMessage.targetMessageId = [imageDescription[@"message"][@"mid"] intValue];
+                    OGApplyEditTarget(assetVideoMessage, imageDescription);
                     editMedia = true;
                 }
                 
@@ -3027,8 +3139,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     TGPreparedRemoteDocumentMessage *remoteDocumentMessage = [[TGPreparedRemoteDocumentMessage alloc] initWithDocumentMedia:documentAttachment replyMessage:replyMessage botContextResult:downloadDocument[@"botContextResult"] replyMarkup:nil];
                     if (documentDescription[@"message"] != nil)
                     {
-                        remoteDocumentMessage.targetPeerId = [documentDescription[@"message"][@"cid"] longLongValue];
-                        remoteDocumentMessage.targetMessageId = [documentDescription[@"message"][@"mid"] intValue];
+                        OGApplyEditTarget(remoteDocumentMessage, documentDescription);
                     }
                     [preparedMessages addObject:remoteDocumentMessage];
                 }
@@ -3040,8 +3151,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     TGPreparedDownloadDocumentMessage *downloadDocumentMessage = [[TGPreparedDownloadDocumentMessage alloc] initWithGiphyId:downloadDocument[@"id"] documentUrl:downloadDocument[@"url"] localDocumentId:localDocumentId mimeType:downloadDocument[@"mimeType"] size:[downloadDocument[@"fileSize"] intValue] thumbnailInfo:downloadDocument[@"thumbnailInfo"] attributes:downloadDocument[@"attributes"] replyMessage:replyMessage replyMarkup:nil];
                     if (documentDescription[@"message"] != nil)
                     {
-                        downloadDocumentMessage.targetPeerId = [documentDescription[@"message"][@"cid"] longLongValue];
-                        downloadDocumentMessage.targetMessageId = [documentDescription[@"message"][@"mid"] intValue];
+                        OGApplyEditTarget(downloadDocumentMessage, documentDescription);
                     }
                     [preparedMessages addObject:downloadDocumentMessage];
                 }
@@ -3056,8 +3166,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     TGPreparedRemoteDocumentMessage *remoteDocumentMessage = [[TGPreparedRemoteDocumentMessage alloc] initWithDocumentMedia:documentAttachment replyMessage:replyMessage botContextResult:cloudDocument[@"botContextResult"] replyMarkup:nil];
                     if (documentDescription[@"message"] != nil)
                     {
-                        remoteDocumentMessage.targetPeerId = [documentDescription[@"message"][@"cid"] longLongValue];
-                        remoteDocumentMessage.targetMessageId = [documentDescription[@"message"][@"mid"] intValue];
+                        OGApplyEditTarget(remoteDocumentMessage, documentDescription);
                     }
                     [preparedMessages addObject:remoteDocumentMessage];
                 }
@@ -3069,8 +3178,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     TGPreparedCloudDocumentMessage *cloudDocumentMessage = [[TGPreparedCloudDocumentMessage alloc] initWithDocumentUrl:cloudDocument[@"url"] localDocumentId:localDocumentId mimeType:cloudDocument[@"mimeType"] size:[cloudDocument[@"fileSize"] intValue] thumbnailInfo:cloudDocument[@"thumbnailInfo"] attributes:cloudDocument[@"attributes"] replyMessage:replyMessage replyMarkup:nil];
                     if (documentDescription[@"message"] != nil)
                     {
-                        cloudDocumentMessage.targetPeerId = [documentDescription[@"message"][@"cid"] longLongValue];
-                        cloudDocumentMessage.targetMessageId = [documentDescription[@"message"][@"mid"] intValue];
+                        OGApplyEditTarget(cloudDocumentMessage, documentDescription);
                     }
                     [preparedMessages addObject:cloudDocumentMessage];
                 }
@@ -3156,6 +3264,20 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     }
 }
 
+- (void)controllerWantsToSendPoll:(TGPreparedPollMessage *)pollMessage asReplyToMessageId:(int32_t)replyMessageId
+{
+    if (pollMessage == nil || ![self allowPollSending])
+        return;
+    
+    if (replyMessageId != 0)
+        pollMessage.replyMessage = [self _replyMessageForMessageId:replyMessageId];
+    
+    [TGModernConversationCompanion dispatchOnMessageQueue:^
+    {
+        [self _sendPreparedMessages:@[pollMessage] automaticallyAddToList:true withIntent:TGSendMessageIntentSendOther];
+    }];
+}
+
 - (void)controllerWantsToSendGame:(TGGameMediaAttachment *)gameMedia asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup {
     if (gameMedia == nil) {
         return;
@@ -3179,6 +3301,30 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 
 - (void)controllerWantsToResendMessages:(NSArray *)messageIds
 {
+    int64_t price = [self paidMessageStars];
+    if (price <= 0 || messageIds.count == 0)
+    {
+        [self _resendMessages:messageIds allowPaidStars:0];
+        return;
+    }
+    TGGenericModernConversationCompanionReference *reference = _ogLifetimeBox;
+    TGDispatchOnMainThread(^
+    {
+        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(reference);
+        if (strongSelf == nil)
+            return;
+        TGModernConversationController *controller = strongSelf.controller;
+        [TGPaidMessagesConfirmation confirmMessagesCount:messageIds.count price:price peerId:strongSelf->_conversationId controller:controller completion:^(bool accepted)
+        {
+            TGGenericModernConversationCompanion *innerSelf = OGGenericCompanionFromBox(reference);
+            if (accepted && innerSelf != nil)
+                [innerSelf _resendMessages:messageIds allowPaidStars:price];
+        }];
+    });
+}
+
+- (void)_resendMessages:(NSArray *)messageIds allowPaidStars:(int64_t)allowPaidStars
+{
     [TGModernConversationCompanion dispatchOnMessageQueue:^
     {
         NSMutableIndexSet *removeAtIndices = [[NSMutableIndexSet alloc] init];
@@ -3186,25 +3332,20 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         NSMutableArray *moveIndexToIndex = [[NSMutableArray alloc] init];
         
         NSMutableArray *movingItems = [[NSMutableArray alloc] init];
-        NSMutableDictionary *itemIndicesByMid = [[NSMutableDictionary alloc] initWithCapacity:_items.count];
-        int itemIndex = -1;
-        for (TGMessageModernConversationItem *messageItem in _items)
-        {
-            itemIndex++;
-            [itemIndicesByMid setObject:@(itemIndex) forKey:@(messageItem->_message.mid)];
-        }
+        NSMutableDictionary *itemIndicesByMid = [NSMutableDictionary dictionaryWithCapacity:_items.count];
+        for (int position = 0; position < (int)_items.count; position++)
+            itemIndicesByMid[@(((TGMessageModernConversationItem *)_items[position])->_message.mid)] = @(position);
         
         for (NSNumber *nMid in messageIds)
         {
-            NSNumber *nIndex = [itemIndicesByMid objectForKey:nMid];
-            if (nIndex != nil)
-            {
-                NSUInteger index = [nIndex unsignedIntegerValue];
-                TGMessageModernConversationItem *currentItem = _items[index];
-                [movingItems addObject:currentItem];
-                [moveIndexFromIndex addObject:nIndex];
-                [removeAtIndices addIndex:index];
-            }
+            NSNumber *foundPosition = itemIndicesByMid[nMid];
+            if (foundPosition == nil)
+                continue;
+            
+            NSUInteger index = foundPosition.unsignedIntegerValue;
+            [movingItems addObject:_items[index]];
+            [moveIndexFromIndex addObject:foundPosition];
+            [removeAtIndices addIndex:index];
         }
         
         NSMutableArray *messagesToResend = [[NSMutableArray alloc] init];
@@ -3213,7 +3354,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             [messagesToResend addObject:messageItem->_message];
         }
         
-        NSArray *resentMessages = [self _sendPreparedMessages:[self _createPreparedMessagesFromMessages:messagesToResend copyAssetsData:false] automaticallyAddToList:false withIntent:TGSendMessageIntentOther];
+        NSArray *preparedResendMessages = [self _createPreparedMessagesFromMessages:messagesToResend copyAssetsData:false];
+        for (TGPreparedMessage *preparedMessage in preparedResendMessages)
+            preparedMessage.allowPaidStars = allowPaidStars;
+        NSArray *resentMessages = [self _sendPreparedMessages:preparedResendMessages automaticallyAddToList:false withIntent:TGSendMessageIntentOther];
         
         NSMutableArray *updatedItemIndices = [[NSMutableArray alloc] init];
         NSMutableArray *updatedItems = [[NSMutableArray alloc] init];
@@ -3226,8 +3370,8 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 updatedItem->_message = resentMessages[index];
             [updatedItems addObject:updatedItem];
             
-            NSNumber *nArrayIndex = [itemIndicesByMid objectForKey:@(messageItem->_message.mid)];
-            NSUInteger arrayIndex = nArrayIndex == nil ? NSNotFound : [nArrayIndex unsignedIntegerValue];
+            NSNumber *storedPosition = itemIndicesByMid[@(messageItem->_message.mid)];
+            NSUInteger arrayIndex = storedPosition == nil ? NSNotFound : storedPosition.unsignedIntegerValue;
             
 #ifdef DEBUG
             NSAssert(arrayIndex != NSNotFound, @"Item should be present in array");
@@ -3278,20 +3422,18 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         NSMutableArray *messages = [[NSMutableArray alloc] init];
         
-        NSMutableSet *selectedMessageKeys = [[NSMutableSet alloc] initWithCapacity:messageIndices.count];
+        NSMutableSet *requestedKeys = [NSMutableSet setWithCapacity:messageIndices.count];
         for (TGMessageIndex *messageIndex in messageIndices)
-        {
-            [selectedMessageKeys addObject:[[NSString alloc] initWithFormat:@"%lld:%d", messageIndex.peerId, messageIndex.messageId]];
-        }
-        NSMutableSet *foundMessageKeys = [[NSMutableSet alloc] init];
+            [requestedKeys addObject:OGMessageKey(messageIndex.peerId, messageIndex.messageId)];
+        NSMutableSet *matchedKeys = [NSMutableSet set];
         
         NSMutableDictionary *groups = [[NSMutableDictionary alloc] init];
         for (TGMessageModernConversationItem *messageItem in _items)
         {
-            NSString *messageKey = [[NSString alloc] initWithFormat:@"%lld:%d", messageItem->_message.fromUid, messageItem->_message.mid];
-            if ([selectedMessageKeys containsObject:messageKey])
+            NSString *messageKey = OGMessageKey(messageItem->_message.fromUid, messageItem->_message.mid);
+            if ([requestedKeys containsObject:messageKey])
             {
-                [foundMessageKeys addObject:messageKey];
+                [matchedKeys addObject:messageKey];
                 
                 if (TGPeerIdIsChannel(_conversationId) && messageItem->_message.cid != _conversationId) {
                     TGMessage *message = [messageItem->_message copy];
@@ -3349,8 +3491,8 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         
         for (TGMessageIndex *messageIndex in messageIndices)
         {
-            NSString *messageKey = [[NSString alloc] initWithFormat:@"%lld:%d", messageIndex.peerId, messageIndex.messageId];
-            if ([foundMessageKeys containsObject:messageKey])
+            NSString *messageKey = OGMessageKey(messageIndex.peerId, messageIndex.messageId);
+            if ([matchedKeys containsObject:messageKey])
                 continue;
             
             int64_t peerId = TGPeerIdIsFeed(_conversationId) ? messageIndex.peerId : _conversationId;
@@ -3740,6 +3882,20 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     messageAdded = true;
                     break;
                 }
+                case TGPollMediaAttachmentType:
+                {
+                    TGPollMediaAttachment *pollAttachment = (TGPollMediaAttachment *)attachment;
+                    if ([pollAttachment quiz] && [pollAttachment correctAnswerIndices].count == 0)
+                        break;
+                    
+                    TGPreparedPollMessage *pollMessage = [[TGPreparedPollMessage alloc] initWithPoll:pollAttachment replyMessage:replyMessage replyMarkup:replyMarkup];
+                    if (!copyAssetsData)
+                        pollMessage.replacingMid = message.mid;
+                    [preparedMessages addObject:pollMessage];
+                    
+                    messageAdded = true;
+                    break;
+                }
                 default:
                     break;
             }
@@ -3949,8 +4105,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                         TGPreparedLocalImageMessage *imageMessage = [TGPreparedLocalImageMessage messageWithImageData:imageData imageSize:imageSize thumbnailData:thumbnailData thumbnailSize:thumbnailSize assetUrl:nil text:nil entities:nil replyMessage:replyMessage replyMarkup:nil stickerDocuments:nil messageLifetime:[self messageLifetime] groupedId:0];
                         if (desc[@"message"] != nil)
                         {
-                            imageMessage.targetPeerId = [desc[@"message"][@"cid"] longLongValue];
-                            imageMessage.targetMessageId = [desc[@"message"][@"mid"] intValue];
+                            OGApplyEditTarget(imageMessage, desc);
                         }
                         [preparedMessages addObject:imageMessage];
                     }
@@ -4017,8 +4172,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 TGPreparedLocalDocumentMessage *preparedMessage = [TGPreparedLocalDocumentMessage messageWithTempDocumentPath:[fileUrl path] size:(int32_t)size mimeType:documentMimeType thumbnailImage:thumbnailImage thumbnailSize:thumbnailSize attributes:documentAttributes text:desc[@"caption"] entities:nil replyMessage:replyMessage replyMarkup:nil];
                 if (desc[@"message"] != nil)
                 {
-                    preparedMessage.targetPeerId = [desc[@"message"][@"cid"] longLongValue];
-                    preparedMessage.targetMessageId = [desc[@"message"][@"mid"] intValue];
+                    OGApplyEditTarget(preparedMessage, desc);
                 }
                 [preparedMessages addObject:preparedMessage];
             }
@@ -4034,6 +4188,9 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     NSAssert([TGGenericModernConversationCompanion isMessageQueue], @"Should be called on message queue");
 #endif
     
+    if ([self _requestPaidMessagesConfirmationForPreparedMessages:preparedMessages automaticallyAddToList:automaticallyAddToList intent:intent])
+        return @[];
+
     NSMutableArray *preparedActions = [[NSMutableArray alloc] init];
     NSMutableArray *addedMessages = [[NSMutableArray alloc] init];
     
@@ -4419,7 +4576,8 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 {
     [TGDatabaseInstance() dispatchOnDatabaseThread:^
     {
-        [TGDatabaseInstance() loadMessagesFromConversation:_conversationId maxMid:INT_MAX maxDate:INT_MAX maxLocalMid:INT_MAX atMessageId:0 limit:20 extraUnread:false completion:^(NSArray *messages, __unused bool historyExistsBelow)
+        const int32_t unbounded = INT_MAX;
+        [TGDatabaseInstance() loadMessagesFromConversation:_conversationId maxMid:unbounded maxDate:unbounded maxLocalMid:unbounded atMessageId:0 limit:20 extraUnread:false completion:^(NSArray *messages, __unused bool historyExistsBelow)
         {
             NSMutableArray *sortedTopMessages = [[NSMutableArray alloc] initWithArray:messages];
             [sortedTopMessages sortUsingComparator:^NSComparisonResult(TGMessage *message1, TGMessage *message2)
@@ -4443,7 +4601,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 _moreMessagesAvailableBelow = false;
                 _moreMessagesAvailableAbove = true;
                 
-                [self _replaceMessagesWithFastScroll:sortedTopMessages intent:becauseOfNavigation ? TGModernConversationAddMessageIntentGeneric : (becauseOfSendTextAction ? TGModernConversationAddMessageIntentSendTextMessage : TGModernConversationAddMessageIntentSendOtherMessage) scrollToMessageId:0 peerId:0 scrollBackMessageId:0 animated:!becauseOfNavigation];
+                TGModernConversationAddMessageIntent scrollIntent = TGModernConversationAddMessageIntentSendOtherMessage;
+                if (becauseOfNavigation)
+                    scrollIntent = TGModernConversationAddMessageIntentGeneric;
+                else if (becauseOfSendTextAction)
+                    scrollIntent = TGModernConversationAddMessageIntentSendTextMessage;
+                
+                [self _replaceMessagesWithFastScroll:sortedTopMessages intent:scrollIntent scrollToMessageId:0 peerId:0 scrollBackMessageId:0 animated:!becauseOfNavigation];
             }];
         }];
     } synchronous:false];
@@ -4814,11 +4978,12 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     if (minDate == INT_MAX)
         minDate = 0;
     
+    NSNumber *dateBound = @(minDate);
     NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithDictionary:@{
         @"maxMid": @(minMid),
+        @"maxDate": dateBound,
         @"maxLocalMid": @(minLocalMid),
         @"offset": @(index),
-        @"maxDate": @(minDate),
         @"limit": @(TGGenericModernConversationHistoryPageSize)
     }];
     
@@ -4899,8 +5064,8 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithDictionary:@{
         @"maxMid": @(maxMid),
         @"maxLocalMid": @(maxLocalMid),
+        @"downwards": @YES,
         @"maxDate": @(maxDate),
-        @"downwards": @(true),
         @"limit": @(TGGenericModernConversationHistoryPageSize)
     }];
     
@@ -5016,7 +5181,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         int32_t messageId = [options[@"messageId"] intValue];
         if ([options[@"chat"] boolValue])
         {
-            [[TGInterfaceManager instance] navigateToConversationWithId:[options[@"peerId"] longLongValue] conversation:nil performActions:nil atMessage:nil clearStack:false openKeyboard:false canOpenKeyboardWhileInTransition:false navigationController:nil selectChat:false animated:true];
+            [[TGInterfaceManager instance] navigateToConversationWithId:peerId conversation:nil performActions:nil atMessage:nil clearStack:false openKeyboard:false canOpenKeyboardWhileInTransition:false navigationController:nil selectChat:false animated:true];
         }
         else
         {
@@ -5121,7 +5286,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             return;
         } else if ([options[@"url"] hasPrefix:@"activate-app://"]) {
             int64_t peerId = _conversationId;
-            TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+            TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
             [TGDatabaseInstance() dispatchOnDatabaseThread:^{
                 int32_t messageId = [[options[@"url"] substringFromIndex:@"activate-app://".length] intValue];
                 if (messageId != 0) {
@@ -5144,7 +5309,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                             for (TGBotReplyMarkupButton *button in row.buttons) {
                                 if ([button.action isKindOfClass:[TGBotReplyMarkupButtonActionGame class]]) {
                                     TGDispatchOnMainThread(^{
-                                        TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                                        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                                         if (strongSelf != nil) {
                                             NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:@{@"mid": @(replyMessage.mid), @"command": button.text}];
                                             if (button.action != nil) {
@@ -5212,7 +5377,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 {
                     index++;
                     
-                    if (messageItem->_message.mid == mid && TGIOS6MessageMatchesMediaPeer(messageItem->_message, peerId))
+                    if (messageItem->_message.mid == mid && OGMessageInvolvesPeer(messageItem->_message, peerId))
                     {
                         if (!messageItem->_mediaAvailabilityStatus)
                         {
@@ -5380,182 +5545,6 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             });
         }
     }
-    else if ([action isEqualToString:@"transcribeAudioRequested"])
-    {
-        int32_t mid = [options[@"mid"] intValue];
-        int64_t peerId = [options[@"peerId"] longLongValue];
-        int attempt = [options[@"attempt"] intValue];
-        if (mid == 0 || peerId == 0 || TGPeerIdIsSecretChat(peerId))
-            return;
-
-        NSString *apiKey = [[NSUserDefaults standardUserDefaults] stringForKey:TGGroqApiKeyDefaultsKey()];
-        if (apiKey.length == 0)
-        {
-            TGLog(@"TRANSCRIBE missing API key");
-            dispatch_async(dispatch_get_main_queue(), ^
-            {
-                [[[UIAlertView alloc] initWithTitle:@"Groq API key required" message:@"Set your key in Settings → Groq transcription API key." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
-            });
-            return;
-        }
-
-        TGMessage *message = nil;
-        for (TGMessageModernConversationItem *item in _items)
-        {
-            if (item->_message.mid == mid && item->_message.cid == peerId)
-            {
-                message = item->_message;
-                break;
-            }
-        }
-        if (message == nil)
-            return;
-
-        NSString *existingText = message.contentProperties[@"ios6Transcription"];
-        if (existingText.length != 0)
-        {
-            TGMessage *updatedMessage = [message copy];
-            NSMutableDictionary *properties = [updatedMessage.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-            [properties removeObjectForKey:@"ios6Transcription"];
-            [properties removeObjectForKey:@"ios6TranscriptionPending"];
-            updatedMessage.contentProperties = properties;
-            [self updateMessagesLive:@{@(mid): updatedMessage} animated:false];
-            return;
-        }
-
-        TGMessage *pendingMessage = [message copy];
-        NSMutableDictionary *pendingProperties = [pendingMessage.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-        pendingProperties[@"ios6TranscriptionPending"] = @true;
-        pendingMessage.contentProperties = pendingProperties;
-        [self updateMessagesLive:@{@(mid): pendingMessage} animated:false];
-
-        NSData *audioData = nil;
-        for (id attachment in message.mediaAttachments)
-        {
-            NSString *path = nil;
-            if ([attachment isKindOfClass:[TGAudioMediaAttachment class]])
-                path = [(TGAudioMediaAttachment *)attachment localFilePath];
-            else if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
-            {
-                TGDocumentMediaAttachment *document = attachment;
-                NSString *directory = document.documentId != 0 ? [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:document.documentId version:document.version] : [TGPreparedLocalDocumentMessage localDocumentDirectoryForLocalDocumentId:document.localDocumentId version:document.version];
-                path = [directory stringByAppendingPathComponent:[document safeFileName]];
-            }
-            if (path.length != 0)
-            {
-                audioData = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
-                if (audioData.length != 0)
-                    break;
-            }
-        }
-        if (audioData.length == 0)
-        {
-            for (TGMessageModernConversationItem *item in _items)
-            {
-                if (item->_message.mid == mid && item->_message.cid == peerId)
-                {
-                    [self _downloadMediaInMessage:item->_message highPriority:true];
-                    break;
-                }
-            }
-            if (attempt < 4)
-            {
-                TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
-                TGDispatchAfter(2.0, dispatch_get_main_queue(), ^
-                {
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
-                    if (strongSelf != nil)
-                        [strongSelf.actionHandle requestAction:@"transcribeAudioRequested" options:@{@"mid": @(mid), @"peerId": @(peerId), @"attempt": @(attempt + 1)}];
-                });
-            }
-            else
-            {
-                NSMutableDictionary *properties = [message.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-                [properties removeObjectForKey:@"ios6TranscriptionPending"];
-                TGMessage *updatedMessage = [message copy];
-                updatedMessage.contentProperties = properties;
-                [self updateMessagesLive:@{@(mid): updatedMessage} animated:false];
-            }
-            return;
-        }
-
-        NSString *boundary = [NSString stringWithFormat:@"%f-%u", CACurrentMediaTime(), arc4random()];
-        NSMutableData *body = [[NSMutableData alloc] init];
-        NSString *prefix = [NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n", boundary];
-        [body appendData:[prefix dataUsingEncoding:NSUTF8StringEncoding]];
-        [body appendData:audioData];
-        NSString *suffix = [NSString stringWithFormat:@"\r\n--%@\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n--%@\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n--%@--\r\n", boundary, boundary, boundary];
-        [body appendData:[suffix dataUsingEncoding:NSUTF8StringEncoding]];
-
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:TGIOS6GroqTranscriptionURL]];
-        request.HTTPMethod = @"POST";
-        request.timeoutInterval = 45.0;
-        [request setValue:apiKey forHTTPHeaderField:@"X-Groq-Key"];
-        [request setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
-        request.HTTPBody = body;
-
-        TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
-        [NSURLConnection sendAsynchronousRequest:request queue:[[NSOperationQueue alloc] init] completionHandler:^(NSURLResponse *response, NSData *data, NSError *error)
-        {
-            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
-            bool requestFailed = error != nil || ![(NSHTTPURLResponse *)response isKindOfClass:[NSHTTPURLResponse class]] || [(NSHTTPURLResponse *)response statusCode] < 200 || [(NSHTTPURLResponse *)response statusCode] >= 300;
-            if (strongSelf == nil)
-                return;
-            if (requestFailed)
-            {
-                TGLog(@"TRANSCRIBE request failed status=%ld error=%@", (long)[(NSHTTPURLResponse *)response statusCode], error);
-                [TGModernConversationCompanion dispatchOnMessageQueue:^
-                {
-                    for (TGMessageModernConversationItem *item in strongSelf->_items)
-                    {
-                        if (item->_message.mid != mid || item->_message.cid != peerId)
-                            continue;
-                        TGMessage *updatedMessage = [item->_message copy];
-                        NSMutableDictionary *properties = [updatedMessage.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-                        [properties removeObjectForKey:@"ios6TranscriptionPending"];
-                        updatedMessage.contentProperties = properties;
-                        [strongSelf updateMessagesLive:@{@(mid): updatedMessage} animated:false];
-                        break;
-                    }
-                }];
-                return;
-            }
-            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            NSString *text = [json[@"text"] isKindOfClass:[NSString class]] ? json[@"text"] : nil;
-            if (text.length == 0)
-            {
-                [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                    for (TGMessageModernConversationItem *item in strongSelf->_items)
-                    {
-                        if (item->_message.mid != mid || item->_message.cid != peerId)
-                            continue;
-                        TGMessage *updatedMessage = [item->_message copy];
-                        NSMutableDictionary *properties = [updatedMessage.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-                        [properties removeObjectForKey:@"ios6TranscriptionPending"];
-                        updatedMessage.contentProperties = properties;
-                        [strongSelf updateMessagesLive:@{@(mid): updatedMessage} animated:false];
-                        break;
-                    }
-                }];
-                return;
-            }
-            [TGModernConversationCompanion dispatchOnMessageQueue:^
-            {
-                for (TGMessageModernConversationItem *item in strongSelf->_items)
-                {
-                    if (item->_message.mid != mid || item->_message.cid != peerId)
-                        continue;
-                    TGMessage *updatedMessage = [item->_message copy];
-                    NSMutableDictionary *properties = [updatedMessage.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
-                    properties[@"ios6Transcription"] = text;
-                    [properties removeObjectForKey:@"ios6TranscriptionPending"];
-                    updatedMessage.contentProperties = properties;
-                    [strongSelf updateMessagesLive:@{@(mid): updatedMessage} animated:false];
-                    break;
-                }
-            }];
-        }];
-    }
     else if ([action isEqualToString:@"mediaProgressCancelRequested"])
     {
         int64_t peerId = [options[@"peerId"] longLongValue];
@@ -5599,7 +5588,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     {
                         index++;
                         
-                        if (messageItem->_message.mid == mid && TGIOS6MessageMatchesMediaPeer(messageItem->_message, peerId))
+                        if (messageItem->_message.mid == mid && OGMessageInvolvesPeer(messageItem->_message, peerId))
                         {
                             TGDispatchOnMainThread(^
                             {
@@ -5646,7 +5635,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     }
     else if ([action isEqualToString:@"navigateToMessage"])
     {
-        [self navigateToMessageId:[options[@"mid"] intValue] scrollBackMessageId:[options[@"sourceMid"] intValue] forceUnseenMention:false animated:true];
+        int32_t messageId = [options[@"mid"] intValue];
+        int32_t sourceMessageId = [options[@"sourceMid"] intValue];
+        TGMessage *storyReplyMessage = messageId == 0 && sourceMessageId != 0 ? [TGDatabaseInstance() loadMessageWithMid:sourceMessageId peerId:_conversationId] : nil;
+        if (storyReplyMessage.storyReplyStoryId != 0)
+            [TGStoryViewerController presentStoryWithPeerId:storyReplyMessage.storyReplyPeerId storyId:storyReplyMessage.storyReplyStoryId fromController:self.controller];
+        else
+            [self navigateToMessageId:messageId scrollBackMessageId:sourceMessageId forceUnseenMention:false animated:true];
     }
     else if ([action isEqualToString:@"showStickerPack"])
     {
@@ -5656,9 +5651,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     else if ([action isEqualToString:@"fastForwardMessage"])
     {
         TGModernConversationController *controller = self.controller;
-        if (options[@"groupedId"] != nil)
+        NSNumber *requestedGroupId = options[@"groupedId"];
+        if (requestedGroupId != nil)
         {
-            int64_t groupedId = [options[@"groupedId"] longLongValue];
+            int64_t groupedId = [requestedGroupId longLongValue];
             NSMutableArray *indices = [[NSMutableArray alloc] init];
             for (TGMessageModernConversationItem *item in [self.controller _currentItems])
             {
@@ -5682,7 +5678,8 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         }
         else
         {
-            [controller forwardMessages:@[ [TGMessageIndex indexWithPeerId:[options[@"peerId"] longLongValue] messageId:[options[@"mid"] intValue]] ] fastForward:true grouped:false];
+            TGMessageIndex *forwardedIndex = [TGMessageIndex indexWithPeerId:[options[@"peerId"] longLongValue] messageId:[options[@"mid"] intValue]];
+            [controller forwardMessages:@[ forwardedIndex ] fastForward:true grouped:false];
         }
     }
     else if ([action isEqualToString:@"useContextBot"]) {
@@ -5736,10 +5733,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             }];
             [location set:signal];
             
-            TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+            TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
             [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Conversation.ShareBotLocationConfirmationTitle") message:TGLocalized(@"Conversation.ShareBotLocationConfirmation") cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(@"Common.OK") completionBlock:^(bool okButtonPressed) {
                 if (okButtonPressed) {
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                    TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                     if (strongSelf != nil) {
                         [locationRequired set:[SSignal single:@true]];
                         
@@ -5749,7 +5746,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                         [[[[[location signal] take:1] deliverOn:[SQueue mainQueue]] onDispose:^{
                             [progressWindow dismiss:true];
                         }] startWithNext:^(CLLocation *location) {
-                            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                             if (strongSelf != nil) {
                                 [strongSelf controllerWantsToSendMapWithLatitude:location.coordinate.latitude longitude:location.coordinate.longitude venue:nil period:0 asReplyToMessageId:replyMessageId botContextResult:nil botReplyMarkup:nil];
                             }
@@ -5760,10 +5757,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 }
             }];
         } else if ([action isKindOfClass:[TGBotReplyMarkupButtonActionRequestPhone class]]) {
-            TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+            TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
             [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Conversation.ShareBotContactConfirmationTitle") message:TGLocalized(@"Conversation.ShareBotContactConfirmation") cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(@"Common.OK") destructive:false completionBlock:^(bool okButtonPressed) {
                 if (okButtonPressed) {
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                    TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                     if (strongSelf != nil) {
                         [strongSelf shareVCard];
                     }
@@ -5810,9 +5807,9 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         } else if ([action isKindOfClass:[TGBotReplyMarkupButtonActionCallback class]] || [action isKindOfClass:[TGBotReplyMarkupButtonActionGame class]]) {
             int64_t accessHash = _accessHash;
             if (messageId < TGMessageLocalMidBaseline) {
-                TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+                TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
                 void (^accessAllowedBlock)() = ^{
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                    TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                     if (strongSelf == nil) {
                         return;
                     }
@@ -5828,13 +5825,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     SSignal *signal = [TGBotSignals botCallback:strongSelf->_conversationId accessHash:[strongSelf requestAccessHash] messageId:messageId data:actionData isGame:isGame];
                     
                     signal = [[signal onStart:^{
-                        TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                         if (strongSelf != nil) {
                             strongSelf->_callbackInProgressMessageId = messageId;
                             [strongSelf.callbackInProgress set:[SSignal single:@{@"mid": @(messageId), @"buttonIndex": @(index)}]];
                         }
                     }] onDispose:^{
-                        TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                         if (strongSelf != nil) {
                             strongSelf->_callbackInProgressMessageId = 0;
                             [strongSelf.callbackInProgress set:[SSignal single:nil]];
@@ -5842,7 +5839,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     }];
                     
                     [strongSelf->_botCallbackDisposable setDisposable:[[signal deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *result) {
-                        TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                        TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                         if (strongSelf != nil) {
                             NSString *url = result[@"url"];
                             if (url.length != 0) {
@@ -5910,7 +5907,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                                     } else {
                                         TGToastTitlePanel *panel = [[TGToastTitlePanel alloc] initWithText:text];
                                         panel.dismiss = ^{
-                                            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                                            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                                             if (strongSelf != nil) {
                                                 [strongSelf->_toastPanel set:[SSignal single:nil]];
                                             }
@@ -6172,7 +6169,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             __block bool hadIncomingUnread = false;
             __block NSInteger incomingUnreadCount = 0;
             bool treatIncomingAsUnread = [arguments[@"treatIncomingAsUnread"] boolValue];
-            NSMutableSet *incomingUnreadMessageIds = [[NSMutableSet alloc] init];
+            NSMutableSet *unreadIncomingIds = [NSMutableSet set];
             
             [_conversationAtomic with:^id(TGConversation *conversation) {
                 for (TGMessage *message in messages) {
@@ -6182,7 +6179,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     if (!message.outgoing && ((treatIncomingAsUnread && message.mid < TGMessageLocalMidBaseline) || [conversation isMessageUnread:message])) {
                         hadIncomingUnread = true;
                         incomingUnreadCount++;
-                        [incomingUnreadMessageIds addObject:@(message.mid)];
+                        [unreadIncomingIds addObject:@(message.mid)];
                     }
                     
                     if (treatIncomingAsUnread && message.group != nil) {
@@ -6214,7 +6211,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     animated = false;
                 }
                 
-                NSMutableSet *filteredIncomingUnreadMessageIds = [[NSMutableSet alloc] initWithSet:incomingUnreadMessageIds];
+                NSMutableSet *filteredIncomingUnreadMessageIds = [[NSMutableSet alloc] initWithSet:unreadIncomingIds];
                 for (TGMessageModernConversationItem *item in _items) {
                     [filteredIncomingUnreadMessageIds removeObject:@(item->_message.mid)];
                 }
@@ -6898,16 +6895,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 } historyRequestType = TGHistoryRequestAbove;
                 bool moreAvailable = false;
                 
-                if (above)
-                {
-                    historyRequestType = TGHistoryRequestAbove;
-                    _loadingMoreMessagesAbove = false;
-                    _moreMessagesAvailableAbove = messages.count != 0;
-                    moreAvailable = _moreMessagesAvailableAbove;
-                    if (moreAvailable && !_manualMessageManagement && [self historyAboveReadAheadAllowed])
-                        [self _requestMoreMessagesAboveIncludingMessages:messages];
-                }
-                else if (below)
+                if (below && !above)
                 {
                     historyRequestType = TGHistoryRequestBelow;
                     _loadingMoreMessagesBelow = false;
@@ -6915,6 +6903,15 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                     moreAvailable = _moreMessagesAvailableBelow;
                     if (moreAvailable && !_manualMessageManagement && [self historyBelowReadAheadAllowed])
                         [self _requestMoreMessagesBelowIncludingMessages:messages];
+                }
+                else if (above)
+                {
+                    historyRequestType = TGHistoryRequestAbove;
+                    _loadingMoreMessagesAbove = false;
+                    _moreMessagesAvailableAbove = messages.count != 0;
+                    moreAvailable = _moreMessagesAvailableAbove;
+                    if (moreAvailable && !_manualMessageManagement && [self historyAboveReadAheadAllowed])
+                        [self _requestMoreMessagesAboveIncludingMessages:messages];
                 }
 
                 [self _addMessages:messages animated:false intent:historyRequestType == TGHistoryRequestBelow ? TGModernConversationAddMessageIntentLoadMoreMessagesBelow : TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
@@ -6932,15 +6929,15 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             else
             {
                 bool retryEmpty = above && !_manualMessageManagement && _items.count == 0 && _emptyHistoryRetryCount < 5;
-                if (above)
-                {
-                    _loadingMoreMessagesAbove = false;
-                    _moreMessagesAvailableAbove = retryEmpty;
-                }
-                else if (below)
+                if (below && !above)
                 {
                     _loadingMoreMessagesBelow = false;
                     _moreMessagesAvailableBelow = false;
+                }
+                else if (above)
+                {
+                    _loadingMoreMessagesAbove = false;
+                    _moreMessagesAvailableAbove = retryEmpty;
                 }
                 if (retryEmpty)
                     [self _scheduleEmptyHistoryRetry];
@@ -6949,10 +6946,10 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 TGDispatchOnMainThread(^
                 {
                     TGModernConversationController *controller = self.controller;
-                    if (above)
-                        [controller setEnableAboveHistoryRequests:retryEmpty];
-                    else if (below)
+                    if (below && !above)
                         [controller setEnableBelowHistoryRequests:false];
+                    else if (above)
+                        [controller setEnableAboveHistoryRequests:retryEmpty];
                 });
             }
         }];
@@ -7290,9 +7287,10 @@ static id mediaIdForMessage(TGMessage *message)
                 TGAudioMediaAttachment *audioAttachment = (TGAudioMediaAttachment *)attachment;
                 if (audioAttachment.audioId != 0 || audioAttachment.audioUri.length != 0)
                 {
-                    if (audioAttachment.ios6OriginInfo == nil && audioAttachment.audioId != 0)
+                    if (audioAttachment.audioId != 0 && audioAttachment.downloadOriginInfo == nil)
                     {
-                        audioAttachment.ios6OriginInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil cid:conversationId mid:message.mid];
+                        TGMediaOriginInfo *audioOrigin = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil cid:conversationId mid:message.mid];
+                        audioAttachment.downloadOriginInfo = audioOrigin;
                     }
                     
                     id mediaId = [[TGMediaId alloc] initWithType:4 itemId:audioAttachment.audioId != 0 ? audioAttachment.audioId : audioAttachment.localAudioId];
@@ -7373,13 +7371,13 @@ static id mediaIdForMessage(TGMessage *message)
                             [TGDatabaseInstance() storeQueuedActions:[NSArray arrayWithObject:[[NSValue alloc] initWithBytes:&action objCType:@encode(TGDatabaseAction)]]];
                             [ActionStageInstance() requestActor:@"/tg/service/synchronizeactionqueue/(global)" options:nil watcher:TGTelegraphInstance];
                             
-                            NSMutableDictionary *readMessageContentsInteractive = nil;
+                            NSMutableDictionary *readContentsByPeer = nil;
                             if (readMention) {
-                                readMessageContentsInteractive = [[NSMutableDictionary alloc] init];
-                                readMessageContentsInteractive[@(item->_message.cid)] = @[@(item->_message.mid)];
+                                readContentsByPeer = [NSMutableDictionary dictionary];
+                                readContentsByPeer[@(item->_message.cid)] = @[@(item->_message.mid)];
                             }
                             
-                            [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:@[[[TGDatabaseUpdateContentsRead alloc] initWithPeerId:item->_message.cid messageId:item->_message.mid]] updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:readMessageContentsInteractive deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+                            [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:@[[[TGDatabaseUpdateContentsRead alloc] initWithPeerId:item->_message.cid messageId:item->_message.mid]] updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:readContentsByPeer deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
                             
                             TGDispatchOnMainThread(^
                             {
@@ -7492,14 +7490,14 @@ static id mediaIdForMessage(TGMessage *message)
 }
 
 - (SSignal *)inlineResultForMentionText:(NSString *)mention text:(NSString *)text {
-    TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+    TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
     int64_t peerId = [self requestPeerId];
     int64_t accessHash = [self requestAccessHash];
     return [[TGPeerInfoSignals resolveBotDomain:mention] mapToSignal:^SSignal *(id peer) {
         if ([peer isKindOfClass:[TGUser class]]) {
             return [[[SSignal single:@true] then:[TGBotSignals botContextResultForUserId:((TGUser *)peer).uid peerId:peerId accessHash:accessHash query:text geoPoint:nil offset:@"" forceAllowLocation:false]] onNext:^(id next) {
                 if (next != nil) {
-                    TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+                    TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
                     if (strongSelf != nil && ![strongSelf allowMessageForwarding]) {
                         [strongSelf maybeAskForInlineBots];
                     }
@@ -7704,7 +7702,7 @@ static id mediaIdForMessage(TGMessage *message)
 }
 
 - (SSignal *)saveEditedMessageWithId:(int32_t)messageId text:(NSString *)text entities:(NSArray *)entities disableLinkPreviews:(bool)disableLinkPreviews {
-    TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+    TGGenericModernConversationCompanionReference *lifetimeBox = _ogLifetimeBox;
     int64_t peerId = _conversationId;
     SSignal *notModified = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
@@ -7727,7 +7725,7 @@ static id mediaIdForMessage(TGMessage *message)
     
     return [notModified catch:^SSignal *(__unused id error) {
         return [[[[TGGroupManagementSignals editMessage:[self requestPeerId] accessHash:[self requestAccessHash] messageId:messageId text:text entities:entities disableLinksPreview:disableLinkPreviews media:nil] mapToSignal:^SSignal *(TGMessage *updatedMessage) {
-            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
             if (strongSelf != nil) {
                 TGMessage *message = updatedMessage;
                 if (message == nil) {
@@ -7739,7 +7737,7 @@ static id mediaIdForMessage(TGMessage *message)
             
             return [SSignal complete];
         }] deliverOn:[TGModernConversationCompanion messageQueue]] onNext:^(TGMessage *message) {
-            TGGenericModernConversationCompanion *strongSelf = TGIOS4ResolveGenericModernConversationCompanion(ios4Reference);
+            TGGenericModernConversationCompanion *strongSelf = OGGenericCompanionFromBox(lifetimeBox);
             if (strongSelf != nil) {
                 [strongSelf updateMessagesLive:@{@(message.mid): message} animated:false];
             }
@@ -7874,7 +7872,7 @@ static id mediaIdForMessage(TGMessage *message)
         }
     }];
     
-    SSignal *otherLiveLocationsSignal = [[[TGLiveLocationSignals liveLocationsForPeerId:self.conversationId includeExpired:false onlyLocal:[self useOnlyLocalLiveLocations]] map:^NSArray *(NSArray *messages)
+    SSignal *remoteLiveLocationsSignal = [[[TGLiveLocationSignals liveLocationsForPeerId:self.conversationId includeExpired:false onlyLocal:[self useOnlyLocalLiveLocations]] map:^NSArray *(NSArray *messages)
     {
         NSMutableArray *filteredMessages = [[NSMutableArray alloc] init];
         for (TGMessage *message in messages)
@@ -7901,7 +7899,7 @@ static id mediaIdForMessage(TGMessage *message)
         return entries;
     }];
     
-    SSignal *combinedSignal = [[SSignal combineSignals:@[ownLiveLocationSignal, otherLiveLocationsSignal] withInitialStates:@[[NSNull null], @[]]] map:^id(NSArray *result)
+    SSignal *combinedSignal = [[SSignal combineSignals:@[ownLiveLocationSignal, remoteLiveLocationsSignal] withInitialStates:@[[NSNull null], @[]]] map:^id(NSArray *result)
     {
         NSMutableArray *entries = [[NSMutableArray alloc] init];
         if (![result.firstObject isKindOfClass:[NSNull class]])

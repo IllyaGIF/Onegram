@@ -7,6 +7,7 @@
 //
 
 #import "STPBINRange.h"
+#import "OGStripeCompat.h"
 #import "NSString+Stripe.h"
 
 @interface STPBINRange()
@@ -23,9 +24,9 @@
 
 @implementation STPBINRange
 
-+ (NSArray *)allRanges {
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)allRanges {
     
-    static NSArray *STPBINRangeAllRanges;
+    static OG_COMPAT_GENERIC(NSArray, STPBINRange *) *STPBINRangeAllRanges;
     
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -92,7 +93,7 @@
     return [@(self.qRangeLow.length) compare:@(other.qRangeLow.length)];
 }
 
-+ (NSArray *)binRangesForNumber:(NSString *)number {
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)binRangesForNumber:(NSString *)number {
     NSMutableArray *ranges = [NSMutableArray array];
     for (STPBINRange *range in [self allRanges]) {
         if ([range matchesNumber:number])
@@ -106,7 +107,7 @@
     return [[validRanges sortedArrayUsingSelector:@selector(compare:)] lastObject];
 }
 
-+ (NSArray *)binRangesForBrand:(STPCardBrand)brand {
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)binRangesForBrand:(STPCardBrand)brand {
     NSMutableArray *ranges = [NSMutableArray array];
     for (STPBINRange *range in [self allRanges]) {
         if (range.brand == brand)

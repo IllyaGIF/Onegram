@@ -2400,13 +2400,10 @@ static UIView *_findBackArrow(UIView *view)
     {
         TGRemoteImageView *avatarView = [self.userInfoItem visibleAvatarView];
         
-        NSString *legacyThumbnailUrl = user.photoFullUrlSmall.length != 0 ? user.photoFullUrlSmall : user.photoUrlSmall;
-        NSString *legacyUrl = user.photoFullUrlBig.length != 0 ? user.photoFullUrlBig : user.photoUrlBig;
-        if (legacyUrl.length == 0)
-            legacyUrl = legacyThumbnailUrl;
-        if (legacyThumbnailUrl.length == 0)
-            legacyThumbnailUrl = legacyUrl;
-        
+        NSString *smallUrl = user.photoFullUrlSmall.length != 0 ? user.photoFullUrlSmall : user.photoUrlSmall;
+        NSString *bigUrl = user.photoFullUrlBig.length != 0 ? user.photoFullUrlBig : user.photoUrlBig;
+        NSString *legacyUrl = bigUrl.length != 0 ? bigUrl : smallUrl;
+        NSString *legacyThumbnailUrl = smallUrl.length != 0 ? smallUrl : legacyUrl;
         
         if (user != nil && legacyUrl.length != 0 && avatarView.currentImage != nil)
         {

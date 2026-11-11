@@ -10,7 +10,7 @@
 
 @implementation NSBundle (Stripe_AppName)
 
-+ (NSString *)stp_applicationName {
++ (NSString *_Nullable)stp_applicationName {
     return [[self mainBundle] infoDictionary][(NSString *)kCFBundleNameKey];
 }
 

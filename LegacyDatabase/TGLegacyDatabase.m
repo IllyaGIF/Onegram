@@ -263,7 +263,7 @@ int32_t murMurHash32(NSString *string)
 }
 
 - (NSArray *)contactUsersMatchingPhoneSync:(NSString *)queryPhoneNumber {
-    __block NSArray *resultUsers = nil;
+    __block NSArray *matchedUsers = nil;
     [_queue dispatchSync:^{
         NSString *normalizedPhone = [TGLegacyDatabase cleanPhone:queryPhoneNumber clip:true];
         NSMutableArray *users = [[NSMutableArray alloc] init];
@@ -295,9 +295,9 @@ int32_t murMurHash32(NSString *string)
             }
         }
     
-        resultUsers = users;
+        matchedUsers = users;
     }];
-    return resultUsers;
+    return matchedUsers;
 }
 
 - (NSArray *)topUsers {

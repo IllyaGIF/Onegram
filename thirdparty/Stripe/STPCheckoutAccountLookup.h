@@ -12,8 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface STPCheckoutAccountLookup : NSObject
 
-+ (instancetype)lookupWithData:(NSData *)data
-                            URLResponse:(NSURLResponse *)response;
++ (instancetype _Nullable)lookupWithData:(NSData *_Nullable)data
+                            URLResponse:(NSURLResponse *_Nullable)response;
 
 @property(nonatomic, readonly)NSString *email;
 @property(nonatomic, readonly)NSString *redactedPhone;

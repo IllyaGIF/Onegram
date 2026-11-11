@@ -1,5 +1,5 @@
-#ifndef TGIOS6_CXX_COMPAT_H
-#define TGIOS6_CXX_COMPAT_H
+#ifndef OG_COMPAT_CXX_H
+#define OG_COMPAT_CXX_H
 
 #include <memory>
 #include <tr1/memory>
@@ -42,14 +42,14 @@ struct is_same : false_type {};
 template <class T>
 struct is_same<T, T> : true_type {};
 
-template <bool B, class T = void>
+template <bool Condition, class Result = void>
 struct enable_if {};
 
-template <class T>
-struct enable_if<true, T> { typedef T type; };
+template <class Result>
+struct enable_if<true, Result> { typedef Result type; };
 
-template <bool B, class T = void>
-using enable_if_t = typename enable_if<B, T>::type;
+template <bool Condition, class Result = void>
+using enable_if_t = typename enable_if<Condition, Result>::type;
 
 template <class T>
 struct remove_reference { typedef T type; };
@@ -175,14 +175,14 @@ private:
     T *_ptr;
 };
 
-template <class T, class... Args>
-unique_ptr<T> make_unique(Args &&... args) {
-    return unique_ptr<T>(new T(forward<Args>(args)...));
+template <class T, class... Params>
+unique_ptr<T> make_unique(Params &&... params) {
+    return unique_ptr<T>(new T(forward<Params>(params)...));
 }
 
-template <class T, class... Args>
-shared_ptr<T> make_shared(Args &&... args) {
-    return shared_ptr<T>(new T(forward<Args>(args)...));
+template <class T, class... Params>
+shared_ptr<T> make_shared(Params &&... params) {
+    return shared_ptr<T>(new T(forward<Params>(params)...));
 }
 
 template <class T>

@@ -2,7 +2,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageManager.h"
 
-extern void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion)(NSString *thumbnailUri));
+#import "TGCustomEmojiThumbnail.h"
 
 static NSUInteger TGRichMessagePreparationDepth = 0;
 
@@ -126,7 +126,7 @@ static NSMutableDictionary *TGRichMessageInlineImageRequests(void)
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         SMetaDisposable *imageDisposable = [[SMetaDisposable alloc] init];
-        TGIOS6LoadCustomEmojiThumbnail(documentId, ^(NSString *thumbnailUri)
+        TGCustomEmojiLoadThumbnail(documentId, ^(NSString *thumbnailUri)
         {
             if (thumbnailUri.length == 0)
             {

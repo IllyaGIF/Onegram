@@ -35,6 +35,23 @@
 }
 @end
 
+static TGMediaPickerGalleryItem<TGModernGallerySelectableItem, TGModernGalleryEditableItem> *OGMakeGalleryItem(TGMediaAsset *asset)
+{
+    id<TGMediaEditableItem, TGMediaSelectableItem> editableAsset = (id<TGMediaEditableItem, TGMediaSelectableItem>)asset;
+    
+    switch (asset.type)
+    {
+        case TGMediaAssetVideoType:
+            return [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:editableAsset];
+            
+        case TGMediaAssetGifType:
+            return [[TGMediaPickerGalleryGifItem alloc] initWithAsset:editableAsset];
+            
+        default:
+            return [[TGMediaPickerGalleryPhotoItem alloc] initWithAsset:editableAsset];
+    }
+}
+
 @implementation TGMediaPickerModernGalleryMixin
 
 - (instancetype)initWithContext:(id<LegacyComponentsContext>)context item:(id)item fetchResult:(TGMediaAssetFetchResult *)fetchResult parentController:(TGViewController *)parentController thumbnailImage:(UIImage *)thumbnailImage selectionContext:(TGMediaSelectionContext *)selectionContext editingContext:(TGMediaEditingContext *)editingContext suggestionContext:(TGSuggestionContext *)suggestionContext hasCaptions:(bool)hasCaptions allowCaptionEntities:(bool)allowCaptionEntities hasTimer:(bool)hasTimer onlyCrop:(bool)onlyCrop inhibitDocumentCaptions:(bool)inhibitDocumentCaptions inhibitMute:(bool)inhibitMute asFile:(bool)asFile itemsLimit:(NSUInteger)itemsLimit recipientName:(NSString *)recipientName
@@ -262,33 +279,7 @@
     for (NSUInteger i = 0; i < count; i++)
     {
         TGMediaAsset *asset = [fetchResult assetAtIndex:i];
-        id<TGMediaEditableItem, TGMediaSelectableItem> editableAsset = (id<TGMediaEditableItem, TGMediaSelectableItem>)asset;
-        
-        TGMediaPickerGalleryItem<TGModernGallerySelectableItem, TGModernGalleryEditableItem> *galleryItem = nil;
-        switch (asset.type)
-        {
-            case TGMediaAssetVideoType:
-            {
-                galleryItem = [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:editableAsset];
-            }
-                break;
-                
-            case TGMediaAssetGifType:
-            {
-                galleryItem = [[TGMediaPickerGalleryGifItem alloc] initWithAsset:editableAsset];
-            }
-                break;
-                
-            default:
-            {
-                if (false && asset.subtypes & TGMediaAssetSubtypePhotoLive)
-                    galleryItem = [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:editableAsset];
-                else
-                    galleryItem = [[TGMediaPickerGalleryPhotoItem alloc] initWithAsset:editableAsset];
-            }
-                break;
-        }
-        
+        TGMediaPickerGalleryItem<TGModernGallerySelectableItem, TGModernGalleryEditableItem> *galleryItem = OGMakeGalleryItem(asset);
         galleryItem.selectionContext = selectionContext;
         galleryItem.editingContext = editingContext;
         
@@ -315,41 +306,9 @@
         for (NSUInteger k = 0; k < moment.assetCount; k++)
         {
             TGMediaAsset *asset = [moment.fetchResult assetAtIndex:k];
-            id<TGMediaEditableItem, TGMediaSelectableItem> editableAsset = (id<TGMediaEditableItem, TGMediaSelectableItem>)asset;
-            
-            TGMediaPickerGalleryItem *galleryItem = nil;
-            switch (asset.type)
-            {
-                case TGMediaAssetVideoType:
-                {
-                    TGMediaPickerGalleryVideoItem *videoItem = [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:editableAsset];
-                    videoItem.selectionContext = selectionContext;
-                    videoItem.editingContext = editingContext;
-                    
-                    galleryItem = videoItem;
-                }
-                    break;
-                    
-                case TGMediaAssetGifType:
-                {
-                    TGMediaPickerGalleryGifItem *gifItem = [[TGMediaPickerGalleryGifItem alloc] initWithAsset:editableAsset];
-                    gifItem.selectionContext = selectionContext;
-                    gifItem.editingContext = editingContext;
-                    
-                    galleryItem = gifItem;
-                }
-                    break;
-                    
-                default:
-                {
-                    TGMediaPickerGalleryPhotoItem *photoItem = [[TGMediaPickerGalleryPhotoItem alloc] initWithAsset:editableAsset];
-                    photoItem.selectionContext = selectionContext;
-                    photoItem.editingContext = editingContext;
-                    
-                    galleryItem = photoItem;
-                }
-                    break;
-            }
+            TGMediaPickerGalleryItem<TGModernGallerySelectableItem, TGModernGalleryEditableItem> *galleryItem = OGMakeGalleryItem(asset);
+            galleryItem.selectionContext = selectionContext;
+            galleryItem.editingContext = editingContext;
             
             if (enumerationBlock != nil)
                 enumerationBlock(galleryItem);

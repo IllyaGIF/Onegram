@@ -8,6 +8,7 @@
 
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPPaymentMethod.h"
 #import "STPBlocks.h"
 #import "STPAddress.h"
@@ -86,12 +87,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  The user's currently selected payment method. May be nil.
  */
-@property(nonatomic, readonly)id<STPPaymentMethod> selectedPaymentMethod;
+@property(nonatomic, readonly)id<STPPaymentMethod> _Nullable selectedPaymentMethod;
 
 /**
  *  The available payment methods the user can choose between. May be nil.
  */
-@property(nonatomic, readonly)NSArray *paymentMethods;
+@property(nonatomic, readonly)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *_Nullable paymentMethods;
 
 /**
  *  The amount of money you're requesting from the user, in the smallest currency unit for the selected currency. For example, to indicate $10 USD, use 1000 (i.e. 1000 cents). For more information see https://stripe.com/docs/api#charge_object-amount . This value must be present and greater than zero in order for Apple Pay to be automatically enabled.
@@ -116,7 +117,7 @@ NS_ASSUME_NONNULL_BEGIN
  *
  *  @warning `PKPaymentSummaryItem` is only available in iOS8+. If you support iOS 7 you should do a runtime availability check before accessing or setting this property. 
  */
-@property(nonatomic, copy)NSArray *paymentSummaryItems;
+@property(nonatomic, copy)OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *paymentSummaryItems OG_COMPAT_STRIPE_SINCE_IOS8;
 
 /**
  *  The presentation style used for all view controllers presented modally by the context.
@@ -195,7 +196,7 @@ didCreatePaymentResult:(STPPaymentResult *)paymentResult
  */
 - (void)paymentContext:(STPPaymentContext *)paymentContext
    didFinishWithStatus:(STPPaymentStatus)status
-                 error:(NSError *)error;
+                 error:(NSError *_Nullable)error;
 
 @end
 

@@ -8,14 +8,14 @@
 
 @implementation TGPaintPanGestureRecognizer
 {
-    NSSet *_tgTouches;
+    NSSet *_lastTouches;
 }
 
-@synthesize touches = _tgTouches;
+@synthesize touches = _lastTouches;
 
 - (void)touchesBegan:(NSSet *)inTouches withEvent:(UIEvent *)event
 {
-    _tgTouches = [inTouches copy];
+    _lastTouches = [inTouches copy];
     [super touchesBegan:inTouches withEvent:event];
     
     if (inTouches.count == 1 && self.shouldRecognizeTap != nil && self.shouldRecognizeTap())
@@ -24,19 +24,19 @@
 
 - (void)touchesMoved:(NSSet *)inTouches withEvent:(UIEvent *)event
 {
-    _tgTouches = [inTouches copy];
+    _lastTouches = [inTouches copy];
     [super touchesMoved:inTouches withEvent:event];
 }
 
 - (void)touchesEnded:(NSSet *)inTouches withEvent:(UIEvent *)event
 {
-    _tgTouches = [inTouches copy];
+    _lastTouches = [inTouches copy];
     [super touchesEnded:inTouches withEvent:event];
 }
 
 - (void)touchesCancelled:(NSSet *)inTouches withEvent:(UIEvent *)event
 {
-    _tgTouches = [inTouches copy];
+    _lastTouches = [inTouches copy];
     [super touchesCancelled:inTouches withEvent:event];
 }
 

@@ -408,20 +408,20 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 }
 
 @property (nonatomic) CGRect frame;
-@property (nonatomic, strong, readonly) NSArray *urlItems;
-@property (nonatomic, strong, readonly) NSArray *strikethroughItems;
+@property (nonatomic, strong, readonly) NSArray *linkRuns;
+@property (nonatomic, strong, readonly) NSArray *strikeRuns;
 
 @end
 
 @implementation TGInstantPageTextLine
 
-- (instancetype)initWithLine:(CTLineRef)line frame:(CGRect)frame urlItems:(NSArray *)urlItems strikethroughItems:(NSArray *)strikethroughItems {
+- (instancetype)initWithLine:(CTLineRef)line frame:(CGRect)frame linkRuns:(NSArray *)linkRuns strikeRuns:(NSArray *)strikeRuns {
     self = [super init];
     if (self != nil) {
-        _line = CFRetain(line);
         _frame = frame;
-        _urlItems = urlItems;
-        _strikethroughItems = strikethroughItems;
+        _line = CFRetain(line);
+        _strikeRuns = strikeRuns;
+        _linkRuns = linkRuns;
     }
     return self;
 }
@@ -434,7 +434,23 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 
 @end
 
-@interface TGInstantPageAnchorItem : NSObject <TGInstantPageLayoutItem> {
+static CGFloat OGCompatDistanceThreshold(NSDictionary *counts, int32_t group, int limit, CGFloat spread) {
+    return [counts[@(group)] intValue] <= limit ? CGFLOAT_MAX : spread;
+}
+
+@interface OGCompatInstantPageItemBase : NSObject
+
+@end
+
+@implementation OGCompatInstantPageItemBase
+
+- (NSArray *)medias {
+    return nil;
+}
+
+@end
+
+@interface TGInstantPageAnchorItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
     NSString *_anchor;
 }
 
@@ -457,17 +473,13 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return false;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
 - (bool)matchesAnchor:(NSString *)anchor {
     return [[_anchor lowercaseString] isEqualToString:anchor];
 }
 
 @end
 
-@interface TGInstantPageMediaItem : NSObject <TGInstantPageLayoutItem> {
+@interface TGInstantPageMediaItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
     TGInstantPageMedia *_media;
     TGInstantPageMediaArguments *_arguments;
 }
@@ -504,12 +516,8 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return TGDistanceThresholdGroupMedia;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)groupCount {
-    if ([groupCount[@(TGDistanceThresholdGroupMedia)] intValue] <= 3) {
-        return CGFLOAT_MAX;
-    } else {
-        return 120.0f;
-    }
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)counts {
+    return OGCompatDistanceThreshold(counts, TGDistanceThresholdGroupMedia, 3, 120.0f);
 }
 
 - (bool)hasLinks {
@@ -526,7 +534,7 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 
 @end
 
-@interface TGInstantPageEmbedItem : NSObject <TGInstantPageLayoutItem> {
+@interface TGInstantPageEmbedItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
     NSString *_url;
     NSString *_html;
     TGImageMediaAttachment *_posterMedia;
@@ -573,26 +581,18 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return TGDistanceThresholdGroupEmbed;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)groupCount {
-    if ([groupCount[@(TGDistanceThresholdGroupEmbed)] intValue] <= 4) {
-        return CGFLOAT_MAX;
-    } else {
-        return 1000.0f;
-    }
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)counts {
+    return OGCompatDistanceThreshold(counts, TGDistanceThresholdGroupEmbed, 4, 1000.0f);
 }
 
 - (bool)hasLinks {
     return false;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
 @end
 
-@interface TGInstantPageSlideshowItem : NSObject <TGInstantPageLayoutItem> {
-    NSArray *_medias;
+@interface TGInstantPageSlideshowItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
+    NSArray *_slideMedias;
 }
 
 @property (nonatomic) CGRect frame;
@@ -601,22 +601,22 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 
 @implementation TGInstantPageSlideshowItem
 
-- (instancetype)initWithFrame:(CGRect)frame medias:(NSArray *)medias {
+- (instancetype)initWithFrame:(CGRect)frame medias:(NSArray *)mediaList {
     self = [super init];
     if (self != nil) {
         _frame = frame;
-        _medias = medias;
+        _slideMedias = mediaList;
     }
     return self;
 }
 
 - (UIView<TGInstantPageDisplayView> *)view {
-    return [[TGInstantPageSlideshowView alloc] initWithFrame:_frame medias:_medias];
+    return [[TGInstantPageSlideshowView alloc] initWithFrame:_frame medias:_slideMedias];
 }
 
 - (bool)matchesView:(UIView<TGInstantPageDisplayView> *)view {
     if ([view isKindOfClass:[TGInstantPageSlideshowView class]]) {
-        return [((TGInstantPageSlideshowView *)view).medias isEqualToArray:_medias];
+        return [((TGInstantPageSlideshowView *)view).medias isEqualToArray:_slideMedias];
     } else {
         return false;
     }
@@ -626,12 +626,8 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return TGDistanceThresholdGroupEmbed;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)groupCount {
-    if ([groupCount[@(TGDistanceThresholdGroupEmbed)] intValue] <= 4) {
-        return CGFLOAT_MAX;
-    } else {
-        return 1000.0f;
-    }
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)counts {
+    return OGCompatDistanceThreshold(counts, TGDistanceThresholdGroupEmbed, 4, 1000.0f);
 }
 
 - (bool)hasLinks {
@@ -639,12 +635,12 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 }
 
 - (NSArray *)medias {
-    return _medias;
+    return _slideMedias;
 }
 
 @end
 
-@interface TGInstantPageAudioItem : NSObject <TGInstantPageLayoutItem> {
+@interface TGInstantPageAudioItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
     TGDocumentMediaAttachment *_document;
 }
 
@@ -681,20 +677,12 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return TGDistanceThresholdGroupMedia;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)groupCount {
-    if ([groupCount[@(TGDistanceThresholdGroupMedia)] intValue] <= 3) {
-        return CGFLOAT_MAX;
-    } else {
-        return 120.0f;
-    }
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)counts {
+    return OGCompatDistanceThreshold(counts, TGDistanceThresholdGroupMedia, 3, 120.0f);
 }
 
 - (bool)hasLinks {
     return false;
-}
-
-- (NSArray *)medias {
-    return nil;
 }
 
 - (NSArray *)audios {
@@ -707,9 +695,9 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 
 @end
 
-@interface TGInstantPageTextItem : NSObject <TGInstantPageLayoutItem> {
-    @public NSArray *_lines;
+@interface TGInstantPageTextItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
     bool _hasLinks;
+    @public NSArray *_lines;
     NSString *_text;
     NSMutableSet *_rtlStrings;
 }
@@ -722,21 +710,21 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
 
 @implementation TGInstantPageTextItem
 
-- (instancetype)initWithFrame:(CGRect)frame lines:(NSArray *)lines text:(NSString *)text {
+- (instancetype)initWithFrame:(CGRect)frame lines:(NSArray *)textLines text:(NSString *)text {
     self = [super init];
     if (self != nil) {
         _alignment = NSTextAlignmentNatural;
         _frame = frame;
-        _lines = lines;
+        _lines = textLines;
         _text = text;
         
         NSMutableSet *rtlStrings = [[NSMutableSet alloc] init];
         
         NSInteger index = -1;
-        for (TGInstantPageTextLine *line in lines) {
+        for (TGInstantPageTextLine *line in textLines) {
             index++;
             
-            if (line.urlItems != nil) {
+            if (line.linkRuns != nil) {
                 _hasLinks = true;
             }
             CFArrayRef glyphRuns = CTLineGetGlyphRuns(line->_line);
@@ -793,8 +781,8 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
         CGContextSetTextPosition(context, lineOrigin.x, lineOrigin.y + lineFrame.size.height);
         CTLineDraw(line->_line, context);
         
-        if (line.strikethroughItems != nil) {
-            for (TGInstantPageTextStrikethroughItem *item in line.strikethroughItems) {
+        if (line.strikeRuns != nil) {
+            for (TGInstantPageTextStrikethroughItem *item in line.strikeRuns) {
                 CGContextFillRect(context, CGRectMake(item.frame.origin.x, item.frame.origin.y + CGFloor((lineFrame.size.height) / 2.0f + 1.0f), item.frame.size.width, 1.0f));
             }
         }
@@ -811,11 +799,7 @@ static CGFloat spacingBetweenBlocks(TGInstantPageBlock *upper, TGInstantPageBloc
     return true;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
-static TGInstantPageLinkSelectionView *linkSelectionViewFromFrames(NSArray *frames, CGPoint origin, id urlItem) {
+static TGInstantPageLinkSelectionView *OGCompatLinkSelectionViewForRects(NSArray *frames, CGPoint origin, id urlItem) {
     CGRect frame = CGRectMake(0.0f, 0.0f, 0.0f, 0.0f);
     bool first = true;
     for (NSValue *rectValue in frames) {
@@ -840,7 +824,7 @@ static TGInstantPageLinkSelectionView *linkSelectionViewFromFrames(NSArray *fram
     return [[TGInstantPageLinkSelectionView alloc] initWithFrame:CGRectOffset(frame, origin.x, origin.y) rects:adjustedFrames urlItem:urlItem];
 }
 
-static TGInstantPageTextSelectionView *textSelectionViewFromFrames(NSArray *frames, CGPoint origin, NSString *text) {
+static TGInstantPageTextSelectionView *OGCompatTextSelectionViewForRects(NSArray *frames, CGPoint origin, NSString *text) {
     CGRect frame = CGRectMake(0.0f, 0.0f, 0.0f, 0.0f);
     bool first = true;
     for (NSValue *rectValue in frames) {
@@ -892,7 +876,7 @@ static TGInstantPageTextSelectionView *textSelectionViewFromFrames(NSArray *fram
 }
 
 - (TGInstantPageTextSelectionView *)textSelectionView {
-    NSMutableArray *currentTextFrames = [[NSMutableArray alloc] init];
+    NSMutableArray *lineFrames = [NSMutableArray array];
     
     NSInteger index = -1;
     for (TGInstantPageTextLine *line in _lines) {
@@ -907,27 +891,27 @@ static TGInstantPageTextSelectionView *textSelectionViewFromFrames(NSArray *fram
             lineOrigin.x = self.frame.size.width - line.frame.size.width;
         }
 
-        [currentTextFrames addObject:[NSValue valueWithCGRect:CGRectOffset(line.frame, lineOrigin.x, 0.0)]];
+        [lineFrames addObject:[NSValue valueWithCGRect:CGRectOffset(line.frame, lineOrigin.x, 0.0)]];
     }
         
-    return textSelectionViewFromFrames(currentTextFrames, self.frame.origin, _text);
+    return OGCompatTextSelectionViewForRects(lineFrames, self.frame.origin, _text);
 }
 
 - (NSArray *)linkSelectionViews {
     if (_hasLinks) {
         NSMutableArray *views = [[NSMutableArray alloc] init];
-        NSMutableArray *currentLinkFrames = [[NSMutableArray alloc] init];
+        NSMutableArray *currentLinkFrames = [NSMutableArray array];
         id currentUrlItem = nil;
         NSInteger index = -1;
         for (TGInstantPageTextLine *line in _lines) {
             index++;
             
-            if (line.urlItems != nil) {
-                for (TGInstantPageTextUrlItem *urlItem in line.urlItems) {
+            if (line.linkRuns != nil) {
+                for (TGInstantPageTextUrlItem *urlItem in line.linkRuns) {
                     if (currentUrlItem == urlItem.item) {
                     } else {
                         if (currentLinkFrames.count != 0) {
-                            [views addObject:linkSelectionViewFromFrames(currentLinkFrames, self.frame.origin, currentUrlItem)];
+                            [views addObject:OGCompatLinkSelectionViewForRects(currentLinkFrames, self.frame.origin, currentUrlItem)];
                         }
                         [currentLinkFrames removeAllObjects];
                         currentUrlItem = urlItem.item;
@@ -944,14 +928,14 @@ static TGInstantPageTextSelectionView *textSelectionViewFromFrames(NSArray *fram
                 }
             } else if (currentUrlItem != nil) {
                 if (currentLinkFrames.count != 0) {
-                    [views addObject:linkSelectionViewFromFrames(currentLinkFrames, self.frame.origin, currentUrlItem)];
+                    [views addObject:OGCompatLinkSelectionViewForRects(currentLinkFrames, self.frame.origin, currentUrlItem)];
                 }
                 [currentLinkFrames removeAllObjects];
                 currentUrlItem = nil;
             }
         }
         if (currentLinkFrames.count != 0 && currentUrlItem != nil) {
-            [views addObject:linkSelectionViewFromFrames(currentLinkFrames, self.frame.origin, currentUrlItem)];
+            [views addObject:OGCompatLinkSelectionViewForRects(currentLinkFrames, self.frame.origin, currentUrlItem)];
         }
         return views;
     }
@@ -966,7 +950,7 @@ typedef enum {
     TGInstantPageShapeRoundLine
 } TGInstantPageShape;
 
-@interface TGInstantPageShapeItem : NSObject <TGInstantPageLayoutItem>
+@interface TGInstantPageShapeItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem>
 
 @property (nonatomic) CGRect frame;
 @property (nonatomic) CGRect shapeFrame;
@@ -1020,13 +1004,9 @@ typedef enum {
     return false;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
 @end
 
-@interface TGInstantPageFooterButtonItem : NSObject <TGInstantPageLayoutItem> {
+@interface TGInstantPageFooterButtonItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
 }
 
 @property (nonatomic) CGRect frame;
@@ -1061,7 +1041,7 @@ typedef enum {
     return 1000;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)__unused groupCount {
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)__unused counts {
     return 1000.0f;
 }
 
@@ -1069,13 +1049,9 @@ typedef enum {
     return false;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
 @end
 
-@interface TGInstantPageChannelItem : NSObject <TGInstantPageLayoutItem> {
+@interface TGInstantPageChannelItem : OGCompatInstantPageItemBase <TGInstantPageLayoutItem> {
 }
 
 @property (nonatomic) CGRect frame;
@@ -1114,7 +1090,7 @@ typedef enum {
     return 1000;
 }
 
-- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)__unused groupCount {
+- (CGFloat)distanceThresholdWithGroupCount:(NSDictionary *)__unused counts {
     return 1000.0f;
 }
 
@@ -1122,21 +1098,33 @@ typedef enum {
     return false;
 }
 
-- (NSArray *)medias {
-    return nil;
-}
-
 @end
 
+
+static NSArray *OGCompatLineDecorations(NSAttributedString *string, NSString *attributeName, NSRange range, CTLineRef line, id (^make)(id value, CGRect frame)) {
+    __block NSMutableArray *result = nil;
+    [string enumerateAttribute:attributeName inRange:range options:0 usingBlock:^(id value, NSRange span, __unused BOOL *stop) {
+        if (value == nil) {
+            return;
+        }
+        CGFloat lowerX = CGFloor(CTLineGetOffsetForStringIndex(line, span.location, NULL));
+        CGFloat upperX = CGCeil(CTLineGetOffsetForStringIndex(line, span.location + span.length, NULL));
+        if (result == nil) {
+            result = [[NSMutableArray alloc] init];
+        }
+        [result addObject:make(value, CGRectMake(lowerX, 0.0f, upperX - lowerX, 0.0f))];
+    }];
+    return result;
+}
 
 @implementation TGInstantPageLayout
 
 - (instancetype)initWithOrigin:(CGPoint)origin contentSize:(CGSize)contentSize items:(NSArray *)items {
     self = [super init];
     if (self != nil) {
-        _origin = origin;
-        _contentSize = contentSize;
         _items = items;
+        _contentSize = contentSize;
+        _origin = origin;
     }
     return self;
 }
@@ -1245,31 +1233,22 @@ typedef enum {
                     __unused CGFloat trailingWhitespace = (CGFloat)CTLineGetTrailingWhitespaceWidth(line);
                     CGFloat lineWidth = (CGFloat)CTLineGetTypographicBounds(line, NULL, NULL, NULL) + currentLineInset;
                     
-                    __block NSMutableArray *urlItems = nil;
-                    [string enumerateAttribute:(NSString *)TGUrlAttribute inRange:NSMakeRange(lastIndex, lineCharacterCount) options:0 usingBlock:^(id item, NSRange range, __unused BOOL *stop) {
-                        if (item != nil) {
-                            if (urlItems == nil) {
-                                urlItems = [[NSMutableArray alloc] init];
-                            }
-                            CGFloat lowerX = CGFloor(CTLineGetOffsetForStringIndex(line, range.location, NULL));
-                            CGFloat upperX = CGCeil(CTLineGetOffsetForStringIndex(line, range.location + range.length, NULL));
-                            [urlItems addObject:[[TGInstantPageTextUrlItem alloc] initWithFrame:CGRectMake(currentLineOrigin.x + lowerX, currentLineOrigin.y, upperX - lowerX, fontLineHeight) item:item]];
-                        }
-                    }];
+                    NSRange lineRange = NSMakeRange(lastIndex, lineCharacterCount);
+                    CGPoint lineOrigin = currentLineOrigin;
+                    NSArray *urlItems = OGCompatLineDecorations(string, (NSString *)TGUrlAttribute, lineRange, line, ^id(id value, CGRect itemFrame) {
+                        itemFrame.origin.x += lineOrigin.x;
+                        itemFrame.origin.y = lineOrigin.y;
+                        itemFrame.size.height = fontLineHeight;
+                        return [[TGInstantPageTextUrlItem alloc] initWithFrame:itemFrame item:value];
+                    });
+                    NSArray *strikethroughItems = OGCompatLineDecorations(string, NSStrikethroughStyleAttributeName, lineRange, line, ^id(__unused id value, CGRect itemFrame) {
+                        itemFrame.origin.x += lineOrigin.x;
+                        itemFrame.origin.y = lineOrigin.y;
+                        itemFrame.size.height = fontLineHeight;
+                        return [[TGInstantPageTextStrikethroughItem alloc] initWithFrame:itemFrame];
+                    });
                     
-                    __block NSMutableArray *strikethroughItems = nil;
-                    [string enumerateAttribute:NSStrikethroughStyleAttributeName inRange:NSMakeRange(lastIndex, lineCharacterCount) options:0 usingBlock:^(id item, NSRange range, __unused BOOL *stop) {
-                        if (item != nil) {
-                            if (strikethroughItems == nil) {
-                                strikethroughItems = [[NSMutableArray alloc] init];
-                            }
-                            CGFloat lowerX = CGFloor(CTLineGetOffsetForStringIndex(line, range.location, NULL));
-                            CGFloat upperX = CGCeil(CTLineGetOffsetForStringIndex(line, range.location + range.length, NULL));
-                            [strikethroughItems addObject:[[TGInstantPageTextStrikethroughItem alloc] initWithFrame:CGRectMake(currentLineOrigin.x + lowerX, currentLineOrigin.y, upperX - lowerX, fontLineHeight)]];
-                        }
-                    }];
-                    
-                    TGInstantPageTextLine *textLine = [[TGInstantPageTextLine alloc] initWithLine:line frame:CGRectMake(currentLineOrigin.x, currentLineOrigin.y, lineWidth, fontLineHeight) urlItems:urlItems strikethroughItems:strikethroughItems];
+                    TGInstantPageTextLine *textLine = [[TGInstantPageTextLine alloc] initWithLine:line frame:CGRectMake(currentLineOrigin.x, currentLineOrigin.y, lineWidth, fontLineHeight) linkRuns:urlItems strikeRuns:strikethroughItems];
                     CFRelease(line);
                     [lines addObject:textLine];
                     
@@ -1299,7 +1278,7 @@ typedef enum {
     
     CGFloat height = 0.0f;
     if (lines.count != 0) {
-        height = CGRectGetMaxY(((TGInstantPageTextLine *)lines.lastObject).frame);
+        height = CGRectGetMaxY([(TGInstantPageTextLine *)[lines lastObject] frame]);
     }
     
     return [[TGInstantPageTextItem alloc] initWithFrame:CGRectMake(0.0f, 0.0f, boundingWidth, height) lines:lines text:string.string];
@@ -1450,8 +1429,8 @@ typedef enum {
         TGInstantPageBlockList *listBlock = (TGInstantPageBlockList *)block;
         CGSize contentSize = CGSizeMake(boundingWidth, 0.0f);
         CGFloat maxIndexWidth = 0.0f;
-        NSMutableArray *listItems = [[NSMutableArray alloc] init];
-        NSMutableArray *indexItems = [[NSMutableArray alloc] init];
+        NSMutableArray *indexItems = [NSMutableArray array];
+        NSMutableArray *listItems = [NSMutableArray array];
         for (NSUInteger i = 0; i < listBlock.items.count; i++) {
             if (listBlock.ordered) {
                 TGInstantPageStyleStack *styleStack = [[TGInstantPageStyleStack alloc] init];
@@ -1462,7 +1441,7 @@ typedef enum {
                 
                 NSString *label = i < listBlock.indices.count ? listBlock.indices[i] : [NSString stringWithFormat:@"%d.", (int)i + 1];
                 TGInstantPageTextItem *textItem = [self layoutTextItemWithString:[self attributedStringForRichText:[[TGRichTextPlain alloc] initWithText:label] styleStack:styleStack] boundingWidth:boundingWidth - horizontalInset - horizontalInset];
-                maxIndexWidth = MAX(((TGInstantPageTextLine *)textItem->_lines.firstObject).frame.size.width, maxIndexWidth);
+                maxIndexWidth = MAX(maxIndexWidth, [(TGInstantPageTextLine *)[textItem->_lines firstObject] frame].size.width);
                 [indexItems addObject:textItem];
             } else {
                 TGInstantPageShapeItem *shapeItem = [[TGInstantPageShapeItem alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 6.0f, 12.0f) shapeFrame:CGRectMake(0.0f, 3.0f, 6.0f, 6.0f) shape:TGInstantPageShapeEllipse color:presentation.textColor];
@@ -1941,7 +1920,7 @@ typedef enum {
 }
 
 + (TGInstantPageLayout *)makeLayoutForWebPage:(TGWebPageMediaAttachment *)webPage peerId:(int64_t)peerId messageId:(int32_t)messageId boundingWidth:(CGFloat)boundingWidth safeAreaInset:(UIEdgeInsets)safeAreaInset presentation:(TGInstantPagePresentation *)presentation showFeedbackButton:(bool)showFeedbackButton {
-    NSArray *pageBlocks = webPage.instantPage.blocks;
+    NSArray *pageBlocks = [webPage.instantPage blocks];
     
     CGSize contentSize = CGSizeMake(boundingWidth, 0.0f);
     NSMutableArray *items = [[NSMutableArray alloc] init];
@@ -1995,7 +1974,8 @@ typedef enum {
             spacingBetween *= presentation.fontSizeMultiplier;
         
         if (spacingBetween < -FLT_EPSILON) {
-            spacingBetween -= previousLayout.contentSize.height - ((id<TGInstantPageLayoutItem>)previousLayout.items.firstObject).frame.size.height;
+            id<TGInstantPageLayoutItem> leadingItem = previousLayout.items.firstObject;
+            spacingBetween -= previousLayout.contentSize.height - leadingItem.frame.size.height;
         }
         
         TGInstantPageLayout *blockLayout = [self layoutBlock:block boundingWidth:boundingWidth horizontalInset:17.0f + safeAreaInset.left isCover:false previousItems:items fillToWidthAndHeight:false images:images videos:videos documents:documents webPage:webPage peerId:peerId messageId:messageId mediaIndexCounter:&mediaIndexCounter embedIndexCounter:&embedIndexCounter overlay:(spacingBetween < -FLT_EPSILON) presentation:presentation groupedId:0];

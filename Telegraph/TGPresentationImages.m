@@ -7,6 +7,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGWallpaperInfo.h"
 #import "TGTelegraphConversationMessageAssetsSource.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGCheckButtonView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGStickerKeyboardTabPanel.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
 
 @interface TGPresentationImages ()
@@ -1117,6 +1118,20 @@
 {
     return [self imageWithKey:@"stickersSettings" generator:^UIImage *{
         return [TGPresentationAssets stickersSettingsIcon:self.pallete.chatInputButtonColor];
+    }];
+}
+
+- (UIImage *)chatStickersCustomEmojiIcon
+{
+    return [self imageWithKey:@"stickersCustomEmoji" generator:^UIImage *{
+        return [TGPresentationAssets stickersCustomEmojiIcon:self.pallete.chatInputButtonColor];
+    }];
+}
+
+- (UIImage *)chatStickersCreateStickerIcon
+{
+    return [self imageWithKey:@"stickersCreateSticker" generator:^UIImage *{
+        return TGStickerKeyboardCreateStickerIcon(self.pallete.chatInputButtonColor);
     }];
 }
 

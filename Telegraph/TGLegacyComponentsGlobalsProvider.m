@@ -399,7 +399,7 @@ static bool userInteractionIgnoredByProvider = false;
 
 - (bool)useNativeActionSheets
 {
-    return iosMajorVersion() < 7 || [TGPresentation classicIOS6Style];
+    return [TGPresentation interfaceStyle] == TGInterfaceStyleClassic;
 }
 
 - (TGMediaAssetsPallete *)mediaAssetsPallete

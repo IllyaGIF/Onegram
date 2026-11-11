@@ -48,19 +48,22 @@
 #import "TGPresentation.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
 
-@interface TGIOS6PinnedMessagesFilter : TLMessagesFilter
+static const int32_t OGGroupPinnedFilterSignature = 0x1bb00451;
+static const int32_t OGGroupPinnedFilterNoName = -1;
+
+@interface OGGroupPinnedSearchFilter : TLMessagesFilter
 @end
 
-@implementation TGIOS6PinnedMessagesFilter
+@implementation OGGroupPinnedSearchFilter
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x1bb00451;
+    return OGGroupPinnedFilterSignature;
 }
 
 - (int32_t)TLconstructorName
 {
-    return -1;
+    return OGGroupPinnedFilterNoName;
 }
 
 - (void)TLserialize:(NSOutputStream *)__unused os
@@ -68,6 +71,91 @@
 }
 
 @end
+
+static TGMessage *OGGroupPinnedTargetOfServiceMessage(TGMessage *serviceMessage)
+{
+    TGMessage *quoted = nil;
+    bool pinsSomething = false;
+    for (id media in serviceMessage.mediaAttachments)
+    {
+        if ([media isKindOfClass:[TGReplyMessageMediaAttachment class]])
+            quoted = ((TGReplyMessageMediaAttachment *)media).replyMessage;
+        else if ([media isKindOfClass:[TGActionMediaAttachment class]] && ((TGActionMediaAttachment *)media).actionType == TGMessageActionPinnedMessage)
+            pinsSomething = true;
+    }
+    return pinsSomething ? quoted : nil;
+}
+
+static NSComparisonResult OGGroupPinnedNewestFirst(TGMessage *left, TGMessage *right)
+{
+    int32_t leftDate = [left actualDate];
+    int32_t rightDate = [right actualDate];
+    if (leftDate != rightDate)
+        return leftDate > rightDate ? NSOrderedAscending : NSOrderedDescending;
+    return left.mid > right.mid ? NSOrderedAscending : NSOrderedDescending;
+}
+
+static void OGGroupPinnedAppendDistinct(NSMutableArray *destination, NSMutableSet *knownIds, NSArray *source)
+{
+    for (TGMessage *candidate in source)
+    {
+        if (candidate.mid == 0 || [knownIds containsObject:@(candidate.mid)])
+            continue;
+        [knownIds addObject:@(candidate.mid)];
+        [destination addObject:candidate];
+    }
+}
+
+static NSString *OGGroupPinnedMenuLabel(TGMessage *message)
+{
+    NSString *raw = message.text.length != 0 ? message.text : message.caption;
+    NSString *label = [[raw componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" "];
+    while ([label rangeOfString:@"  "].location != NSNotFound)
+        label = [label stringByReplacingOccurrencesOfString:@"  " withString:@" "];
+    label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return label.length == 0 ? TGLocalized(@"Conversation.PinnedMessage") : label;
+}
+
+static NSString *OGGroupPinnedClassicButtonTitle(NSUInteger slot, NSString *label)
+{
+    NSString *numbered = [NSString stringWithFormat:@"%d. %@", (int)slot + 1, label];
+    if (numbered.length <= 24)
+        return numbered;
+    NSRange keep = [numbered rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
+    return [[numbered substringWithRange:keep] stringByAppendingString:@"…"];
+}
+
+static NSString *OGGroupPinnedPageTitle(NSUInteger from, NSUInteger to, bool backward)
+{
+    NSString *format = backward ? @"‹ %d–%d" : @"%d–%d ›";
+    return [NSString stringWithFormat:format, (int)from + 1, (int)to];
+}
+
+static TGMenuSheetButtonItemView *OGGroupPinnedSheetButton(NSString *title, void (^action)(void))
+{
+    return [[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:action];
+}
+
+static NSArray *OGGroupDecodePinnedResult(TLmessages_Messages *result)
+{
+    [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
+    NSMutableArray *decoded = [[NSMutableArray alloc] init];
+    for (TLMessage *messageDesc in result.messages)
+    {
+        TGMessage *decodedMessage = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
+        if (decodedMessage.mid != 0)
+            [decoded addObject:decodedMessage];
+    }
+    return decoded;
+}
+
+static TGMenuSheetController *OGGroupMakeSheet(void)
+{
+    TGMenuSheetController *sheet = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
+    sheet.dismissesByOutsideTap = true;
+    sheet.narrowInLandscape = true;
+    return sheet;
+}
 
 typedef enum {
     TGGroupParticipationStatusMember = 0,
@@ -98,10 +186,10 @@ typedef enum {
     NSArray *_liveLocations;
     id<SDisposable> _liveLocationDisposable;
 
-    NSArray *_pinnedMessages;
-    TGPinnedMessageTitlePanel *_pinnedMessagePanel;
-    id<SDisposable> _pinnedMessagesDisposable;
-    bool _pinnedMessagePanelDismissed;
+    NSArray *_pinnedMessageList;
+    TGPinnedMessageTitlePanel *_pinnedBanner;
+    id<SDisposable> _pinnedFetchDisposable;
+    bool _pinnedBannerDismissed;
     
     TGModernConversationTitlePanel *_primaryPanel;
 }
@@ -119,7 +207,7 @@ typedef enum {
         [_panelVariable set:[SSignal single:nil]];
         
         _conversation = conversation;
-        _pinnedMessages = @[];
+        _pinnedMessageList = @[];
         _hasBots = [self conversationHasBots:conversation hasSingleBot:&_hasSingleBot];
         self.viewContext.commandsEnabled = _hasBots;
         _initialUserActivities = userActivities;
@@ -153,7 +241,7 @@ typedef enum {
 {
     [self.actionHandle reset];
     [_liveLocationDisposable dispose];
-    [_pinnedMessagesDisposable dispose];
+    [_pinnedFetchDisposable dispose];
 }
 
 - (SSignal *)primaryTitlePanel
@@ -161,268 +249,179 @@ typedef enum {
     return _panelVariable.signal;
 }
 
-- (TGMessage *)_pinnedMessageFromServiceMessage:(TGMessage *)message
+- (void)og_presentSheet:(TGMenuSheetController *)sheet anchoredAt:(UIView *)anchor
 {
-    bool isPinnedMessageAction = false;
-    TGMessage *replyMessage = nil;
-    
-    for (id attachment in message.mediaAttachments)
+    __weak TGGroupModernConversationCompanion *weakOwner = self;
+    __weak UIView *weakAnchor = anchor;
+    sheet.sourceRect = ^CGRect
     {
-        if ([attachment isKindOfClass:[TGActionMediaAttachment class]] && ((TGActionMediaAttachment *)attachment).actionType == TGMessageActionPinnedMessage)
-            isPinnedMessageAction = true;
-        else if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
-            replyMessage = ((TGReplyMessageMediaAttachment *)attachment).replyMessage;
-    }
-    
-    return isPinnedMessageAction ? replyMessage : nil;
+        TGGroupModernConversationCompanion *owner = weakOwner;
+        UIView *anchorView = weakAnchor;
+        if (owner == nil || anchorView == nil)
+            return CGRectZero;
+        return [anchorView convertRect:anchorView.bounds toView:owner.controller.view];
+    };
+    sheet.permittedArrowDirections = UIPopoverArrowDirectionUp;
+    [sheet presentInViewController:self.controller sourceView:self.controller.view animated:true];
 }
 
-- (NSArray *)_pinnedMessagesFromMessages:(NSArray *)messages
+- (NSArray *)og_latestPinnedFromMessages:(NSArray *)messages
 {
-    NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *message1, TGMessage *message2)
+    NSArray *newestFirst = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *left, TGMessage *right)
     {
-        int32_t date1 = [message1 actualDate];
-        int32_t date2 = [message2 actualDate];
-        if (date1 == date2)
-            return message1.mid > message2.mid ? NSOrderedAscending : NSOrderedDescending;
-        return date1 > date2 ? NSOrderedAscending : NSOrderedDescending;
+        return OGGroupPinnedNewestFirst(left, right);
     }];
     
-    NSMutableArray *result = [[NSMutableArray alloc] init];
-    for (TGMessage *message in sortedMessages)
+    for (TGMessage *candidate in newestFirst)
     {
-        TGMessage *pinnedMessage = [self _pinnedMessageFromServiceMessage:message];
-        if (pinnedMessage != nil && pinnedMessage.mid != 0)
-        {
-            [result addObject:pinnedMessage];
-            break;
-        }
+        TGMessage *target = OGGroupPinnedTargetOfServiceMessage(candidate);
+        if (target != nil && target.mid != 0)
+            return @[target];
     }
-    return result;
+    return @[];
 }
 
-- (void)_mergePinnedMessages:(NSArray *)messages
+- (void)og_applyPinnedMessages:(NSArray *)updated
+{
+    int32_t formerLeadId = ((TGMessage *)_pinnedMessageList.firstObject).mid;
+    _pinnedMessageList = updated;
+    if (((TGMessage *)_pinnedMessageList.firstObject).mid != formerLeadId)
+        _pinnedBannerDismissed = false;
+    [self _updateLiveLocationsPanel];
+}
+
+- (void)og_foldPinnedMessages:(NSArray *)messages
 {
     if (messages.count == 0)
         return;
     
     TGDispatchOnMainThread(^
     {
-        int32_t previousFirstMessageId = ((TGMessage *)_pinnedMessages.firstObject).mid;
-        NSMutableArray *mergedMessages = [[NSMutableArray alloc] init];
-        NSMutableSet *messageIds = [[NSMutableSet alloc] init];
-        
-        for (TGMessage *message in messages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [mergedMessages addObject:message];
-            }
-        }
-        for (TGMessage *message in _pinnedMessages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [mergedMessages addObject:message];
-            }
-        }
-        
-        _pinnedMessages = mergedMessages;
-        if (((TGMessage *)_pinnedMessages.firstObject).mid != previousFirstMessageId)
-            _pinnedMessagePanelDismissed = false;
-        [self _updateLiveLocationsPanel];
+        NSMutableArray *folded = [[NSMutableArray alloc] init];
+        NSMutableSet *knownIds = [[NSMutableSet alloc] init];
+        OGGroupPinnedAppendDistinct(folded, knownIds, messages);
+        OGGroupPinnedAppendDistinct(folded, knownIds, _pinnedMessageList);
+        [self og_applyPinnedMessages:folded];
     });
 }
 
-- (void)_replacePinnedMessagesFromServer:(NSArray *)messages
+- (void)og_adoptServerPinnedMessages:(NSArray *)messages
 {
     TGDispatchOnMainThread(^
     {
-        int32_t previousFirstMessageId = ((TGMessage *)_pinnedMessages.firstObject).mid;
-        TGMessage *preferredMessage = _pinnedMessages.firstObject;
-        NSMutableArray *result = [[NSMutableArray alloc] init];
-        NSMutableSet *messageIds = [[NSMutableSet alloc] init];
+        TGMessage *current = _pinnedMessageList.firstObject;
+        NSMutableArray *adopted = [[NSMutableArray alloc] init];
+        NSMutableSet *knownIds = [[NSMutableSet alloc] init];
         
-        if (preferredMessage != nil)
+        for (TGMessage *candidate in (current != nil ? messages : @[]))
         {
-            for (TGMessage *message in messages)
+            if (candidate.mid == current.mid)
             {
-                if (message.mid == preferredMessage.mid)
-                {
-                    [result addObject:message];
-                    [messageIds addObject:@(message.mid)];
-                    break;
-                }
+                [adopted addObject:candidate];
+                [knownIds addObject:@(candidate.mid)];
+                break;
             }
         }
-        for (TGMessage *message in messages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [result addObject:message];
-            }
-        }
-        
-        _pinnedMessages = result;
-        if (((TGMessage *)_pinnedMessages.firstObject).mid != previousFirstMessageId)
-            _pinnedMessagePanelDismissed = false;
-        [self _updateLiveLocationsPanel];
+        OGGroupPinnedAppendDistinct(adopted, knownIds, messages);
+        [self og_applyPinnedMessages:adopted];
     });
 }
 
-- (NSString *)_menuTitleForPinnedMessage:(TGMessage *)message
+- (void)og_jumpToPinnedMessage:(TGMessage *)message
 {
-    NSString *text = message.text.length != 0 ? message.text : message.caption;
-    text = [[text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" "];
-    while ([text rangeOfString:@"  "].location != NSNotFound)
-        text = [text stringByReplacingOccurrencesOfString:@"  " withString:@" "];
-    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (text.length == 0)
-        text = TGLocalized(@"Conversation.PinnedMessage");
-    return text;
+    int32_t targetId = message.mid;
+    if (targetId == 0)
+        return;
+    [self navigateToMessageId:targetId scrollBackMessageId:0 forceUnseenMention:false animated:true];
 }
 
-- (void)_navigateToPinnedMessage:(TGMessage *)message
+- (void)og_fillPinnedSheet:(TGMenuSheetController *)sheet fromOffset:(NSUInteger)offset animated:(bool)animated
 {
-    if (message.mid != 0)
-        [self navigateToMessageId:message.mid scrollBackMessageId:0 forceUnseenMention:false animated:true];
-}
-
-- (void)_setPinnedMessagesMenuItemsForController:(TGMenuSheetController *)controller offset:(NSUInteger)offset animated:(bool)animated
-{
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    const NSUInteger pageSize = classicIOS6Style ? 5 : 8;
-    NSUInteger messageCount = _pinnedMessages.count;
-    if (messageCount == 0)
+    bool classicSheet = [TGPresentation classicThemeStyle];
+    const NSUInteger perPage = classicSheet ? 5 : 8;
+    NSUInteger total = _pinnedMessageList.count;
+    if (total == 0)
     {
-        [controller dismissAnimated:true];
+        [sheet dismissAnimated:true];
         return;
     }
-
-    NSUInteger maximumOffset = ((messageCount - 1) / pageSize) * pageSize;
-    offset = MIN(offset, maximumOffset);
-    NSUInteger endIndex = MIN(offset + pageSize, messageCount);
-
-    NSMutableArray *items = [[NSMutableArray alloc] init];
-    if (!classicIOS6Style)
-        [items addObject:[[TGPinnedMessagesMenuHeaderItemView alloc] initWithMessageCount:messageCount]];
-
-    __weak TGGroupModernConversationCompanion *weakSelf = self;
-    __weak TGMenuSheetController *weakController = controller;
-    for (NSUInteger index = offset; index < endIndex; index++)
+    
+    NSUInteger firstShown = MIN(offset, ((total - 1) / perPage) * perPage);
+    NSUInteger pastLast = MIN(firstShown + perPage, total);
+    
+    __weak TGGroupModernConversationCompanion *weakOwner = self;
+    __weak TGMenuSheetController *weakSheet = sheet;
+    void (^openPage)(NSUInteger) = ^(NSUInteger target)
     {
-        TGMessage *message = _pinnedMessages[index];
-        NSString *title = [self _menuTitleForPinnedMessage:message];
-        void (^action)(void) = ^
+        [weakOwner og_fillPinnedSheet:weakSheet fromOffset:target animated:true];
+    };
+    
+    NSMutableArray *rows = [[NSMutableArray alloc] init];
+    if (!classicSheet)
+        [rows addObject:[[TGPinnedMessagesMenuHeaderItemView alloc] initWithMessageCount:total]];
+    
+    for (NSUInteger slot = firstShown; slot < pastLast; slot++)
+    {
+        TGMessage *pinned = _pinnedMessageList[slot];
+        NSString *label = OGGroupPinnedMenuLabel(pinned);
+        void (^choose)(void) = ^
         {
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongController dismissAnimated:true];
-            __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-            [strongSelf _navigateToPinnedMessage:message];
+            [weakSheet dismissAnimated:true];
+            [weakOwner og_jumpToPinnedMessage:pinned];
         };
-
-        if (classicIOS6Style)
-        {
-            NSString *buttonTitle = [NSString stringWithFormat:@"%d. %@", (int)index + 1, title];
-            if (buttonTitle.length > 24)
-            {
-                NSRange range = [buttonTitle rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
-                buttonTitle = [[buttonTitle substringWithRange:range] stringByAppendingString:@"\u2026"];
-            }
-            [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:buttonTitle type:TGMenuSheetButtonTypeDefault action:action]];
-        }
+        
+        if (classicSheet)
+            [rows addObject:OGGroupPinnedSheetButton(OGGroupPinnedClassicButtonTitle(slot, label), choose)];
         else
-        {
-            [items addObject:[[TGPinnedMessageMenuItemView alloc] initWithTitle:title index:index action:action]];
-        }
+            [rows addObject:[[TGPinnedMessageMenuItemView alloc] initWithTitle:label index:slot action:choose]];
     }
-
-    if (offset > 0)
+    
+    if (firstShown > 0)
     {
-        NSUInteger previousOffset = offset >= pageSize ? offset - pageSize : 0;
-        NSUInteger previousEnd = MIN(previousOffset + pageSize, messageCount);
-        NSString *title = [NSString stringWithFormat:@"\u2039 %d\u2013%d", (int)previousOffset + 1, (int)previousEnd];
-        [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:^
-        {
-            __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongSelf _setPinnedMessagesMenuItemsForController:strongController offset:previousOffset animated:true];
-        }]];
+        NSUInteger backStart = firstShown >= perPage ? firstShown - perPage : 0;
+        NSUInteger backEnd = MIN(backStart + perPage, total);
+        [rows addObject:OGGroupPinnedSheetButton(OGGroupPinnedPageTitle(backStart, backEnd, true), ^{ openPage(backStart); })];
     }
-
-    if (endIndex < messageCount)
+    
+    if (pastLast < total)
     {
-        NSUInteger nextOffset = endIndex;
-        NSUInteger nextEnd = MIN(nextOffset + pageSize, messageCount);
-        NSString *title = [NSString stringWithFormat:@"%d\u2013%d \u203a", (int)nextOffset + 1, (int)nextEnd];
-        [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:^
-        {
-            __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongSelf _setPinnedMessagesMenuItemsForController:strongController offset:nextOffset animated:true];
-        }]];
+        NSUInteger forwardEnd = MIN(pastLast + perPage, total);
+        [rows addObject:OGGroupPinnedSheetButton(OGGroupPinnedPageTitle(pastLast, forwardEnd, false), ^{ openPage(pastLast); })];
     }
-
+    
     if (animated)
-        [controller setItemViews:items animated:true];
+        [sheet setItemViews:rows animated:true];
     else
-        [controller setItemViews:items];
+        [sheet setItemViews:rows];
 }
 
-- (void)_presentPinnedMessagesMenuFromPanel:(TGPinnedMessageTitlePanel *)panel
+- (void)og_showPinnedSheetFromPanel:(TGPinnedMessageTitlePanel *)panel
 {
-    if (_pinnedMessages.count == 0)
+    if (_pinnedMessageList.count == 0)
         return;
     
     [self.controller endEditing];
-    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-    controller.dismissesByOutsideTap = true;
-    controller.narrowInLandscape = true;
-    controller.maxHeight = MIN(420.0f, self.controller.view.bounds.size.height - 44.0f);
-
-    __weak TGGroupModernConversationCompanion *weakSelf = self;
-    [self _setPinnedMessagesMenuItemsForController:controller offset:0 animated:false];
-    __weak TGPinnedMessageTitlePanel *weakPanel = panel;
-    controller.sourceRect = ^CGRect
-    {
-        __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-        __strong TGPinnedMessageTitlePanel *strongPanel = weakPanel;
-        if (strongSelf == nil || strongPanel == nil)
-            return CGRectZero;
-        return [strongPanel convertRect:strongPanel.bounds toView:strongSelf.controller.view];
-    };
-    controller.permittedArrowDirections = UIPopoverArrowDirectionUp;
-    [controller presentInViewController:self.controller sourceView:self.controller.view animated:true];
+    TGMenuSheetController *sheet = OGGroupMakeSheet();
+    sheet.maxHeight = MIN(420.0f, self.controller.view.bounds.size.height - 44.0f);
+    [self og_fillPinnedSheet:sheet fromOffset:0 animated:false];
+    [self og_presentSheet:sheet anchoredAt:panel];
 }
 
 - (SSignal *)_requestPinnedMessages
 {
-    TLRPCmessages_search *search = [[TLRPCmessages_search alloc] init];
-    search.peer = [TGTelegraphInstance createInputPeerForConversation:_conversationId accessHash:_conversation.accessHash];
-    search.q = @"";
-    search.filter = [[TGIOS6PinnedMessagesFilter alloc] init];
-    search.min_date = 0;
-    search.max_date = 0;
-    search.offset = 0;
-    search.max_id = 0;
-    search.limit = 50;
-    search.flags = 0;
+    TLRPCmessages_search *query = [[TLRPCmessages_search alloc] init];
+    query.peer = [TGTelegraphInstance createInputPeerForConversation:_conversationId accessHash:_conversation.accessHash];
+    query.q = @"";
+    query.filter = [[OGGroupPinnedSearchFilter alloc] init];
+    query.min_date = query.max_date = 0;
+    query.offset = query.max_id = 0;
+    query.limit = 50;
+    query.flags = 0;
     
     int64_t peerId = _conversationId;
-    return [[[[TGTelegramNetworking instance] requestSignal:search] map:^id(TLmessages_Messages *result)
+    return [[[[TGTelegramNetworking instance] requestSignal:query] map:^id(TLmessages_Messages *result)
     {
-        [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-        NSMutableArray *messages = [[NSMutableArray alloc] init];
-        for (TLMessage *messageDesc in result.messages)
-        {
-            TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
-            if (message.mid != 0)
-                [messages addObject:message];
-        }
-        return messages;
+        return OGGroupDecodePinnedResult(result);
     }] catch:^SSignal *(id error)
     {
         TGLog(@"TRACE pinned.search.error peer=%lld filter=inputMessagesFilterPinned error=%@", peerId, error);
@@ -430,27 +429,60 @@ typedef enum {
     }];
 }
 
-- (void)_refreshPinnedMessages
+- (void)og_reloadPinnedMessages
 {
-    [_pinnedMessagesDisposable dispose];
-    __weak TGGroupModernConversationCompanion *weakSelf = self;
-    _pinnedMessagesDisposable = [[[self _requestPinnedMessages] deliverOn:[SQueue mainQueue]] startWithNext:^(id next)
+    [_pinnedFetchDisposable dispose];
+    __weak TGGroupModernConversationCompanion *weakOwner = self;
+    _pinnedFetchDisposable = [[[self _requestPinnedMessages] deliverOn:[SQueue mainQueue]] startWithNext:^(id payload)
     {
-        __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-        if (strongSelf != nil && [next isKindOfClass:[NSArray class]])
-            [strongSelf _replacePinnedMessagesFromServer:next];
+        TGGroupModernConversationCompanion *owner = weakOwner;
+        if (owner != nil && [payload isKindOfClass:[NSArray class]])
+            [owner og_adoptServerPinnedMessages:payload];
     }];
 }
 
-- (void)_updatePinnedMessagesFromConversationItems
+- (void)og_collectPinnedFromVisibleItems
 {
-    NSMutableArray *messages = [[NSMutableArray alloc] init];
-    for (TGMessageModernConversationItem *item in [self.controller _items])
+    NSMutableArray *visible = [[NSMutableArray alloc] init];
+    for (TGMessageModernConversationItem *entry in [self.controller _items])
     {
-        if ([item isKindOfClass:[TGMessageModernConversationItem class]])
-            [messages addObject:item->_message];
+        if ([entry isKindOfClass:[TGMessageModernConversationItem class]])
+            [visible addObject:entry->_message];
     }
-    [self _mergePinnedMessages:[self _pinnedMessagesFromMessages:messages]];
+    [self og_foldPinnedMessages:[self og_latestPinnedFromMessages:visible]];
+}
+
+- (TGPinnedMessageTitlePanel *)og_bannerForPinnedMessage:(TGMessage *)message
+{
+    if (_pinnedBanner.message.mid != message.mid)
+    {
+        TGPinnedMessageTitlePanel *banner = [[TGPinnedMessageTitlePanel alloc] initWithMessage:message];
+        __weak TGGroupModernConversationCompanion *weakOwner = self;
+        __weak TGPinnedMessageTitlePanel *weakBanner = banner;
+        banner.tapped = ^
+        {
+            TGGroupModernConversationCompanion *owner = weakOwner;
+            if (owner == nil)
+                return;
+            if (owner->_pinnedMessageList.count > 1)
+                [owner og_showPinnedSheetFromPanel:weakBanner];
+            else
+                [owner og_jumpToPinnedMessage:owner->_pinnedMessageList.firstObject];
+        };
+        banner.dismiss = ^
+        {
+            TGGroupModernConversationCompanion *owner = weakOwner;
+            if (owner == nil)
+                return;
+            owner->_pinnedBannerDismissed = true;
+            [owner _updateLiveLocationsPanel];
+        };
+        _pinnedBanner = banner;
+    }
+    else
+        [_pinnedBanner updateMessage:message];
+    [_pinnedBanner setMessageCount:_pinnedMessageList.count];
+    return _pinnedBanner;
 }
 
 - (void)_updateLiveLocationsPanel
@@ -459,43 +491,8 @@ typedef enum {
     {
         if (_liveLocations.count == 0)
         {
-            TGModernConversationTitlePanel *panel = nil;
-            TGMessage *message = _pinnedMessages.firstObject;
-            if (message != nil && !_pinnedMessagePanelDismissed)
-            {
-                if (_pinnedMessagePanel.message.mid != message.mid)
-                {
-                    _pinnedMessagePanel = [[TGPinnedMessageTitlePanel alloc] initWithMessage:message];
-                    __weak TGGroupModernConversationCompanion *weakSelf = self;
-                    __weak TGPinnedMessageTitlePanel *weakPanel = _pinnedMessagePanel;
-                    _pinnedMessagePanel.tapped = ^
-                    {
-                        __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-                        __strong TGPinnedMessageTitlePanel *strongPanel = weakPanel;
-                        if (strongSelf == nil)
-                            return;
-                        if (strongSelf->_pinnedMessages.count > 1)
-                            [strongSelf _presentPinnedMessagesMenuFromPanel:strongPanel];
-                        else
-                            [strongSelf _navigateToPinnedMessage:strongSelf->_pinnedMessages.firstObject];
-                    };
-                    _pinnedMessagePanel.dismiss = ^
-                    {
-                        __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-                        if (strongSelf != nil)
-                        {
-                            strongSelf->_pinnedMessagePanelDismissed = true;
-                            [strongSelf _updateLiveLocationsPanel];
-                        }
-                    };
-                }
-                else
-                {
-                    [_pinnedMessagePanel updateMessage:message];
-                }
-                [_pinnedMessagePanel setMessageCount:_pinnedMessages.count];
-                panel = _pinnedMessagePanel;
-            }
+            TGMessage *leadMessage = _pinnedMessageList.firstObject;
+            TGModernConversationTitlePanel *panel = (leadMessage != nil && !_pinnedBannerDismissed) ? [self og_bannerForPinnedMessage:leadMessage] : nil;
             _primaryPanel = panel;
             [_panelVariable set:[SSignal single:panel]];
             return;
@@ -544,45 +541,24 @@ typedef enum {
                     
                     [strongSelf.controller endEditing];
                     
-                    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-                    controller.dismissesByOutsideTap = true;
-                    controller.narrowInLandscape = true;
-                    
-                    __weak TGMenuSheetController *weakController = controller;
-                    NSArray *items = @
-                    [
-                     [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Map.StopLiveLocation") type:TGMenuSheetButtonTypeDestructive action:^
-                      {
-                        __strong TGMenuSheetController *strongController = weakController;
-                        if (strongController == nil)
+                    TGMenuSheetController *sheet = OGGroupMakeSheet();
+                    __weak TGMenuSheetController *weakSheet = sheet;
+                    TGMenuSheetButtonItemView *stopButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Map.StopLiveLocation") type:TGMenuSheetButtonTypeDestructive action:^
+                    {
+                        TGMenuSheetController *openSheet = weakSheet;
+                        if (openSheet == nil)
                             return;
                         
-                        [strongController dismissAnimated:true];
+                        [openSheet dismissAnimated:true];
                         [TGTelegraphInstance.liveLocationManager stopWithPeerId:strongSelf.conversationId];
-                      }],
-                     [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
-                      {
-                        __strong TGMenuSheetController *strongController = weakController;
-                        if (strongController != nil)
-                            [strongController dismissAnimated:true];
-                      }]
-                     ];
-                    
-                    [controller setItemViews:items];
-                    controller.sourceRect = ^CGRect
+                    }];
+                    TGMenuSheetButtonItemView *cancelButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
                     {
-                        __strong TGGroupModernConversationCompanion *strongSelf = weakSelf;
-                        if (strongSelf == nil)
-                            return CGRectZero;
-                        
-                        __strong TGLiveLocationTitlePanel *strongPanel = weakPanel;
-                        if (strongPanel == nil)
-                            return CGRectZero;
-                        
-                        return [strongPanel convertRect:strongPanel.bounds toView:strongSelf.controller.view];
-                    };
-                    controller.permittedArrowDirections = UIPopoverArrowDirectionUp;
-                    [controller presentInViewController:strongSelf.controller sourceView:strongSelf.controller.view animated:true];
+                        [weakSheet dismissAnimated:true];
+                    }];
+                    
+                    [sheet setItemViews:@[stopButton, cancelButton]];
+                    [strongSelf og_presentSheet:sheet anchoredAt:weakPanel];
                 };
             }
             else
@@ -766,8 +742,8 @@ typedef enum {
 - (void)_controllerDidAppear:(bool)firstTime
 {
     [super _controllerDidAppear:firstTime];
-    [self _updatePinnedMessagesFromConversationItems];
-    [self _refreshPinnedMessages];
+    [self og_collectPinnedFromVisibleItems];
+    [self og_reloadPinnedMessages];
     
     if (firstTime)
     {
@@ -1077,14 +1053,14 @@ typedef enum {
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]])
     {
         TGDispatchOnMainThread(^{
-            [self _refreshPinnedMessages];
+            [self og_reloadPinnedMessages];
         });
     }
 
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messages", _conversationId]])
     {
         NSArray *messages = ((SGraphObjectNode *)resource).object;
-        [self _mergePinnedMessages:[self _pinnedMessagesFromMessages:messages]];
+        [self og_foldPinnedMessages:[self og_latestPinnedFromMessages:messages]];
     }
     
     if ([path isEqualToString:@"/tg/userdatachanges"] || [path isEqualToString:@"/tg/userpresencechanges"])
@@ -1245,6 +1221,11 @@ typedef enum {
 }
 
 - (bool)allowReplies
+{
+    return true;
+}
+
+- (bool)allowPollSending
 {
     return true;
 }

@@ -11,12 +11,12 @@
 #import "STPDispatchFunctions.h"
 
 
-@interface STPPromise()
+@interface STPPromise OG_COMPAT_TYPE_PARAMETERS(T)()
 
-@property(atomic)id value;
+@property(atomic)OG_COMPAT_TYPE_PARAMETER(T, id) value;
 @property(atomic)NSError *error;
-@property(atomic)NSArray *successCallbacks;
-@property(atomic)NSArray *errorCallbacks;
+@property(atomic)OG_COMPAT_GENERIC(NSArray, STPPromiseValueBlock) *successCallbacks;
+@property(atomic)OG_COMPAT_GENERIC(NSArray, STPPromiseErrorBlock) *errorCallbacks;
 
 @end
 
@@ -80,7 +80,7 @@
     [[promise onSuccess:^(id value) {
         STRONG(self);
         [self succeed:value];
-    }] onFailure:^(NSError * error) {
+    }] onFailure:^(NSError * _Nonnull error) {
         STRONG(self);
         [self fail:error];
     }];
@@ -109,15 +109,15 @@
 }
 
 - (instancetype)onCompletion:(STPPromiseCompletionBlock)callback {
-    return [[self onSuccess:^(id value) {
+    return [[self onSuccess:^(id  _Nonnull value) {
         callback(value, nil);
-    }] onFailure:^(NSError * error) {
+    }] onFailure:^(NSError * _Nonnull error) {
         callback(nil, error);
     }];
 }
 
-- (STPPromise *)map:(STPPromiseMapBlock)callback {
-    STPPromise* wrapper = [self.class new];
+- (OG_COMPAT_GENERIC(STPPromise, id) *)map:(STPPromiseMapBlock)callback {
+    OG_COMPAT_GENERIC(STPPromise, id)* wrapper = [self.class new];
     [[self onSuccess:^(id value) {
         [wrapper succeed:callback(value)];
     }] onFailure:^(NSError *error) {
@@ -128,7 +128,7 @@
 
 
 - (STPPromise *)flatMap:(STPPromiseFlatMapBlock)callback {
-    STPPromise* wrapper = [self.class new];
+    OG_COMPAT_GENERIC(STPPromise, id)* wrapper = [self.class new];
     [[self onSuccess:^(id value) {
         STPPromise *internal = callback(value);
         [[internal onSuccess:^(id internalValue) {
@@ -146,7 +146,7 @@
     STPVoidPromise *voidPromise = [STPVoidPromise new];
     [[self onSuccess:^(__unused id value) {
         [voidPromise succeed];
-    }] onFailure:^(NSError * error) {
+    }] onFailure:^(NSError * _Nonnull error) {
         [voidPromise fail:error];
     }];
     return voidPromise;
@@ -179,7 +179,7 @@
     }];
 }
 
-- (STPPromise *)voidFlatMap:(STPVoidPromiseFlatMapBlock)block {
+- (OG_COMPAT_GENERIC(STPPromise, id) *)voidFlatMap:(STPVoidPromiseFlatMapBlock)block {
     return [super flatMap:^STPPromise *(__unused id value) {
         return block();
     }];

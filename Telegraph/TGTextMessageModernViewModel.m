@@ -26,6 +26,8 @@
 #import "TGWebpageFooterModel.h"
 
 #import "TGPresentation.h"
+#import "TGCustomEmojiTextAttributes.h"
+#import "TGRichMessageInlineImageStore.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
 static NSString *const TGTextMessageModernViewModelSpoilersKey = @"spoilers";
@@ -46,6 +48,8 @@ static NSString *const TGTextMessageModernViewModelSpoilersKey = @"spoilers";
     bool _isInvoice;
     int64_t _peerId;
     bool _spoilersRevealed;
+    NSArray *_customEmojiEntities;
+    NSSet *_customEmojiImageKeys;
 }
 
 @end
@@ -62,7 +66,7 @@ static CTFontRef textFontForSize(CGFloat size)
         {
             if (brandedFont != NULL)
                 CFRelease(brandedFont);
-            brandedFont = TGIos6CreateCTFontFromUIFont([[TGPresentation brandedIOS6ConversationAppearance].messageFont fontWithSize:size]);
+            brandedFont = OGCompatCreateCTFont([[TGPresentation brandedIOS6ConversationAppearance].messageFont fontWithSize:size]);
             brandedSize = (int)size;
         }
         return brandedFont;
@@ -114,6 +118,8 @@ static CTFontRef textFontForSize(CGFloat size)
         }
         if (message.isBroadcast)
             _textModel.additionalTrailingWidth += 10.0f;
+        _customEmojiEntities = hasGame ? nil : TGCustomEmojiEntities(message.entities);
+        [self updateCustomEmojiAttributes];
         [_contentModel addSubmodel:_textModel];
 
         if ([authorPeer isKindOfClass:[TGUser class]]) {
@@ -122,6 +128,32 @@ static CTFontRef textFontForSize(CGFloat size)
         }
     }
     return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGRichMessageInlineImageLoadedNotification object:nil];
+}
+
+- (void)updateCustomEmojiAttributes
+{
+    NSMutableSet *imageKeys = [[NSMutableSet alloc] init];
+    _textModel.additionalAttributes = TGCustomEmojiAdditionalAttributes(_text, _customEmojiEntities, _textModel.font, imageKeys);
+    bool observing = _customEmojiImageKeys.count != 0;
+    _customEmojiImageKeys = imageKeys.count != 0 ? imageKeys : nil;
+    if (_customEmojiImageKeys != nil && !observing)
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(customEmojiImageLoaded:) name:TGRichMessageInlineImageLoadedNotification object:nil];
+    else if (_customEmojiImageKeys == nil && observing)
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:TGRichMessageInlineImageLoadedNotification object:nil];
+}
+
+- (void)customEmojiImageLoaded:(NSNotification *)notification
+{
+    NSString *key = notification.userInfo[@"key"];
+    if (key == nil || ![_customEmojiImageKeys containsObject:key])
+        return;
+    [_contentModel setNeedsSubmodelContentsUpdate];
+    [_contentModel updateSubmodelContentsIfNeeded];
 }
 
 - (bool)storedSpoilersRevealed
@@ -140,6 +172,8 @@ static CTFontRef textFontForSize(CGFloat size)
 - (void)refreshMetrics
 {
     [_textModel setFont:textFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize)];
+    if (_customEmojiEntities.count != 0)
+        [self updateCustomEmojiAttributes];
 }
 
 - (void)updateSearchText:(bool)animated
@@ -968,6 +1002,13 @@ static CTFontRef textFontForSize(CGFloat size)
         forceUpdateText = true;
     }
     
+    NSArray *updatedCustomEmojiEntities = hasGame ? nil : TGCustomEmojiEntities(message.entities);
+    bool customEmojiChanged = !(updatedCustomEmojiEntities == _customEmojiEntities || [updatedCustomEmojiEntities isEqualToArray:_customEmojiEntities]);
+    if (customEmojiChanged) {
+        _customEmojiEntities = updatedCustomEmojiEntities;
+        forceUpdateText = true;
+    }
+    
     if (!TGStringCompare(updatedText, _text) || forceUpdateText || _isGame != hasGame || _isInvoice != hasInvoice) {
         _text = updatedText;
         _isGame = hasGame;
@@ -975,6 +1016,7 @@ static CTFontRef textFontForSize(CGFloat size)
         _textModel.text = @"";
         _textModel.text = _text;
         _textModel.textCheckingResults = updatedTextCheckingResults;
+        [self updateCustomEmojiAttributes];
         [_contentModel setNeedsSubmodelContentsUpdate];
         *sizeUpdated = true;
 

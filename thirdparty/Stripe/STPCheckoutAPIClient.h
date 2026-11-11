@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPCheckoutAPIVerification.h"
 #import "STPCheckoutAccount.h"
 #import "STPCheckoutAccountLookup.h"
@@ -24,16 +25,16 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithPublishableKey:(NSString *)publishableKey;
 
-- (STPPromise *)lookupEmail:(NSString *)email;
+- (OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccountLookup *) *)lookupEmail:(NSString *)email;
 
-- (STPPromise *)sendSMSToAccountWithEmail:(NSString *)email;
+- (OG_COMPAT_GENERIC(STPPromise, STPCheckoutAPIVerification *) *)sendSMSToAccountWithEmail:(NSString *)email;
 
-- (STPPromise *)submitSMSCode:(NSString *)code
+- (OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount *) *)submitSMSCode:(NSString *)code
                                     forVerification:(STPCheckoutAPIVerification *)verification;
 
-- (STPPromise *)createTokenWithAccount:(STPCheckoutAccount *)account;
+- (OG_COMPAT_GENERIC(STPPromise, STPToken *) *)createTokenWithAccount:(STPCheckoutAccount *)account;
 
-- (STPPromise *)createAccountWithCardParams:(STPCardParams *)cardParams
+- (OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount *) *)createAccountWithCardParams:(STPCardParams *)cardParams
                                                             email:(NSString *)email
                                                             phone:(NSString *)phone;
 

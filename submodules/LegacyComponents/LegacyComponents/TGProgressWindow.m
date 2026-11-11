@@ -51,9 +51,7 @@ static bool TGProgressWindowIsLight = true;
     
     if (iosMajorVersion() >= 9)
     {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
         _effectView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
         _effectView.frame = _containerView.bounds;
         [_containerView addSubview:_effectView];
         

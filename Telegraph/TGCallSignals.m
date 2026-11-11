@@ -19,14 +19,37 @@
 #import "TLRPCphone_sendSignalingData.h"
 
 const int32_t TGCallMinLayer = 65;
-const int32_t TGCallMaxLayer = 92;
-const int32_t TGCallLegacyMaxLayer = 92;
+#define OG_COMPAT_CALL_MAX_LAYER 92
+
+const int32_t TGCallMaxLayer = OG_COMPAT_CALL_MAX_LAYER;
+const int32_t TGCallLegacyMaxLayer = OG_COMPAT_CALL_MAX_LAYER;
 
 @interface OngoingCallThreadLocalContextWebrtc : NSObject
 
 + (NSArray *)versionsWithIncludeReference:(bool)includeReference;
 
 @end
+
+static TLInputPhoneCall$inputPhoneCall *OGCompatInputPhoneCall(int64_t callId, int64_t accessHash)
+{
+    TLInputPhoneCall$inputPhoneCall *inputCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
+    inputCall.n_id = callId;
+    inputCall.access_hash = accessHash;
+    return inputCall;
+}
+
+static NSString *OGCompatCustomParametersOfCall(id concreteCall)
+{
+    if (![concreteCall respondsToSelector:NSSelectorFromString(@"custom_parameters")])
+        return @"";
+    
+    id dataJson = [concreteCall valueForKey:@"custom_parameters"];
+    if (![dataJson respondsToSelector:@selector(data)])
+        return @"";
+    
+    NSString *data = [dataJson valueForKey:@"data"];
+    return [data isKindOfClass:[NSString class]] ? data : @"";
+}
 
 @implementation TGCallSignals
 
@@ -221,9 +244,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     TLRPCphone_discardCall$phone_discardCall *discardCall = [[TLRPCphone_discardCall$phone_discardCall alloc] init];
     
-    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-    inputPhoneCall.n_id = callId;
-    inputPhoneCall.access_hash = accessHash;
+    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = OGCompatInputPhoneCall(callId, accessHash);
     
     discardCall.peer = inputPhoneCall;
     discardCall.reason = [TGCallDiscardReasonAdapter TLObjectForReason:reason];
@@ -301,9 +322,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                 
                 TLRPCphone_receivedCall$phone_receivedCall *receivedCall = [[TLRPCphone_receivedCall$phone_receivedCall alloc] init];
                 
-                TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-                inputPhoneCall.n_id = callId;
-                inputPhoneCall.access_hash = accessHash;
+                TLInputPhoneCall$inputPhoneCall *inputPhoneCall = OGCompatInputPhoneCall(callId, accessHash);
                 
                 receivedCall.peer = inputPhoneCall;
                 
@@ -332,9 +351,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     TLRPCphone_acceptCall$phone_acceptCall *acceptCall = [[TLRPCphone_acceptCall$phone_acceptCall alloc] init];
     
-    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-    inputPhoneCall.n_id = callId;
-    inputPhoneCall.access_hash = accessHash;
+    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = OGCompatInputPhoneCall(callId, accessHash);
     
     acceptCall.peer = inputPhoneCall;
     acceptCall.g_b = gBBytes;
@@ -398,9 +415,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     TLRPCphone_confirmCall$phone_confirmCall *confirmCall = [[TLRPCphone_confirmCall$phone_confirmCall alloc] init];
     
-    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-    inputPhoneCall.n_id = callId;
-    inputPhoneCall.access_hash = accessHash;
+    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = OGCompatInputPhoneCall(callId, accessHash);
     
     confirmCall.peer = inputPhoneCall;
     confirmCall.g_a = gABytes;
@@ -427,22 +442,8 @@ const int32_t TGCallLegacyMaxLayer = 92;
                     
                     
                     
-                    NSMutableArray *webrtcConnections = [[NSMutableArray alloc] init];
-                    NSString *customParameters = @"";
-                    
-                    if ([concreteCall respondsToSelector:NSSelectorFromString(@"custom_parameters")])
-                    {
-                        id dataJson = [concreteCall valueForKey:@"custom_parameters"];
-                        
-                        if ([dataJson respondsToSelector:@selector(data)])
-                        {
-                            NSString *data = [dataJson valueForKey:@"data"];
-                            
-                            if ([data isKindOfClass:[NSString class]])
-                                customParameters = data;
-                        }
-                    }
-                    
+                    NSMutableArray *directEndpoints = [[NSMutableArray alloc] init];
+                    NSString *customParameters = OGCompatCustomParametersOfCall(concreteCall);
                     
                     TGCallConnectionDescription *(^deserializeConnection)(id) = ^TGCallConnectionDescription *(id connection)
                     {
@@ -477,28 +478,28 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         
                         if ([connection isKindOfClass:[TLPhoneConnection$phoneConnectionWebrtc class]])
                         {
-                            TLPhoneConnection$phoneConnectionWebrtc *webRtcConnection = (TLPhoneConnection$phoneConnectionWebrtc *)connection;
+                            TLPhoneConnection$phoneConnectionWebrtc *rtcNode = (TLPhoneConnection$phoneConnectionWebrtc *)connection;
                             
                             
-                            if (webRtcConnection.port != 0 &&
-                                (webRtcConnection.ip.length != 0 || webRtcConnection.ipv6.length != 0))
+                            if (rtcNode.port != 0 &&
+                                (rtcNode.ip.length != 0 || rtcNode.ipv6.length != 0))
                             {
-                                [webrtcConnections addObject:[[TGCallWebrtcConnectionDescription alloc]
-                                                              initWithIdentifier:webRtcConnection.n_id
-                                                              flags:webRtcConnection.flags
-                                                              ipv4:webRtcConnection.ip
-                                                              ipv6:webRtcConnection.ipv6
-                                                              port:webRtcConnection.port
-                                                              username:webRtcConnection.username
-                                                              password:webRtcConnection.password]];
+                                [directEndpoints addObject:[[TGCallWebrtcConnectionDescription alloc]
+                                                              initWithIdentifier:rtcNode.n_id
+                                                              flags:rtcNode.flags
+                                                              ipv4:rtcNode.ip
+                                                              ipv6:rtcNode.ipv6
+                                                              port:rtcNode.port
+                                                              username:rtcNode.username
+                                                              password:rtcNode.password]];
                             }
                             else
                             {
                                 TGDiagnosticLog(@"CALL confirmed.webrtc.skipBad id=%lld ip=%@ ipv6=%@ port=%d",
-                                      webRtcConnection.n_id,
-                                      webRtcConnection.ip,
-                                      webRtcConnection.ipv6,
-                                      webRtcConnection.port);
+                                      rtcNode.n_id,
+                                      rtcNode.ip,
+                                      rtcNode.ipv6,
+                                      rtcNode.port);
                             }
                             
                             return nil;
@@ -508,41 +509,28 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         return nil;
                     };
                     
-                    NSMutableArray *allConnections = [[NSMutableArray alloc] init];
+                    NSMutableArray *gathered = [[NSMutableArray alloc] init];
+                    void (^collectConnection)(id) = ^(id connection)
+                    {
+                        TGCallConnectionDescription *parsed = deserializeConnection(connection);
+                        if (parsed != nil)
+                            [gathered addObject:parsed];
+                    };
                     
-                    TGCallConnectionDescription *legacyDefaultConnection = deserializeConnection(concreteCall.connection);
-                    
-                    if (legacyDefaultConnection != nil)
-                        [allConnections addObject:legacyDefaultConnection];
-                    
+                    collectConnection(concreteCall.connection);
                     for (id connection in concreteCall.alternative_connections)
-                    {
-                        TGCallConnectionDescription *callConnection = deserializeConnection(connection);
-                        
-                        if (callConnection != nil)
-                            [allConnections addObject:callConnection];
-                    }
-                    
+                        collectConnection(connection);
                     for (id connection in concreteCall.connections)
-                    {
-                        TGCallConnectionDescription *callConnection = deserializeConnection(connection);
-                        
-                        if (callConnection != nil)
-                            [allConnections addObject:callConnection];
-                    }
+                        collectConnection(connection);
                     
                     TGCallConnectionDescription *defaultConnection = nil;
-                    NSMutableArray *alternativeConnections = [[NSMutableArray alloc] init];
+                    NSMutableArray *extraRelays = [[NSMutableArray alloc] init];
                     
-                    if (allConnections.count != 0)
+                    if (gathered.count != 0)
                     {
-                        defaultConnection = [allConnections objectAtIndex:0];
-                        
-                        for (NSUInteger i = 1; i < allConnections.count; i++)
-                            [alternativeConnections addObject:[allConnections objectAtIndex:i]];
+                        defaultConnection = [gathered objectAtIndex:0];
+                        [extraRelays addObjectsFromArray:[gathered subarrayWithRange:NSMakeRange(1, gathered.count - 1)]];
                     }
-                    
-                    
                     
                     TGCallOngoingContext *callContext = [[TGCallOngoingContext alloc]
                                                          initWithCallId:callId
@@ -553,8 +541,8 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                                          key:key
                                                          keyFingerprint:keyId
                                                          defaultConnection:defaultConnection
-                                                         alternativeConnections:alternativeConnections
-                                                         webrtcConnections:webrtcConnections
+                                                         alternativeConnections:extraRelays
+                                                         webrtcConnections:directEndpoints
                                                          customParameters:customParameters
                                                          minLayer:protocolMinLayer
                                                          maxLayer:protocolMaxLayer
@@ -591,25 +579,13 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                    data:(NSData *)data
 {
     if (data.length == 0)
-    {
         return [SSignal complete];
-    }
     
-    TLRPCphone_sendSignalingData$phone_sendSignalingData *sendSignalingData = [[TLRPCphone_sendSignalingData$phone_sendSignalingData alloc] init];
+    TLRPCphone_sendSignalingData$phone_sendSignalingData *signalingRequest = [[TLRPCphone_sendSignalingData$phone_sendSignalingData alloc] init];
+    signalingRequest.peer = OGCompatInputPhoneCall(callId, accessHash);
+    signalingRequest.data = data;
     
-    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-    inputPhoneCall.n_id = callId;
-    inputPhoneCall.access_hash = accessHash;
-    
-    sendSignalingData.peer = inputPhoneCall;
-    sendSignalingData.data = data;
-    
-    
-    return [[[TGTelegramNetworking instance] requestSignal:sendSignalingData] map:^id(id result)
-            {
-                
-                return result;
-            }];
+    return [[TGTelegramNetworking instance] requestSignal:signalingRequest];
 }
 
 + (SSignal *)_reportCallRatingWithCallId:(int64_t)callId
@@ -716,9 +692,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     TLRPCphone_saveCallDebug$phone_saveCallDebug *saveCallDebug = [[TLRPCphone_saveCallDebug$phone_saveCallDebug alloc] init];
     
-    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = [[TLInputPhoneCall$inputPhoneCall alloc] init];
-    inputPhoneCall.n_id = callId;
-    inputPhoneCall.access_hash = accessHash;
+    TLInputPhoneCall$inputPhoneCall *inputPhoneCall = OGCompatInputPhoneCall(callId, accessHash);
     
     saveCallDebug.peer = inputPhoneCall;
     

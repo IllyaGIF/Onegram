@@ -18,15 +18,15 @@
 #import "TGPreviewPresentationHelper.h"
 
 static NSArray *sortedConversations(NSArray *conversations) {
-    if (![conversations isKindOfClass:[NSArray class]])
+    if ([conversations isKindOfClass:[NSArray class]] == false)
         return @[];
 
-    NSMutableArray *safeConversations = [[NSMutableArray alloc] init];
-    for (id object in conversations) {
-        if ([object isKindOfClass:[TGConversation class]] && ((TGConversation *)object).conversationId != 0)
-            [safeConversations addObject:object];
+    NSMutableArray *valid = [[NSMutableArray alloc] initWithCapacity:conversations.count];
+    for (id candidate in conversations) {
+        if ([candidate isKindOfClass:[TGConversation class]] && ((TGConversation *)candidate).conversationId != 0)
+            [valid addObject:candidate];
     }
-    return safeConversations;
+    return valid;
 }
 
 @interface TGGroupsInCommonController () {
@@ -102,9 +102,10 @@ static NSArray *sortedConversations(NSArray *conversations) {
 }
 
 - (void)setConversations:(NSArray *)conversations {
-    _conversations = sortedConversations(conversations);
+    NSArray *accepted = sortedConversations(conversations);
+    _conversations = accepted;
     
-    if (_conversations.count != 0) {
+    if (accepted.count != 0) {
         [_activityIndicator removeFromSuperview];
         _activityIndicator = nil;
         self.collectionView.hidden = false;
@@ -121,7 +122,7 @@ static NSArray *sortedConversations(NSArray *conversations) {
             [strongSelf navigateToPeerId:conversation.conversationId cachedConversation:conversation];
         }
     };
-    for (TGConversation *conversation in _conversations) {
+    for (TGConversation *conversation in accepted) {
         TGConversationCollectionItem *item = [[TGConversationCollectionItem alloc] initWithConversation:conversation];
         item.selected = itemSelected;
         [_conversationsSection addItem:item];
@@ -174,7 +175,7 @@ static NSArray *sortedConversations(NSArray *conversations) {
     }
     _checked3dTouch = true;
     if (iosMajorVersion() >= 9) {
-        if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable) {
+        if (self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable) {
             [self registerForPreviewingWithDelegate:(id)self sourceView:self.view];
         }
     }

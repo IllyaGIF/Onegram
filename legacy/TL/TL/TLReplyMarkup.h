@@ -33,6 +33,7 @@
 
 @interface TLReplyMarkup$replyInlineMarkup : TLReplyMarkup
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) NSArray *rows;
 
 @end

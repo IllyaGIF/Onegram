@@ -19,6 +19,18 @@
 
 #import <AVFoundation/AVFoundation.h>
 
+static SSignal *OGCompatDeferredThumbnailFetch(NSString *imageUrl, TGMediaOriginInfo *originInfo, int64_t identifier)
+{
+    return [SSignal defer:^SSignal *{
+        NSInteger datacenterId = 0;
+        TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:imageUrl datacenterId:&datacenterId originInfo:originInfo];
+        if (location == nil) {
+            return [SSignal fail:nil];
+        }
+        return [TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:originInfo identifier:identifier reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage];
+    }];
+}
+
 @implementation TGSharedPhotoSignals
 
 + (NSString *)pathForPhotoDirectory:(TGImageMediaAttachment *)imageAttachment
@@ -339,20 +351,7 @@
     
     NSString *key = [[NSString alloc] initWithFormat:@"cached-image-%@-%dx%d-%@", imageUrl, (int)size.width, (int)size.height, cacheVariantKey];
     
-    return [TGSharedMediaSignals cachedRemoteThumbnailWithKey:key size:size pixelProcessingBlock:pixelProcessingBlock fetchData:[SSignal defer:^SSignal *{
-        NSInteger datacenterId = 0;
-        TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:imageUrl datacenterId:&datacenterId originInfo:originInfo];
-        if (location != nil) {
-            SSignal *remoteSignal = [TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:originInfo identifier:identifier reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage];
-            return [[remoteSignal map:^id(id next) {
-                return next;
-            }] catch:^SSignal *(id error) {
-                return [SSignal fail:error];
-            }];
-        } else {
-            return [SSignal fail:nil];
-        }
-    }] originalImage:[SSignal fail:nil] threadPool:threadPool memoryCache:memoryCache diskCache:diskCache];
+    return [TGSharedMediaSignals cachedRemoteThumbnailWithKey:key size:size pixelProcessingBlock:pixelProcessingBlock fetchData:OGCompatDeferredThumbnailFetch(imageUrl, originInfo, identifier) originalImage:[SSignal fail:nil] threadPool:threadPool memoryCache:memoryCache diskCache:diskCache];
 }
 
 + (SSignal *)cachedRemoteDocumentThumbnail:(TGDocumentMediaAttachment *)document size:(CGSize)size pixelProcessingBlock:(void (^)(void *, int, int, int))pixelProcessingBlock cacheVariantKey:(NSString *)cacheVariantKey threadPool:(SThreadPool *)threadPool memoryCache:(TGMemoryImageCache *)memoryCache diskCache:(TGModernCache *)diskCache {
@@ -363,20 +362,7 @@
     
     NSString *key = [[NSString alloc] initWithFormat:@"cached-image-%@-%dx%d-%@", imageUrl, (int)size.width, (int)size.height, cacheVariantKey];
     
-    return [TGSharedMediaSignals cachedRemoteThumbnailWithKey:key size:size pixelProcessingBlock:pixelProcessingBlock fetchData:[SSignal defer:^SSignal *{
-        NSInteger datacenterId = 0;
-        TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:imageUrl datacenterId:&datacenterId originInfo:document.originInfo];
-        if (location != nil) {
-            SSignal *remoteSignal = [TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:document.originInfo identifier:document.documentId reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage];
-            return [[remoteSignal map:^id(id next) {
-                return next;
-            }] catch:^SSignal *(id error) {
-                return [SSignal fail:error];
-            }];
-        } else {
-            return [SSignal fail:nil];
-        }
-    }] originalImage:[SSignal defer:^SSignal *{
+    return [TGSharedMediaSignals cachedRemoteThumbnailWithKey:key size:size pixelProcessingBlock:pixelProcessingBlock fetchData:OGCompatDeferredThumbnailFetch(imageUrl, document.originInfo, document.documentId) originalImage:[SSignal defer:^SSignal *{
         return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
             static NSString *filesDirectory = nil;
             static dispatch_once_t onceToken;

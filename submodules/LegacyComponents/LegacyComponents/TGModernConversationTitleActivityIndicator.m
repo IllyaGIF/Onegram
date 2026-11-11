@@ -425,7 +425,7 @@ static OGMemoryCache *TGTitleActivityFrameCache(void)
     [CATransaction begin];
     [CATransaction setDisableActions:true];
     if (frames.count != 0)
-        TGSetLayerContentsScale(layer, TGScreenScaling());
+        OGCompatLayerSetContentsScale(layer, TGScreenScaling());
     layer.contents = frames.count != 0 ? frames[0] : nil;
     [CATransaction commit];
 

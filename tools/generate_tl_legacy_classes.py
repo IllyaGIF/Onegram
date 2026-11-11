@@ -235,7 +235,7 @@ class Generator:
         source += ['', '@implementation %s' % base_name, '', '']
         source += ['- (Class)responseClass', '{', '    return [%s class];' % response, '}', '']
         source += ['- (int)impliedResponseSignature', '{', '    return %s;' % ('(int)0x%x' % implied if implied else '0'), '}', '']
-        source += ['- (int)layerVersion', '{', '    return 228;', '}', '']
+        source += ['- (int)layerVersion', '{', '    return 233;', '}', '']
         source += render_abstract_methods() + ['@end', '']
         source += render_concrete_implementation(class_name, base_name, method, fields)
         self.write(os.path.join(self.classes_dir, base_name + '.h'), header)

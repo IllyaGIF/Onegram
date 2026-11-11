@@ -114,9 +114,7 @@ const CGFloat TGPhotoCropViewOverscreenSize = 1000;
         
         if (iosMajorVersion() >= 9)
         {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
             _blurView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
             _blurView.alpha = 0.0f;
             _blurView.userInteractionEnabled = false;
             [_areaWrapperView addSubview:_blurView];

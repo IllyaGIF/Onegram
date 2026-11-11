@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface STPKeyboardDetectingViewController : UIViewController
 @property(nonatomic, assign)CGRect lastKeyboardFrame;
 @property(nonatomic, unsafe_unretained)UIView *lastResponder;
-@property(nonatomic, copy)STPKeyboardFrameBlock keyboardFrameBlock;
+@property(nonatomic, copy)STPKeyboardFrameBlock _Nullable keyboardFrameBlock;
 @property(nonatomic, unsafe_unretained)UIScrollView *managedScrollView;
 @property(nonatomic, assign)CGFloat currentBottomInsetChange;
 @end
@@ -25,7 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 @implementation STPKeyboardDetectingViewController
 
 - (instancetype)initWithKeyboardFrameBlock:(STPKeyboardFrameBlock)block 
-                                scrollView:(UIScrollView *)scrollView {
+                                scrollView:(UIScrollView *_Nullable)scrollView {
     self = [super initWithNibName:nil bundle:nil];
     if (self) {
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
@@ -141,8 +141,8 @@ NS_ASSUME_NONNULL_BEGIN
     return nil;
 }
 
-- (void)stp_beginObservingKeyboardAndInsettingScrollView:(UIScrollView *)scrollView 
-                                           onChangeBlock:(STPKeyboardFrameBlock)block {
+- (void)stp_beginObservingKeyboardAndInsettingScrollView:(UIScrollView *_Nullable)scrollView 
+                                           onChangeBlock:(STPKeyboardFrameBlock _Nullable)block {
     STPKeyboardDetectingViewController *existing = [self stp_keyboardDetectingViewController];
     if (existing) {
         [existing removeFromParentViewController];

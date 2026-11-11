@@ -19,6 +19,8 @@
 #import "TGChannelManagementSignals.h"
 
 #import "TGCustomAlertView.h"
+#import "TGTelegraph.h"
+#import "TGPaidMessagesSignals.h"
 
 @interface TGResolveDomainActor ()
 {
@@ -107,7 +109,9 @@
         if (user.uid != 0)
         {
             [TGUserDataRequestBuilder executeUserObjectsUpdate:@[user]];
-            TGDispatchOnMainThread(^
+            NSString *freeToken = _arguments[@"free"];
+            bool applyFreeToken = [freeToken isKindOfClass:[NSString class]] && freeToken.length != 0 && user.kind != TGUserKindBot && user.kind != TGUserKindSmartBot && user.uid != TGTelegraphInstance.clientUserId;
+            void (^open)(void) = ^
             {
                 if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot)
                 {
@@ -138,7 +142,30 @@
                 else {
                     [[TGInterfaceManager instance] navigateToConversationWithId:user.uid conversation:nil performActions:nil atMessage:nil clearStack:!_keepStack openKeyboard:false canOpenKeyboardWhileInTransition:false animated:true];
                 }
-            });
+            };
+            if (applyFreeToken)
+            {
+                NSString *userName = user.displayFirstName ?: @"";
+                [[[TGPaidMessagesSignals importFreeToken:freeToken userId:user.uid] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *priceRemoved)
+                {
+                    open();
+                    if ([priceRemoved boolValue])
+                        [TGCustomAlertView presentAlertWithTitle:nil message:[[NSString alloc] initWithFormat:TGLocalized(@"PaidMessages.FreeTokenApplied"), userName] cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                } error:^(id error)
+                {
+                    open();
+                    NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+                    NSString *message = nil;
+                    if ([errorType isEqualToString:@"NO_PAID_MESSAGES_TOKEN_INVALID"])
+                        message = TGLocalized(@"PaidMessages.FreeTokenInvalid");
+                    else if ([errorType isEqualToString:@"USER_ID_INVALID"])
+                        message = TGLocalized(@"PaidMessages.FreeTokenUserInvalid");
+                    if (message != nil)
+                        [TGCustomAlertView presentAlertWithTitle:nil message:message cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                } completed:nil];
+            }
+            else
+                TGDispatchOnMainThread(open);
         }
     }
     else if ([resolvedPeer.peer isKindOfClass:[TLPeer$peerChannel class]] && resolvedPeer.chats.count != 0)

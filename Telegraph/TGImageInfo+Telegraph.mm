@@ -7,13 +7,13 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGCache.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
 
-static NSString *modernPhotoUrl(TLPhoto$photo *photo, TLPhotoSize$photoSize *size)
+static NSString *OGCompatPhotoUrl(TLPhoto$photo *photo, TLPhotoSize$photoSize *size)
 {
     if (photo == nil || size == nil || photo.dc_id == 0 || photo.n_id == 0)
         return nil;
-    NSString *fileReference = photo.file_reference.length == 0 ? @"" : [photo.file_reference stringByEncodingInHex];
-    NSString *thumbSize = size.type ?: @"";
-    return [[NSString alloc] initWithFormat:@"photo:%d:%lld:%lld:%d:%@:%@", photo.dc_id, photo.n_id, photo.access_hash, size.size, thumbSize, fileReference];
+
+    NSString *reference = photo.file_reference.length != 0 ? [photo.file_reference stringByEncodingInHex] : @"";
+    return [NSString stringWithFormat:@"photo:%d:%lld:%lld:%d:%@:%@", photo.dc_id, photo.n_id, photo.access_hash, size.size, size.type ?: @"", reference];
 }
 
 static void TGCacheEmbeddedPhotoSize(NSData *data, NSString *url)
@@ -31,58 +31,34 @@ static void TGCacheEmbeddedPhotoSize(NSData *data, NSString *url)
     });
 }
 
+static NSString *OGCompatLocationKey(int32_t dcId, int64_t volumeId, int32_t localId, int64_t secret)
+{
+    return [NSString stringWithFormat:@"%d_%lld_%d_%lld", dcId, volumeId, localId, secret];
+}
+
+#define OG_COMPAT_SECRET_LOCATION_KEY(type, location) \
+    if ([location isKindOfClass:[type class]]) \
+    { \
+        type *typed = location; \
+        return OGCompatLocationKey(typed.dcId.intValue, typed.volumeId.longLongValue, typed.localId.intValue, typed.secret.longLongValue); \
+    }
+
 NSString *extractFileUrl(id fileLocation)
 {
     if ([fileLocation isKindOfClass:[TLFileLocation$fileLocation class]])
     {
-        TLFileLocation$fileLocation *concreteFileLocation = (TLFileLocation$fileLocation *)fileLocation;
-        
-        return [[NSString alloc] initWithFormat:@"%d_%lld_%d_%lld", concreteFileLocation.dc_id, concreteFileLocation.volume_id, concreteFileLocation.local_id, concreteFileLocation.secret];
+        TLFileLocation$fileLocation *typed = (TLFileLocation$fileLocation *)fileLocation;
+        return OGCompatLocationKey(typed.dc_id, typed.volume_id, typed.local_id, typed.secret);
     }
-    else if ([fileLocation isKindOfClass:[Secret23_FileLocation_fileLocation class]])
-    {
-        Secret23_FileLocation_fileLocation *concreteFileLocation = fileLocation;
-        
-        return [[NSString alloc] initWithFormat:@"%d_%lld_%d_%lld", concreteFileLocation.dcId.intValue, concreteFileLocation.volumeId.longLongValue, concreteFileLocation.localId.intValue, concreteFileLocation.secret.longLongValue];
-    }
-    else if ([fileLocation isKindOfClass:[Secret66_FileLocation_fileLocation class]])
-    {
-        Secret66_FileLocation_fileLocation *concreteFileLocation = fileLocation;
-        
-        return [[NSString alloc] initWithFormat:@"%d_%lld_%d_%lld", concreteFileLocation.dcId.intValue, concreteFileLocation.volumeId.longLongValue, concreteFileLocation.localId.intValue, concreteFileLocation.secret.longLongValue];
-    }
-    else if ([fileLocation isKindOfClass:[Secret66_FileLocation_fileLocation class]])
-    {
-        Secret66_FileLocation_fileLocation *concreteFileLocation = fileLocation;
-        
-        return [[NSString alloc] initWithFormat:@"%d_%lld_%d_%lld", concreteFileLocation.dcId.intValue, concreteFileLocation.volumeId.longLongValue, concreteFileLocation.localId.intValue, concreteFileLocation.secret.longLongValue];
-    }
-    else if ([fileLocation isKindOfClass:[Secret73_FileLocation_fileLocation class]])
-    {
-        Secret73_FileLocation_fileLocation *concreteFileLocation = fileLocation;
-        
-        return [[NSString alloc] initWithFormat:@"%d_%lld_%d_%lld", concreteFileLocation.dcId.intValue, concreteFileLocation.volumeId.longLongValue, concreteFileLocation.localId.intValue, concreteFileLocation.secret.longLongValue];
-    }
-    else
-    {
-        static NSMutableSet *loggedInvalidFileLocationClasses = nil;
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^
-        {
-            loggedInvalidFileLocationClasses = [[NSMutableSet alloc] init];
-        });
-        NSString *className = fileLocation == nil ? @"nil" : NSStringFromClass([fileLocation class]);
-        @synchronized(loggedInvalidFileLocationClasses)
-        {
-            if (![loggedInvalidFileLocationClasses containsObject:className])
-            {
-                [loggedInvalidFileLocationClasses addObject:className];
-            }
-        }
-    }
-    
+
+    OG_COMPAT_SECRET_LOCATION_KEY(Secret23_FileLocation_fileLocation, fileLocation)
+    OG_COMPAT_SECRET_LOCATION_KEY(Secret66_FileLocation_fileLocation, fileLocation)
+    OG_COMPAT_SECRET_LOCATION_KEY(Secret73_FileLocation_fileLocation, fileLocation)
+
     return nil;
 }
+
+#undef OG_COMPAT_SECRET_LOCATION_KEY
 
 @implementation TGImageInfo (Telegraph)
 
@@ -188,30 +164,30 @@ NSString *extractFileUrl(id fileLocation)
         {
             if ([sizeDesc isKindOfClass:[TLPhotoSize$photoSize class]])
             {
-                TLPhotoSize$photoSize *concreteSize = (TLPhotoSize$photoSize *)sizeDesc;
-                NSString *urlLocation = extractFileUrl(concreteSize.location);
-                if (urlLocation == nil)
-                    urlLocation = modernPhotoUrl(photo, concreteSize);
-                [self addImageWithSize:CGSizeMake(concreteSize.w, concreteSize.h) url:urlLocation fileSize:concreteSize.size];
+                TLPhotoSize$photoSize *full = (TLPhotoSize$photoSize *)sizeDesc;
+                NSString *url = extractFileUrl(full.location) ?: OGCompatPhotoUrl(photo, full);
+                [self addImageWithSize:CGSizeMake(full.w, full.h) url:url fileSize:full.size];
             }
             else if ([sizeDesc isKindOfClass:[TLPhotoSize$photoCachedSize class]])
             {
-                TLPhotoSize$photoCachedSize *concreteSize = (TLPhotoSize$photoCachedSize *)sizeDesc;
-                TLPhotoSize$photoSize *urlSize = [[TLPhotoSize$photoSize alloc] init];
-                urlSize.type = concreteSize.type;
-                urlSize.w = concreteSize.w;
-                urlSize.h = concreteSize.h;
-                urlSize.size = (int32_t)concreteSize.bytes.length;
-                NSString *url = extractFileUrl(concreteSize.location);
-                if (url == nil)
-                    url = modernPhotoUrl(photo, urlSize);
-                [self addImageWithSize:CGSizeMake(concreteSize.w, concreteSize.h) url:url fileSize:(int32_t)concreteSize.bytes.length];
-                if (concreteSize.bytes.length != 0)
+                TLPhotoSize$photoCachedSize *embedded = (TLPhotoSize$photoCachedSize *)sizeDesc;
+                int32_t byteCount = (int32_t)embedded.bytes.length;
+
+                TLPhotoSize$photoSize *descriptor = [[TLPhotoSize$photoSize alloc] init];
+                descriptor.type = embedded.type;
+                descriptor.w = embedded.w;
+                descriptor.h = embedded.h;
+                descriptor.size = byteCount;
+
+                NSString *url = extractFileUrl(embedded.location) ?: OGCompatPhotoUrl(photo, descriptor);
+                [self addImageWithSize:CGSizeMake(embedded.w, embedded.h) url:url fileSize:byteCount];
+
+                if (byteCount != 0)
                 {
                     if (cachedData != NULL)
-                        *cachedData = concreteSize.bytes;
+                        *cachedData = embedded.bytes;
                     else if (url != nil)
-                        [[TGRemoteImageView sharedCache] cacheImage:nil withData:concreteSize.bytes url:url availability:TGCacheDisk];
+                        [[TGRemoteImageView sharedCache] cacheImage:nil withData:embedded.bytes url:url availability:TGCacheDisk];
                 }
             }
         }

@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTRoundedRectAnimator.h
 //  Lottie
@@ -12,8 +12,8 @@
 
 @interface LOTRoundedRectAnimator : LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                shapeRectangle:(LOTShapeRectangle *)shapeRectangle;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                shapeRectangle:(LOTShapeRectangle *_Nonnull)shapeRectangle;
 
 
 @end

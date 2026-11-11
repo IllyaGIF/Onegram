@@ -18,6 +18,13 @@ static NSString *devicePushToken = nil;
     return @"/tg/service/settings/push/@";
 }
 
+- (NSString *)og_compat_takeDeviceToken
+{
+    NSString *taken = devicePushToken;
+    devicePushToken = nil;
+    return taken;
+}
+
 + (void)clearCachedDevicePushToken
 {
     devicePushToken = nil;
@@ -30,7 +37,7 @@ static NSString *devicePushToken = nil;
     range.length = [self.path length] - 1 - range.location;
     NSString *action = [self.path substringWithRange:range];
 
-    bool apnsEnabled = TGIOS6APNsNotificationsEnabled();
+    bool apnsEnabled = OGAPNsNotificationsEnabled();
     if ([action isEqualToString:@"subscribe"] && !apnsEnabled)
     {
         TGDispatchOnMainThread(^
@@ -38,13 +45,11 @@ static NSString *devicePushToken = nil;
             [TGAppDelegateInstance ios6RegisterLocalNotificationSettings];
         });
         
-        NSString *tokenToRemove = devicePushToken;
-        devicePushToken = nil;
-
-        if (tokenToRemove.length != 0)
-            self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:tokenToRemove requestBuilder:self];
-        else
+        NSString *staleToken = [self og_compat_takeDeviceToken];
+        if (staleToken.length == 0)
             [ActionStageInstance() actionCompleted:self.path result:nil];
+        else
+            self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:staleToken requestBuilder:self];
         return;
     }
 
@@ -101,9 +106,7 @@ static NSString *devicePushToken = nil;
     }
     else if ([action isEqualToString:@"unsubscribe"])
     {
-        NSString *tokenToRemove = devicePushToken;
-        devicePushToken = nil;
-        self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:tokenToRemove requestBuilder:self];
+        self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:[self og_compat_takeDeviceToken] requestBuilder:self];
     }
     else
     {

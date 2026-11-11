@@ -27,6 +27,11 @@
 
 #import "TGBotContextResultSendMessageGeo.h"
 
+static SSignal *OGCompatExternalThumbnail(NSString *url, CGSize size, NSString *variantKey)
+{
+    return [TGSharedPhotoSignals cachedExternalThumbnail:url size:size pixelProcessingBlock:nil cacheVariantKey:variantKey threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool] memoryCache:[TGSharedMediaUtils sharedMediaMemoryImageCache] diskCache:[TGSharedMediaUtils sharedMediaTemporaryPersistentCache]];
+}
+
 @interface TGAnimatedMediaContextResultCellContents () <ASWatcher> {
     TGImageView *_imageView;
     UIView<TGInlineVideoPlayerView> *_videoView;
@@ -181,10 +186,11 @@
                 NSString *legacyThumbnailUri = [concreteResult.document.thumbnailInfo imageUrlForLargestSize:NULL];
                 if (legacyThumbnailUri != nil)
                     [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-                [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[concreteResult.document safeFileName]]];
-                [uri appendFormat:@"&size=%d", concreteResult.document.size];
-                if (concreteResult.document.mimeType.length != 0)
-                    [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:concreteResult.document.mimeType]];
+                TGDocumentMediaAttachment *resultDocument = concreteResult.document;
+                [uri appendFormat:@"&fileName=%@&size=%d", [TGStringUtils stringByEscapingForURL:[resultDocument safeFileName]], resultDocument.size];
+                NSString *resultMimeType = resultDocument.mimeType;
+                if (resultMimeType.length != 0)
+                    [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:resultMimeType]];
                 
                 [uri appendFormat:@"&width=128&height=128"];
                 [uri appendFormat:@"&highQuality=1"];
@@ -215,14 +221,12 @@
         if ([concreteResult.type isEqualToString:@"video"]) {
             duration = @(concreteResult.duration);
         }
-        SSignal *thumbnailSignal = [TGSharedPhotoSignals cachedExternalThumbnail:thumbnailUrl size:imageSize pixelProcessingBlock:nil cacheVariantKey:@"mediaContextPanel" threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool] memoryCache:[TGSharedMediaUtils sharedMediaMemoryImageCache] diskCache:[TGSharedMediaUtils sharedMediaTemporaryPersistentCache]];
+        SSignal *thumbnailSignal = OGCompatExternalThumbnail(thumbnailUrl, imageSize, @"mediaContextPanel");
         NSString *directThumbnailUrl = concreteResult.thumb.url;
-        if (directThumbnailUrl.length != 0 && ![directThumbnailUrl isEqualToString:thumbnailUrl]) {
-            thumbnailSignal = [thumbnailSignal catch:^SSignal *(__unused id error) {
-                return [TGSharedPhotoSignals cachedExternalThumbnail:directThumbnailUrl size:imageSize pixelProcessingBlock:nil cacheVariantKey:@"mediaContextPanelDirect" threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool] memoryCache:[TGSharedMediaUtils sharedMediaMemoryImageCache] diskCache:[TGSharedMediaUtils sharedMediaTemporaryPersistentCache]];
-            }];
-        }
-        [_imageView setSignal:thumbnailSignal];
+        bool hasDistinctFallback = directThumbnailUrl.length != 0 && ![directThumbnailUrl isEqualToString:thumbnailUrl];
+        [_imageView setSignal:hasDistinctFallback ? [thumbnailSignal catch:^SSignal *(__unused id error) {
+            return OGCompatExternalThumbnail(directThumbnailUrl, imageSize, @"mediaContextPanelDirect");
+        }] : thumbnailSignal];
     }
     
     if (duration != nil) {
@@ -252,7 +256,8 @@
     if (!_durationLabel.hidden) {
         [_durationLabel sizeToFit];
         CGRect durationFrame = _durationLabel.frame;
-        durationFrame.size = CGSizeMake(CGCeil(_durationLabel.frame.size.width), CGCeil(_durationLabel.frame.size.height));
+        CGSize labelSize = _durationLabel.frame.size;
+        durationFrame.size = CGSizeMake(CGCeil(labelSize.width), CGCeil(labelSize.height));
         durationFrame.origin.x = bounds.size.width - durationFrame.size.width - 9.0f;
         durationFrame.origin.y = bounds.size.height - durationFrame.size.height - 7.0f;
         _durationLabel.frame = durationFrame;
@@ -260,15 +265,22 @@
     }
 }
 
+- (void)og_compat_playVideoAtPath:(NSString *)path {
+    [_videoView removeFromSuperview];
+    _videoView = [[[TGVTAcceleratedVideoView videoViewClass] alloc] initWithFrame:self.bounds];
+    [self insertSubview:_videoView aboveSubview:_overlayView];
+    [_videoView setPath:path];
+    _isReady = true;
+}
+
 - (void)checkAndPlay:(bool)download {
     if ([_result isKindOfClass:[TGBotContextMediaResult class]]) {
         TGBotContextMediaResult *mediaResult = (TGBotContextMediaResult *)_result;
-        TGDocumentMediaAttachment *document = mediaResult.document;
+        TGDocumentMediaAttachment *document = [mediaResult document];
         if (document != nil) {
             bool isSticker = false;
             bool isVideo = false;
-            bool isAnimation = [mediaResult.type isEqualToString:@"gif"] ||
-                [document.mimeType isEqualToString:@"image/gif"];
+            bool isAnimation = [document.mimeType isEqualToString:@"image/gif"] || [mediaResult.type isEqualToString:@"gif"];
             
             for (id attribute in document.attributes) {
                 if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]]) {
@@ -290,9 +302,10 @@
                     UIImage *videoFirstFrame = nil;
                     if (exists && [document.mimeType isEqualToString:@"video/mp4"]) {
                         NSURL *videoUrl = [NSURL fileURLWithPath:filePath];
-                        videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 0.0, CGSizeMake(256.0f, 256.0f));
+                        const CGSize frameSize = CGSizeMake(256.0f, 256.0f);
+                        videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 0.0, frameSize);
                         if (videoFirstFrame == nil)
-                            videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 1.0 / 30.0, CGSizeMake(256.0f, 256.0f));
+                            videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 1.0 / 30.0, frameSize);
                     }
                     
                     TGDispatchOnMainThread(^{
@@ -308,19 +321,15 @@
                                         [strongSelf->_videoView removeFromSuperview];
                                         strongSelf->_videoView = nil;
                                         if (videoFirstFrame != nil) {
+                                            strongSelf->_isReady = true;
                                             strongSelf->_imageView.image = videoFirstFrame;
-                                            strongSelf->_isReady = true;
                                         }
-                                        if (iosMajorVersion() >= 7) {
-                                            strongSelf->_videoView = [[[TGVTAcceleratedVideoView videoViewClass] alloc] initWithFrame:strongSelf.bounds];
-                                            [strongSelf insertSubview:strongSelf->_videoView aboveSubview:strongSelf->_overlayView];
-                                            [strongSelf->_videoView setPath:filePath];
-                                            strongSelf->_isReady = true;
-                                        }
+                                        if (iosMajorVersion() >= 7)
+                                            [strongSelf og_compat_playVideoAtPath:filePath];
                                     } else if ([document.mimeType isEqualToString:@"image/gif"]) {
-                                        UIImage *firstFrame = [[UIImage alloc] initWithContentsOfFile:filePath];
-                                        if (firstFrame != nil) {
-                                            strongSelf->_imageView.image = firstFrame;
+                                        UIImage *stillFrame = [[UIImage alloc] initWithContentsOfFile:filePath];
+                                        if (stillFrame != nil) {
+                                            strongSelf->_imageView.image = stillFrame;
                                             strongSelf->_isReady = true;
                                         }
 
@@ -371,13 +380,8 @@
                                                 }
                                                 
                                                 if ([currentDocument isEqual:document]) {
-                                                    if (iosMajorVersion() >= 7) {
-                                                        [strongSelf->_videoView removeFromSuperview];
-                                                        strongSelf->_videoView = [[[TGVTAcceleratedVideoView videoViewClass] alloc] initWithFrame:strongSelf.bounds];
-                                                        [strongSelf insertSubview:strongSelf->_videoView aboveSubview:strongSelf->_overlayView];
-                                                        [strongSelf->_videoView setPath:path];
-                                                        strongSelf->_isReady = true;
-                                                    }
+                                                    if (iosMajorVersion() >= 7)
+                                                        [strongSelf og_compat_playVideoAtPath:path];
                                                 }
                                             }
                                         }]];
@@ -408,11 +412,7 @@
                         if ([externalResult.resultId isEqualToString:currentExternalResult.resultId]) {
                             if (path != nil) {
                                 if ([externalResult.content.mimeType isEqualToString:@"video/mp4"]) {
-                                    [strongSelf->_videoView removeFromSuperview];
-                                    strongSelf->_videoView = [[[TGVTAcceleratedVideoView videoViewClass] alloc] initWithFrame:strongSelf.bounds];
-                                    [strongSelf insertSubview:strongSelf->_videoView aboveSubview:strongSelf->_overlayView];
-                                    [strongSelf->_videoView setPath:path];
-                                    strongSelf->_isReady = true;
+                                    [strongSelf og_compat_playVideoAtPath:path];
                                 }
                             } else if (download) {
                                 [strongSelf download];

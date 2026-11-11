@@ -1,11 +1,10 @@
+#ifndef OG_COMPAT_PUSHKIT_H
+#define OG_COMPAT_PUSHKIT_H
+
 #import <Foundation/Foundation.h>
 
 typedef NSString *PKPushType;
 static PKPushType const PKPushTypeVoIP = @"PKPushTypeVoIP";
-
-@class PKPushRegistry;
-@class PKPushCredentials;
-@class PKPushPayload;
 
 @protocol PKPushRegistryDelegate <NSObject>
 @end
@@ -23,3 +22,5 @@ static PKPushType const PKPushTypeVoIP = @"PKPushTypeVoIP";
 @property (nonatomic, copy) NSSet *desiredPushTypes;
 - (instancetype)initWithQueue:(dispatch_queue_t)queue;
 @end
+
+#endif

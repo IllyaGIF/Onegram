@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTKeyframe.m
 //  Pods
@@ -91,14 +91,14 @@
     _floatValue = [(NSNumber *)data floatValue];
   }
   if ([data isKindOfClass:[NSArray class]] &&
-      [[(NSArray *)data objectAtIndex:0] isKindOfClass:[NSNumber class]]) {
+      [[(NSArray *)data firstObject] isKindOfClass:[NSNumber class]]) {
     NSArray *numberArray = (NSArray *)data;
     if (numberArray.count > 0) {
-      _floatValue = [(NSNumber *)[numberArray objectAtIndex:0] floatValue];
+      _floatValue = [(NSNumber *)numberArray[0] floatValue];
     }
     if (numberArray.count > 1) {
-      _pointValue = CGPointMake(_floatValue = [(NSNumber *)[numberArray objectAtIndex:0] floatValue],
-                                _floatValue = [(NSNumber *)[numberArray objectAtIndex:1] floatValue]);
+      _pointValue = CGPointMake(_floatValue = [(NSNumber *)numberArray[0] floatValue],
+                                _floatValue = [(NSNumber *)numberArray[1] floatValue]);
       _sizeValue = CGSizeMake(_pointValue.x, _pointValue.y);
     }
     if (numberArray.count > 3) {
@@ -106,8 +106,8 @@
     }
     _arrayValue = numberArray;
   } else if ([data isKindOfClass:[NSArray class]] &&
-      [[(NSArray *)data objectAtIndex:0] isKindOfClass:[NSDictionary class]]) {
-    _pathData = [[LOTBezierData alloc] initWithData:[(NSArray *)data objectAtIndex:0]];
+      [[(NSArray *)data firstObject] isKindOfClass:[NSDictionary class]]) {
+    _pathData = [[LOTBezierData alloc] initWithData:[(NSArray *)data firstObject]];
   } else if ([data isKindOfClass:[NSDictionary class]]) {
     _pathData = [[LOTBezierData alloc] initWithData:data];
   }
@@ -139,7 +139,7 @@
   return CGPointMake([xValue floatValue], [yValue floatValue]);
 }
 
-- (UIColor *)_colorValueFromArray:(NSArray *)colorArray {
+- (UIColor *)_colorValueFromArray:(OG_COMPAT_GENERIC(NSArray, NSNumber *)  *)colorArray {
   if (colorArray.count == 4) {
     BOOL shouldUse255 = NO;
     for (NSNumber *number in colorArray) {
@@ -174,8 +174,8 @@
 
 - (void)buildKeyframesFromData:(id)data {
   if ([data isKindOfClass:[NSArray class]] &&
-      [[(NSArray *)data objectAtIndex:0] isKindOfClass:[NSDictionary class]] &&
-      [[(NSArray *)data objectAtIndex:0] objectForKey:@2]) {
+      [[(NSArray *)data firstObject] isKindOfClass:[NSDictionary class]] &&
+      [(NSArray *)data firstObject][@"t"]) {
     // Array of Keyframes
     NSArray *keyframes =  (NSArray *)data;
     NSMutableArray *keys = [NSMutableArray array];

@@ -76,7 +76,7 @@ typedef NS_ENUM(NSInteger, STPCardFundingType) {
 /**
  *  For cards made with Apple Pay, this refers to the last 4 digits of the "Device Account Number" for the tokenized card. For regular cards, it will be nil.
  */
-@property (nonatomic, readonly) NSString *dynamicLast4;
+@property (nonatomic, readonly) NSString *_Nullable dynamicLast4;
 
 /**
  *  Whether or not the card originated from Apple Pay.
@@ -96,22 +96,22 @@ typedef NS_ENUM(NSInteger, STPCardFundingType) {
 /**
  *  The cardholder's name.
  */
-@property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *_Nullable name;
 
 /**
  *  The cardholder's address.
  */
-@property (nonatomic, copy) NSString *addressLine1;
-@property (nonatomic, copy) NSString *addressLine2;
-@property (nonatomic, copy) NSString *addressCity;
-@property (nonatomic, copy) NSString *addressState;
-@property (nonatomic, copy) NSString *addressZip;
-@property (nonatomic, copy) NSString *addressCountry;
+@property (nonatomic, copy) NSString *_Nullable addressLine1;
+@property (nonatomic, copy) NSString *_Nullable addressLine2;
+@property (nonatomic, copy) NSString *_Nullable addressCity;
+@property (nonatomic, copy) NSString *_Nullable addressState;
+@property (nonatomic, copy) NSString *_Nullable addressZip;
+@property (nonatomic, copy) NSString *_Nullable addressCountry;
 
 /**
  *  The Stripe ID for the card.
  */
-@property (nonatomic, readonly) NSString *cardId;
+@property (nonatomic, readonly) NSString *_Nullable cardId;
 
 /**
  *  The issuer of the card.
@@ -134,33 +134,33 @@ typedef NS_ENUM(NSInteger, STPCardFundingType) {
  *  A proxy for the card's number, this uniquely identifies the credit card and can be used to compare different cards.
  *  @deprecated This field will no longer be present in responses when using your publishable key. If you want to access the value of this field, you can look it up on your backend using your secret key.
  */
-@property (nonatomic, readonly) NSString *fingerprint __attribute__((deprecated("This field will no longer be present in responses when using your publishable key. If you want to access the value of this field, you can look it up on your backend using your secret key.")));
+@property (nonatomic, readonly) NSString *_Nullable fingerprint __attribute__((deprecated("This field will no longer be present in responses when using your publishable key. If you want to access the value of this field, you can look it up on your backend using your secret key.")));
 
 /**
  *  Two-letter ISO code representing the issuing country of the card.
  */
-@property (nonatomic, readonly) NSString *country;
+@property (nonatomic, readonly) NSString *_Nullable country;
 
 /**
  *  This is only applicable when tokenizing debit cards to issue payouts to managed accounts. You should not set it otherwise. The card can then be used as a transfer destination for funds in this currency.
  */
-@property (nonatomic, copy) NSString *currency;
+@property (nonatomic, copy) NSString *_Nullable currency;
 
 #pragma mark - deprecated properties
 
 #define DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS __attribute__((deprecated("For collecting your users' credit card details, you should use an STPCardParams object instead of an STPCard.")))
 
-@property (nonatomic, copy) NSString *number DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-@property (nonatomic, copy) NSString *cvc DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+@property (nonatomic, copy) NSString *_Nullable number DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+@property (nonatomic, copy) NSString *_Nullable cvc DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
 - (void)setExpMonth:(NSUInteger)expMonth DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
 - (void)setExpYear:(NSUInteger)expYear DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setName:(NSString *)name DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressLine1:(NSString *)addressLine1 DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressLine2:(NSString *)addressLine2 DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressCity:(NSString *)addressCity DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressState:(NSString *)addressState DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressZip:(NSString *)addressZip DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
-- (void)setAddressCountry:(NSString *)addressCountry DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setName:(NSString *_Nullable)name DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressLine1:(NSString *_Nullable)addressLine1 DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressLine2:(NSString *_Nullable)addressLine2 DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressCity:(NSString *_Nullable)addressCity DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressState:(NSString *_Nullable)addressState DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressZip:(NSString *_Nullable)addressZip DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
+- (void)setAddressCountry:(NSString *_Nullable)addressCountry DEPRECATED_IN_FAVOR_OF_STPCARDPARAMS;
 
 
 @end

@@ -7,6 +7,7 @@
 //
 
 #import "STPPaymentContextAmountModel.h"
+#import "OGStripeCompat.h"
 
 #import "NSDecimalNumber+Stripe_Currency.h"
 
@@ -20,7 +21,7 @@
 
 @implementation STPPaymentContextAmountModel {
     NSInteger _paymentAmount;
-    NSArray *_paymentSummaryItems;
+    OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *_paymentSummaryItems;
 }
 
 FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
@@ -34,7 +35,7 @@ FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
     return self;
 }
 
-- (instancetype)initWithPaymentSummaryItems:(NSArray *)paymentSummaryItems {
+- (instancetype)initWithPaymentSummaryItems:(OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItems {
     self = [super init];
     if (self) {
         _paymentAmount = 0;
@@ -49,11 +50,11 @@ FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
     }
     else {
         id<STPPaymentSummaryItem> lastItem = _paymentSummaryItems.lastObject;
-        return [[lastItem amount] stp_amountWithCurrency:paymentCurrency];
+        return [lastItem.amount stp_amountWithCurrency:paymentCurrency];
     }
 }
 
-- (NSArray *)paymentSummaryItemsWithCurrency:(NSString *)paymentCurrency
+- (OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItemsWithCurrency:(NSString *)paymentCurrency
                                                          companyName:(NSString *)companyName {
     if (_paymentSummaryItems == nil) {
         NSDecimalNumber *amount = [NSDecimalNumber stp_decimalNumberWithAmount:_paymentAmount

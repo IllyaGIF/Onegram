@@ -27,13 +27,13 @@
     TGGenericPeerMediaGalleryDefaultFooterView *_footerView;
     NSMutableDictionary *_groupedItems;
     NSArray *_groupItems;
-    NSString *_currentAvatarLegacyThumbnailImageUri;
-    bool _profilePhotosRequested;
+    NSString *_activeAvatarThumbUri;
+    bool _profilePhotosLoading;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
 
-- (void)_requestProfilePhotosIfNeeded;
+- (void)og_compat_loadProfilePhotos;
 
 @end
 
@@ -47,13 +47,13 @@
         _actionHandle = [[ASHandle alloc] initWithDelegate:self];
         
         _peerId = peerId;
-        _currentAvatarLegacyThumbnailImageUri = [currentAvatarLegacyThumbnailImageUri copy];
+        _activeAvatarThumbUri = [currentAvatarLegacyThumbnailImageUri copy];
         
         _groupedItems = [[NSMutableDictionary alloc] init];
         
         TGUserAvatarGalleryItem *firstItem = [self itemForImageId:0 accessHash:0 legacyThumbnailUrl:currentAvatarLegacyThumbnailImageUri legacyUrl:currentAvatarLegacyImageUri imageSize:currentAvatarImageSize isCurrent:true];
         [self _replaceItems:@[firstItem] focusingOnItem:firstItem];
-        [self _requestProfilePhotosIfNeeded];
+        [self og_compat_loadProfilePhotos];
     }
     return self;
 }
@@ -64,26 +64,28 @@
     [ActionStageInstance() removeWatcher:self];
 }
 
-- (void)_requestProfilePhotosIfNeeded
+- (void)og_compat_loadProfilePhotos
 {
-    if (_profilePhotosRequested || _peerId == 777000 || _peerId == 333000)
+    bool servicePeer = _peerId == 777000 || _peerId == 333000;
+    if (_profilePhotosLoading || servicePeer)
         return;
-    _profilePhotosRequested = true;
+    _profilePhotosLoading = true;
     
+    int64_t peerId = _peerId;
     __weak TGUserAvatarGalleryModel *weakSelf = self;
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        __strong TGUserAvatarGalleryModel *strongSelf = weakSelf;
-        if (strongSelf == nil)
+        TGUserAvatarGalleryModel *model = weakSelf;
+        if (model == nil)
             return;
-        [ActionStageInstance() watchForPath:[[NSString alloc] initWithFormat:@"/tg/profilePhotos/(%" PRId64 ")", strongSelf->_peerId] watcher:strongSelf];
-        [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/profilePhotos/(%" PRId64 ",cached)", strongSelf->_peerId] options:@{@"peerId": @(strongSelf->_peerId)} flags:0 watcher:strongSelf];
+        [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/profilePhotos/(%" PRId64 ")", peerId] watcher:model];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/profilePhotos/(%" PRId64 ",cached)", peerId] options:@{@"peerId": @(peerId)} flags:0 watcher:model];
     }];
 }
 
 - (void)_transitionCompleted
 {
-    [self _requestProfilePhotosIfNeeded];
+    [self og_compat_loadProfilePhotos];
 }
 
 - (TGUserAvatarGalleryItem *)itemForImageId:(int64_t)imageId accessHash:(int64_t)__unused accessHash legacyThumbnailUrl:(NSString *)legacyThumbnailUrl legacyUrl:(NSString *)legacyUrl imageSize:(CGSize)imageSize isCurrent:(bool)isCurrent
@@ -94,8 +96,7 @@
 
 - (TGUserAvatarGalleryItem *)itemForImageId:(int64_t)imageId accessHash:(int64_t)__unused accessHash legacyThumbnailUrl:(NSString *)legacyThumbnailUrl legacyUrl:(NSString *)legacyUrl imageSize:(CGSize)imageSize isCurrent:(bool)isCurrent originInfo:(TGMediaOriginInfo *)originInfo
 {
-    TGUserAvatarGalleryItem *item = [[TGUserAvatarGalleryItem alloc] initWithLegacyThumbnailUrl:legacyThumbnailUrl legacyUrl:legacyUrl imageId:imageId imageSize:imageSize isCurrent:isCurrent originInfo:originInfo];
-    return item;
+    return [[TGUserAvatarGalleryItem alloc] initWithLegacyThumbnailUrl:legacyThumbnailUrl legacyUrl:legacyUrl imageId:imageId imageSize:imageSize isCurrent:isCurrent originInfo:originInfo];
 }
 
 - (UIView<TGModernGalleryDefaultHeaderView> *)createDefaultHeaderView
@@ -174,21 +175,19 @@
                     legacyUrl = [legacyUrl stringByAppendingFormat:@"_%@", [fileReference stringByEncodingInHex]];
             }
         }
-        if (legacyUrl.length == 0)
-            legacyUrl = legacyThumbnailUrl;
-        if (legacyThumbnailUrl.length == 0)
-            legacyThumbnailUrl = legacyUrl;
-        if (legacyUrl.length == 0)
-        {
+        NSString *fullUrl = legacyUrl.length != 0 ? legacyUrl : legacyThumbnailUrl;
+        if (fullUrl.length == 0)
             continue;
-        }
+        legacyUrl = fullUrl;
+        if (legacyThumbnailUrl.length == 0)
+            legacyThumbnailUrl = fullUrl;
         bool isCurrent = false;
         
         if (index == 0)
         {
             isCurrent = true;
-            if (_currentAvatarLegacyThumbnailImageUri.length != 0)
-                legacyThumbnailUrl = _currentAvatarLegacyThumbnailImageUri;
+            if (_activeAvatarThumbUri.length != 0)
+                legacyThumbnailUrl = _activeAvatarThumbUri;
         }
         
         TGUserAvatarGalleryItem *item = [self itemForImageId:imageMedia.imageId accessHash:imageMedia.accessHash legacyThumbnailUrl:legacyThumbnailUrl legacyUrl:legacyUrl imageSize:CGSizeMake(640.0f, 640.0f) isCurrent:isCurrent originInfo:imageMedia.originInfo];

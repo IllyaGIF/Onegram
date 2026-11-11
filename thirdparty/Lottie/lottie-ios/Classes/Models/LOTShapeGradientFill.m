@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeGradientFill.m
 //  Lottie
@@ -21,11 +21,11 @@
 }
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSNumber *type = [jsonDictionary objectForKey:@2];
+  NSNumber *type = jsonDictionary[@"t"];
   
   if (type.integerValue != 1) {
     _type = LOTGradientTypeRadial;
@@ -33,24 +33,24 @@
     _type = LOTGradientTypeLinear;
   }
   
-  NSDictionary *start = [jsonDictionary objectForKey:@2];
+  NSDictionary *start = jsonDictionary[@"s"];
   if (start) {
     _startPoint = [[LOTKeyframeGroup alloc] initWithData:start];
   }
   
-  NSDictionary *end = [jsonDictionary objectForKey:@2];
+  NSDictionary *end = jsonDictionary[@"e"];
   if (end) {
     _endPoint = [[LOTKeyframeGroup alloc] initWithData:end];
   }
   
-  NSDictionary *gradient = [jsonDictionary objectForKey:@2];
+  NSDictionary *gradient = jsonDictionary[@"g"];
   if (gradient) {
     NSDictionary *unwrappedGradient = gradient[@"k"];
     _numberOfColors = gradient[@"p"];
     _gradient = [[LOTKeyframeGroup alloc] initWithData:unwrappedGradient];
   }
   
-  NSDictionary *opacity = [jsonDictionary objectForKey:@2];
+  NSDictionary *opacity = jsonDictionary[@"o"];
   if (opacity) {
     _opacity = [[LOTKeyframeGroup alloc] initWithData:opacity];
     [_opacity remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -58,7 +58,7 @@
     }];
   }
   
-  NSNumber *evenOdd = [jsonDictionary objectForKey:@2];
+  NSNumber *evenOdd = jsonDictionary[@"r"];
   if (evenOdd.integerValue == 2) {
     _evenOddFillRule = YES;
   } else {

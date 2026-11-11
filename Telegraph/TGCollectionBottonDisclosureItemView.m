@@ -89,7 +89,7 @@
     dispatch_once(&onceToken, ^
     {
         if (iosMajorVersion() >= 7) {
-            font = TGIos6CreateCTFontFromUIFont(TGMediumSystemFontOfSize(15.0f));
+            font = OGCompatCreateCTFont(TGMediumSystemFontOfSize(15.0f));
         } else {
             UIFont *systemFont = TGMediumSystemFontOfSize(15.0f);
             font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
@@ -107,7 +107,7 @@
     dispatch_once(&onceToken, ^
     {
         if (iosMajorVersion() >= 7) {
-            font = TGIos6CreateCTFontFromUIFont(TGItalicSystemFontOfSize(15.0f));
+            font = OGCompatCreateCTFont(TGItalicSystemFontOfSize(15.0f));
         } else {
             UIFont *systemFont = TGItalicSystemFontOfSize(15.0f);
             font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);

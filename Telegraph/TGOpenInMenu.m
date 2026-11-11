@@ -82,30 +82,29 @@
         appItems = [TGOpenInAppItem appItemsForLocationAttachment:location directions:directions];
     
     __weak TGMenuSheetController *weakController = controller;
-    if (iosMajorVersion() <= 6)
+    void (^dismiss)(void) = ^
+    {
+        __strong TGMenuSheetController *strongController = weakController;
+        [strongController dismissAnimated:true manual:true];
+    };
+    if (iosMajorVersion() > 6)
+    {
+        TGOpenInCarouselItemView *carouselItem = [[TGOpenInCarouselItemView alloc] initWithAppItems:appItems title:title];
+        carouselItem.itemPressed = dismiss;
+        [itemViews addObject:carouselItem];
+    }
+    else
     {
         if (title.length != 0)
             [itemViews addObject:[[TGMenuSheetTitleItemView alloc] initWithTitle:title subtitle:nil]];
         for (TGOpenInAppItem *appItem in appItems)
         {
-            TGMenuSheetButtonItemView *appButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:appItem.title type:TGMenuSheetButtonTypeDefault action:^
+            [itemViews addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:appItem.title type:TGMenuSheetButtonTypeDefault action:^
             {
-                __strong TGMenuSheetController *strongController = weakController;
-                [strongController dismissAnimated:true manual:true];
+                dismiss();
                 [appItem performOpenIn];
-            }];
-            [itemViews addObject:appButton];
+            }]];
         }
-    }
-    else
-    {
-        TGOpenInCarouselItemView *carouselItem = [[TGOpenInCarouselItemView alloc] initWithAppItems:appItems title:title];
-        carouselItem.itemPressed = ^
-        {
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongController dismissAnimated:true manual:true];
-        };
-        [itemViews addObject:carouselItem];
     }
     
     if (buttonTitle.length > 0)
@@ -119,12 +118,7 @@
         [itemViews addObject:actionButton];
     }
     
-    TGMenuSheetButtonItemView *cancelButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
-    {
-        __strong TGMenuSheetController *strongController = weakController;
-        [strongController dismissAnimated:true manual:true];
-    }];
-    [itemViews addObject:cancelButton];
+    [itemViews addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:dismiss]];
     
     if (menuController == nil)
     {

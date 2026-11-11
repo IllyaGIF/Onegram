@@ -26,6 +26,26 @@
 #endif
 
 // common threshold definitions
+#if TARGET_OS_IPHONE
+static UIColor *OGCompatBarTint(UINavigationBar *bar)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    return bar.barTintColor;
+#else
+    return bar.tintColor;
+#endif
+}
+
+static void OGCompatSetBarTint(UINavigationBar *bar, UIColor *color)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    bar.barTintColor = color;
+#else
+    bar.tintColor = color;
+#endif
+}
+#endif
+
 static CGFloat const kPOPThresholdColor = 0.01;
 static CGFloat const kPOPThresholdPoint = 1.0;
 static CGFloat const kPOPThresholdOpacity = 0.01;
@@ -958,18 +978,10 @@ static POPStaticAnimatablePropertyState _staticStates[] =
 
   {kPOPNavigationBarBarTintColor,
     ^(UINavigationBar *obj, CGFloat values[]) {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-      POPUIColorGetRGBAComponents(obj.barTintColor, values);
-#else
-      POPUIColorGetRGBAComponents(obj.tintColor, values);
-#endif
+      POPUIColorGetRGBAComponents(OGCompatBarTint(obj), values);
     },
     ^(UINavigationBar *obj, const CGFloat values[]) {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-      obj.barTintColor = POPUIColorRGBACreate(values);
-#else
-      obj.tintColor = POPUIColorRGBACreate(values);
-#endif
+      OGCompatSetBarTint(obj, POPUIColorRGBACreate(values));
     },
     kPOPThresholdColor
   },

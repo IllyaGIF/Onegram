@@ -19,6 +19,15 @@
 }
 @end
 
+static NSString *OGMediaSelectionKey(id<TGMediaSelectableItem> item, bool verifyProtocol)
+{
+    if (verifyProtocol && ![(id)item conformsToProtocol:@protocol(TGMediaSelectableItem)])
+        return nil;
+    
+    NSString *key = item.uniqueIdentifier;
+    return key.length != 0 ? key : nil;
+}
+
 @implementation TGMediaSelectionContext
 
 - (instancetype)init
@@ -67,14 +76,10 @@
 
 - (void)setItem:(id<TGMediaSelectableItem>)item selected:(bool)selected animated:(bool)animated sender:(id)sender
 {
-    if (![(id)item conformsToProtocol:@protocol(TGMediaSelectableItem)])
+    NSString *identifier = OGMediaSelectionKey(item, true);
+    if (identifier == nil)
         return;
-
-    NSString *identifier = item.uniqueIdentifier;
-    if (identifier.length == 0)
-    {
-        return;
-    }
+    
     if (selected)
     {
         if (_selectionMap[identifier] != nil)
@@ -97,13 +102,8 @@
 
 - (NSUInteger)indexOfItem:(id<TGMediaSelectableItem>)item
 {
-    if (![(id)item conformsToProtocol:@protocol(TGMediaSelectableItem)])
-        return NSNotFound;
-    
-    NSString *identifier = item.uniqueIdentifier;
-    if (identifier.length == 0)
-        return NSNotFound;
-    if (_selectionMap[identifier] == nil)
+    NSString *identifier = OGMediaSelectionKey(item, true);
+    if (identifier == nil || _selectionMap[identifier] == nil)
         return NSNotFound;
     
     NSUInteger index = [_selectedIdentifiers indexOfObject:identifier];
@@ -123,12 +123,8 @@
 
 - (bool)isItemSelected:(id<TGMediaSelectableItem>)item
 {
-    if (![(id)item conformsToProtocol:@protocol(TGMediaSelectableItem)])
-        return false;
-    NSString *identifier = item.uniqueIdentifier;
-    if (identifier.length == 0)
-        return false;
-    return [_selectedIdentifiers containsObject:identifier];
+    NSString *identifier = OGMediaSelectionKey(item, true);
+    return identifier != nil && [_selectedIdentifiers containsObject:identifier];
 }
 
 - (bool)toggleItemSelection:(id<TGMediaSelectableItem>)item
@@ -156,10 +152,8 @@
 {
     return [_pipe.signalProducer() filter:^bool(TGMediaSelectionChange *change)
     {
-        NSString *identifier = item.uniqueIdentifier;
-        if (identifier.length == 0)
-            return false;
-        return [change.item.uniqueIdentifier isEqualToString:identifier];
+        NSString *identifier = OGMediaSelectionKey(item, false);
+        return identifier != nil && [change.item.uniqueIdentifier isEqualToString:identifier];
     }];
 }
 
@@ -230,11 +224,10 @@
         
         for (id<TGMediaSelectableItem> item in next)
         {
-            NSString *identifier = item.uniqueIdentifier;
-            if (identifier.length == 0)
-            {
+            NSString *identifier = OGMediaSelectionKey(item, false);
+            if (identifier == nil)
                 continue;
-            }
+            
             [strongSelf->_selectedIdentifiers addObject:identifier];
             strongSelf->_selectionMap[identifier] = item;
             

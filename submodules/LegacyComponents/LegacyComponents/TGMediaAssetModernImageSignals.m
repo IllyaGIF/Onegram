@@ -15,9 +15,9 @@
 #import "TGMediaAsset.h"
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
-#define TG_ENABLE_HEIC_CI_EXPORT 1
+#define OG_COMPAT_HEIC_CI_EXPORT 1
 #else
-#define TG_ENABLE_HEIC_CI_EXPORT 0
+#define OG_COMPAT_HEIC_CI_EXPORT 0
 #endif
 
 #if defined(ONEGRAM_ARMV6)
@@ -316,7 +316,7 @@
                         fileName = asset.fileName;
                 }
                 
-#if TG_ENABLE_HEIC_CI_EXPORT
+#if OG_COMPAT_HEIC_CI_EXPORT
                 if (iosMajorVersion() >= 10 && [dataUTI rangeOfString:@"heic"].location != NSNotFound)
                 {
                     CIContext *context = [[CIContext alloc] init];

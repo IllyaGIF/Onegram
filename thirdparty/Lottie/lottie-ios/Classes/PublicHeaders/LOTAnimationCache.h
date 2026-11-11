@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimationCache.h
 //  Lottie
@@ -22,7 +22,7 @@
 - (void)addAnimation:(LOTComposition *)animation forKey:(NSString *)key;
 
 /// Returns animation from cache.
-- (LOTComposition * )animationForKey:(NSString *)key;
+- (LOTComposition * _Nullable)animationForKey:(NSString *)key;
 
 /// Removes a specific animation from the cache
 - (void)removeAnimationForKey:(NSString *)key;

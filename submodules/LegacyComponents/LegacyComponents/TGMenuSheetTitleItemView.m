@@ -68,6 +68,32 @@
     
     _subtitleLabel.backgroundColor = [UIColor clearColor];
     _subtitleLabel.textColor = _solidSubtitle ? pallete.textColor : pallete.secondaryTextColor;
+    
+    for (UILabel *label in @[_titleLabel, _subtitleLabel])
+    {
+        label.shadowColor = pallete.textShadowColor;
+        label.shadowOffset = pallete.textShadowColor != nil ? pallete.textShadowOffset : CGSizeZero;
+    }
+}
+
+- (NSString *)title
+{
+    return _titleLabel.text;
+}
+
+- (void)setTitle:(NSString *)title
+{
+    _titleLabel.text = title;
+}
+
+- (NSString *)subtitle
+{
+    return _subtitleLabel.text;
+}
+
+- (void)setSubtitle:(NSString *)subtitle
+{
+    _subtitleLabel.text = subtitle;
 }
 
 - (CGFloat)preferredHeightForWidth:(CGFloat)width screenHeight:(CGFloat)__unused screenHeight

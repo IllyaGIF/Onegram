@@ -7,19 +7,20 @@
 //
 
 #import "STPPaymentMethodTuple.h"
+#import "OGStripeCompat.h"
 #import "STPApplePayPaymentMethod.h"
 #import "STPCard.h"
 
 @interface STPPaymentMethodTuple()
 
 @property(nonatomic)id<STPPaymentMethod> selectedPaymentMethod;
-@property(nonatomic)NSArray *paymentMethods;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *paymentMethods;
 
 @end
 
 @implementation STPPaymentMethodTuple
 
-+ (instancetype)tupleWithPaymentMethods:(NSArray *)paymentMethods
++ (instancetype)tupleWithPaymentMethods:(OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *)paymentMethods
                   selectedPaymentMethod:(id<STPPaymentMethod>)selectedPaymentMethod {
     STPPaymentMethodTuple *tuple = [self new];
     tuple.paymentMethods = paymentMethods ?: @[];

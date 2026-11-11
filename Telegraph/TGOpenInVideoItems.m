@@ -12,62 +12,69 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 
-static NSString *TGYouTubeVideoIdentifierFromURL(NSURL *url)
+static bool OGCompatHostMatches(NSString *host, NSString *domain)
+{
+    return [host isEqualToString:domain] || [host hasSuffix:[@"." stringByAppendingString:domain]];
+}
+
+static NSString *OGCompatYouTubeQueryVideo(NSString *query)
+{
+    for (NSString *pair in [query componentsSeparatedByString:@"&"])
+    {
+        NSRange equals = [pair rangeOfString:@"="];
+        if (equals.location == NSNotFound || ![[pair substringToIndex:equals.location] isEqualToString:@"v"])
+            continue;
+        return [[pair substringFromIndex:equals.location + 1] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    }
+    return nil;
+}
+
+static NSString *OGCompatYouTubePathVideo(NSString *path)
+{
+    NSArray *segments = [path componentsSeparatedByString:@"/"];
+    NSArray *markers = @[@"shorts", @"embed", @"live", @"v"];
+    for (NSUInteger position = 0; position + 1 < segments.count; position++)
+    {
+        if ([markers containsObject:[segments[position] lowercaseString]])
+            return segments[position + 1];
+    }
+    return nil;
+}
+
+static NSString *OGCompatYouTubeVideoId(NSURL *url)
 {
     NSString *host = [url.host lowercaseString];
     if (host.length == 0)
         return nil;
 
-    NSString *candidate = nil;
-
-    if ([host isEqualToString:@"youtu.be"] || [host hasSuffix:@".youtu.be"])
+    NSString *raw = nil;
+    if (OGCompatHostMatches(host, @"youtu.be"))
     {
-        for (NSString *component in [url.path componentsSeparatedByString:@"/"])
+        for (NSString *segment in [url.path componentsSeparatedByString:@"/"])
         {
-            if (component.length != 0)
+            if (segment.length != 0)
             {
-                candidate = component;
+                raw = segment;
                 break;
             }
         }
     }
-    else if ([host isEqualToString:@"youtube.com"] || [host hasSuffix:@".youtube.com"] || [host isEqualToString:@"youtube-nocookie.com"] || [host hasSuffix:@".youtube-nocookie.com"])
+    else if (OGCompatHostMatches(host, @"youtube.com") || OGCompatHostMatches(host, @"youtube-nocookie.com"))
     {
-        for (NSString *queryItem in [url.query componentsSeparatedByString:@"&"])
-        {
-            NSRange separator = [queryItem rangeOfString:@"="];
-            if (separator.location != NSNotFound && [[queryItem substringToIndex:separator.location] isEqualToString:@"v"])
-            {
-                candidate = [[queryItem substringFromIndex:separator.location + 1] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-                break;
-            }
-        }
-
-        if (candidate.length == 0)
-        {
-            NSArray *components = [url.path componentsSeparatedByString:@"/"];
-            for (NSUInteger index = 0; index + 1 < components.count; index++)
-            {
-                NSString *component = [components[index] lowercaseString];
-                if ([component isEqualToString:@"shorts"] || [component isEqualToString:@"embed"] || [component isEqualToString:@"live"] || [component isEqualToString:@"v"])
-                {
-                    candidate = components[index + 1];
-                    break;
-                }
-            }
-        }
+        raw = OGCompatYouTubeQueryVideo(url.query);
+        if (raw.length == 0)
+            raw = OGCompatYouTubePathVideo(url.path);
     }
 
-    if (candidate.length == 0)
+    if (raw.length == 0)
         return nil;
 
-    NSCharacterSet *invalidCharacters = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"] invertedSet];
-    NSRange invalidRange = [candidate rangeOfCharacterFromSet:invalidCharacters];
-    if (invalidRange.location == 0)
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"];
+    NSRange bad = [raw rangeOfCharacterFromSet:[allowed invertedSet]];
+    if (bad.location == 0)
         return nil;
-    if (invalidRange.location != NSNotFound)
-        candidate = [candidate substringToIndex:invalidRange.location];
-    return candidate.length == 0 ? nil : candidate;
+    NSString *trimmed = bad.location == NSNotFound ? raw : [raw substringToIndex:bad.location];
+    return trimmed.length == 0 ? nil : trimmed;
 }
 
 @interface TGOpenInYoutubeItem : TGOpenInVideoItem
@@ -158,7 +165,7 @@ static NSString *TGYouTubeVideoIdentifierFromURL(NSURL *url)
 - (void)performOpenIn
 {
     NSURL *url = (NSURL *)self.object;
-    NSString *identifier = TGYouTubeVideoIdentifierFromURL(url);
+    NSString *identifier = OGCompatYouTubeVideoId(url);
     if (identifier.length == 0)
         identifier = [TGEmbedYoutubePlayerView _youtubeVideoIdFromText:url.absoluteString originalUrl:url.absoluteString startTime:NULL];
     if (identifier.length == 0)
@@ -183,7 +190,7 @@ static NSString *TGYouTubeVideoIdentifierFromURL(NSURL *url)
     if (![object isKindOfClass:[NSURL class]])
         return false;
     NSURL *url = (NSURL *)object;
-    return TGYouTubeVideoIdentifierFromURL(url).length != 0;
+    return OGCompatYouTubeVideoId(url).length != 0;
 }
 
 @end

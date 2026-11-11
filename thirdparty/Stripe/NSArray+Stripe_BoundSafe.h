@@ -10,7 +10,7 @@
 
 @interface NSArray (Stripe_BoundSafe)
 
-- (id)stp_boundSafeObjectAtIndex:(NSInteger)index;
+- (id _Nullable)stp_boundSafeObjectAtIndex:(NSInteger)index;
 
 @end
 

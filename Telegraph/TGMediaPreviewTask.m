@@ -19,6 +19,7 @@
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
 
 #import "TGTelegramNetworking.h"
+#import "TGImageDownloadActor.h"
 #import "TGDownloadMessagesSignal.h"
 #import "TGTelegraph.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
@@ -43,46 +44,6 @@ static SSignal *TGThumbnailMessageSignal(TGDownloadMessage *request)
     {
         return [queues[lane] enqueue:[TGDownloadMessagesSignal downloadMessages:@[request]]];
     }];
-}
-
-static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *imageUri, TGMediaOriginInfo *originInfo, int *datacenterId, int64_t *identifier)
-{
-    if ([imageUri hasPrefix:@"photo:"] || [imageUri hasPrefix:@"documentthumb:"])
-    {
-        NSArray *components = [imageUri componentsSeparatedByString:@":"];
-        if (components.count < 7)
-            return nil;
-
-        if (datacenterId != NULL)
-            *datacenterId = [[components objectAtIndex:1] intValue];
-        int64_t fileId = [[components objectAtIndex:2] longLongValue];
-        int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-        NSString *thumbSize = [components objectAtIndex:5];
-        NSData *uriFileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-        NSData *originFileReference = [originInfo fileReference];
-        NSData *fileReference = originFileReference.length != 0 ? originFileReference : (uriFileReference ?: [NSData data]);
-        if (identifier != NULL)
-            *identifier = fileId;
-
-        if ([imageUri hasPrefix:@"documentthumb:"])
-        {
-            TLInputFileLocation$inputDocumentFileLocation *location = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
-            location.n_id = fileId;
-            location.access_hash = accessHash;
-            location.file_reference = fileReference;
-            location.thumb_size = thumbSize ?: @"";
-            return location;
-        }
-
-        TLInputFileLocation$inputPhotoFileLocation *location = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
-        location.n_id = fileId;
-        location.access_hash = accessHash;
-        location.file_reference = fileReference;
-        location.thumb_size = thumbSize ?: @"";
-        return location;
-    }
-
-    return nil;
 }
 
 @interface TGMediaPreviewTask () <ASWatcher>
@@ -279,13 +240,13 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
     _completion = completion;
     
     int datacenterId = 0;
-    int64_t modernIdentifier = identifier;
-    TLInputFileLocation *modernLocation = TGIOS6PreviewInputLocationFromImageUri(imageUri, originInfo, &datacenterId, &modernIdentifier);
-    if (modernLocation != nil)
+    int64_t thumbnailIdentifier = identifier;
+    TLInputFileLocation *thumbnailLocation = OGInputLocationFromImageUrl(imageUri, originInfo, &datacenterId, &thumbnailIdentifier);
+    if (thumbnailLocation != nil)
     {
         NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithDictionary:@{
-                                                                                            @"identifier": @(modernIdentifier),
-                                                                                            @"fileLocation": modernLocation,
+                                                                                            @"identifier": @(thumbnailIdentifier),
+                                                                                            @"fileLocation": thumbnailLocation,
                                                                                             @"storeFilePath": targetFilePath,
                                                                                             @"datacenterId": @(datacenterId),
                                                                                             @"encryptionArgs": @{},
@@ -294,7 +255,7 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
         if (originInfo != nil)
             options[@"originInfo"] = originInfo;
         
-        [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/multipart-file/(modern-preview:%" PRId64 ":%d:%lu)", modernIdentifier, datacenterId, (unsigned long)[imageUri hash]] options:options watcher:self];
+        [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/multipart-file/(modern-preview:%" PRId64 ":%d:%lu)", thumbnailIdentifier, datacenterId, (unsigned long)[imageUri hash]] options:options watcher:self];
         return;
     }
     

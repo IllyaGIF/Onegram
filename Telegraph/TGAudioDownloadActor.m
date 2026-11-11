@@ -123,7 +123,7 @@
             TLInputFileLocation$inputDocumentFileLocation *inputDocumentLocation = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
             inputDocumentLocation.n_id = audioAttachment.audioId;
             inputDocumentLocation.access_hash = audioAttachment.accessHash;
-            inputDocumentLocation.file_reference = [audioAttachment.ios6OriginInfo fileReference] ?: [NSData data];
+            inputDocumentLocation.file_reference = [audioAttachment.downloadOriginInfo fileReference] ?: [NSData data];
             inputFileLocation = inputDocumentLocation;
             
             datacenterId = audioAttachment.datacenterId;
@@ -131,17 +131,15 @@
         
         if (inputFileLocation != nil)
         {
-            NSMutableDictionary *multipartOptions = [[NSMutableDictionary alloc] initWithDictionary:@{
-                @"fileLocation": inputFileLocation,
-                @"encryptedSize": @(encryptedSize),
-                @"decryptedSize": @(decryptedSize),
-                @"storeFilePath": audioFilePath,
-                @"datacenterId": @(datacenterId),
-                @"encryptionArgs": encryptionArgs,
-                @"mediaTypeTag": @(TGNetworkMediaTypeTagAudio)
-            }];
-            if (audioAttachment.ios6OriginInfo != nil)
-                multipartOptions[@"originInfo"] = audioAttachment.ios6OriginInfo;
+            NSMutableDictionary *multipartOptions = [[NSMutableDictionary alloc] init];
+            multipartOptions[@"fileLocation"] = inputFileLocation;
+            multipartOptions[@"encryptedSize"] = @(encryptedSize);
+            multipartOptions[@"decryptedSize"] = @(decryptedSize);
+            multipartOptions[@"storeFilePath"] = audioFilePath;
+            multipartOptions[@"datacenterId"] = @(datacenterId);
+            multipartOptions[@"encryptionArgs"] = encryptionArgs;
+            multipartOptions[@"mediaTypeTag"] = @(TGNetworkMediaTypeTagAudio);
+            multipartOptions[@"originInfo"] = audioAttachment.downloadOriginInfo;
             if (audioAttachment.audioId != 0)
                 multipartOptions[@"identifier"] = @(audioAttachment.audioId);
             

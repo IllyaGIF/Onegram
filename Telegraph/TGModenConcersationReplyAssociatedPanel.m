@@ -41,8 +41,8 @@
     TGMessage *_userResolutionAttemptedMessage;
     id _resolvedAuthor;
     NSString *_resolvedTitle;
-    bool _compactMode;
-    NSString *_compactPrefix;
+    bool _isCondensed;
+    NSString *_condensedPrefix;
 }
 
 @end
@@ -152,31 +152,31 @@
 
 - (void)setCompactMode:(bool)compactMode
 {
-    if (_compactMode != compactMode)
-    {
-        _compactMode = compactMode;
-        [self updateMessage:_message];
-        [self setNeedsLayout];
-    }
+    if (_isCondensed == compactMode)
+        return;
+
+    _isCondensed = compactMode;
+    [self updateMessage:_message];
+    [self setNeedsLayout];
 }
 
 - (bool)compactMode
 {
-    return _compactMode;
+    return _isCondensed;
 }
 
 - (void)setCompactPrefix:(NSString *)compactPrefix
 {
-    if (_compactPrefix != compactPrefix && ![_compactPrefix isEqualToString:compactPrefix])
-    {
-        _compactPrefix = [compactPrefix copy];
-        [self updateMessage:_message];
-    }
+    if (_condensedPrefix == compactPrefix || [_condensedPrefix isEqualToString:compactPrefix])
+        return;
+
+    _condensedPrefix = [compactPrefix copy];
+    [self updateMessage:_message];
 }
 
 - (NSString *)compactPrefix
 {
-    return _compactPrefix;
+    return _condensedPrefix;
 }
 
 - (NSString *)contentText
@@ -199,7 +199,7 @@
 
 - (CGFloat)preferredHeight
 {
-    return _compactMode ? 28.0f : 41.0f;
+    return _isCondensed ? 28.0f : 41.0f;
 }
 
 - (void)setSendAreaWidth:(CGFloat)sendAreaWidth attachmentAreaWidth:(CGFloat)attachmentAreaWidth
@@ -231,21 +231,17 @@
         
         _wrapperView.frame = CGRectMake(attachmentAreaWidth, 0.0f, boundsSize.width - attachmentAreaWidth - 40.0f - sendAreaWidth, boundsSize.height);
 
-        if (_compactMode)
+        _nameLabel.hidden = _imageView.hidden = _imageIconView.hidden = _isCondensed;
+
+        if (_isCondensed)
         {
-            _nameLabel.hidden = true;
-            _imageView.hidden = true;
-            _imageIconView.hidden = true;
-            _closeButton.frame = CGRectMake(boundsSize.width - sendAreaWidth - _closeButton.frame.size.width, CGFloor((boundsSize.height - _closeButton.frame.size.height) / 2.0f), _closeButton.frame.size.width, _closeButton.frame.size.height);
+            CGSize closeSize = _closeButton.frame.size;
+            _closeButton.frame = CGRectMake(boundsSize.width - sendAreaWidth - closeSize.width, CGFloor((boundsSize.height - closeSize.height) / 2.0f), closeSize.width, closeSize.height);
             _lineView.frame = CGRectMake(4.0f, 4.0f, 2.0f, boundsSize.height - 8.0f);
             _contentLabel.frame = CGRectMake(12.0f, 0.0f, MAX(0.0f, _wrapperView.bounds.size.width - 16.0f), boundsSize.height);
             return;
         }
 
-        _nameLabel.hidden = false;
-        _imageView.hidden = false;
-        _imageIconView.hidden = false;
-        
         CGFloat leftPadding = 0.0f;
         if (_imageView != nil)
         {
@@ -553,7 +549,7 @@
         imageSignal = nil;
     }
     
-    if (_compactMode)
+    if (_isCondensed)
         imageSignal = nil;
 
     if (imageSignal != nil)
@@ -570,10 +566,9 @@
         }
     }
     
-    NSString *contentText = [(text ?: @"") stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
-    if (_compactMode && _compactPrefix.length != 0)
-        contentText = [NSString stringWithFormat:@"%@ · %@", _compactPrefix, contentText];
-    _contentLabel.text = contentText;
+    NSString *flattened = [(text ?: @"") stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    bool prefixed = _isCondensed && _condensedPrefix.length != 0;
+    _contentLabel.text = prefixed ? [NSString stringWithFormat:@"%@ · %@", _condensedPrefix, flattened] : flattened;
     _contentLabel.textColor = textColor;
     _contentLabel.lineBreakMode = lineBreakMode;
     _contentLabel.numberOfLines = 1;

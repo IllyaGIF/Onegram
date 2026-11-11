@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTTransformInterpolator.h
 //  Lottie
@@ -20,16 +20,16 @@
 
 + (instancetype)transformForLayer:(LOTLayer *)layer;
 
-- (instancetype)initWithPosition:(NSArray *)position
-                        rotation:(NSArray *)rotation
-                          anchor:(NSArray *)anchor
-                           scale:(NSArray *)scale;
+- (instancetype)initWithPosition:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)position
+                        rotation:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)rotation
+                          anchor:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)anchor
+                           scale:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)scale;
 
-- (instancetype)initWithPositionX:(NSArray *)positionX
-                        positionY:(NSArray *)positionY
-                         rotation:(NSArray *)rotation
-                           anchor:(NSArray *)anchor
-                            scale:(NSArray *)scale;
+- (instancetype)initWithPositionX:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionX
+                        positionY:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionY
+                         rotation:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)rotation
+                           anchor:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)anchor
+                            scale:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)scale;
 
 @property (nonatomic, strong) LOTTransformInterpolator * inputNode;
 
@@ -39,7 +39,7 @@
 @property (nonatomic, readonly) LOTNumberInterpolator *rotationInterpolator;
 @property (nonatomic, readonly) LOTNumberInterpolator *positionXInterpolator;
 @property (nonatomic, readonly) LOTNumberInterpolator *positionYInterpolator;
-@property (nonatomic, strong) NSString *parentKeyName;
+@property (nonatomic, strong) NSString *_Nullable parentKeyName;
 
 - (CATransform3D)transformForFrame:(NSNumber *)frame;
 - (BOOL)hasUpdateForFrame:(NSNumber *)frame;

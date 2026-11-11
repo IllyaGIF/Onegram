@@ -38,7 +38,7 @@
 #define atan2d(y,x) (RADEG*atan2(y,x))
 
 /* A macro to compute the number of days elapsed since 2000 Jan 0.0 */
-/* (which is equal to 1999 Dec 31, 0h UT)                          */
+/* (which is equal to 1999 Dec 31, 0h UT)                           */
 #define days_since_2000_Jan_0(y,m,d) \
 (367L*(y)-((7*((y)+(((m)+9)/12)))/4)+((275*(m))/9)+(d)-730530L)
 
@@ -102,11 +102,11 @@
 -(double) GMST0:(double) d
 {
     double sidtim0;
-    /* Sidtime at 0h UT = L (Sun's mean longitude) + 180.0 degr */
+    /* Sidtime at 0h UT = L (Sun's mean longitude) + 180.0 degr  */
     /* L = M + w, as defined in sunpos().  Since I'm too lazy to */
-    /* add these numbers, I'll let the C compiler do it for me. */
-    /* Any decent C compiler will add the constants at compile  */
-    /* time, imposing no runtime or code overhead.              */
+    /* add these numbers, I'll let the C compiler do it for me.  */
+    /* Any decent C compiler will add the constants at compile   */
+    /* time, imposing no runtime or code overhead.               */
     sidtim0 = [self revolution: ( 180.0 + 356.0470 + 282.9404 ) +
                ( 0.9856002585 + 4.70935E-5 ) * d];
     return sidtim0;
@@ -114,9 +114,9 @@
 
 /******************************************************/
 /* Computes the Sun's ecliptic longitude and distance */
-/* at an instant given in d, number of days since    */
-/* 2000 Jan 0.0.  The Sun's ecliptic latitude is not */
-/* computed, since it's always very near 0.          */
+/* at an instant given in d, number of days since     */
+/* 2000 Jan 0.0.  The Sun's ecliptic latitude is not  */
+/* computed, since it's always very near 0.           */
 /******************************************************/
 -(void) sunposAtDay:(double)d longitude:(double*)lon r:(double *)r
 {
@@ -137,11 +137,11 @@
     E = M + e * RADEG * sind(M) * ( 1.0 + e * cosd(M) );
     x = cosd(E) - e;
     y = sqrt( 1.0 - e*e ) * sind(E);
-   *r = sqrt( x*x + y*y );              /* Solar distance */
+    *r = sqrt( x*x + y*y );              /* Solar distance */
     v = atan2d( y, x );                  /* True anomaly */
-   *lon = v + w;                        /* True solar longitude */
+    *lon = v + w;                        /* True solar longitude */
     if ( *lon >= 360.0 )
-       *lon -= 360.0;                   /* Make it 0..360 degrees */
+        *lon -= 360.0;                   /* Make it 0..360 degrees */
 }
 
 -(void) sun_RA_decAtDay:(double)d RA:(double*)RA decl:(double *)dec  r:(double *)r
@@ -168,8 +168,8 @@
     ze = ys * sind(obl_ecl);
     
     /* Convert to spherical coordinates */
-   *RA = atan2d( ye, xe );
-   *dec = atan2d( ze, sqrt(xe*xe + ye*ye) );
+    *RA = atan2d( ye, xe );
+    *dec = atan2d( ze, sqrt(xe*xe + ye*ye) );
     
 }  /* sun_RA_dec */
 
@@ -216,33 +216,33 @@ __sunriset__( year, month, day, lon, lat, -35.0/60.0, 1, rise, set )
 }
 
 /***************************************************************************/
-/* Note: year,month,date = calendar date, 1801-2099 only.            */
-/*      Eastern longitude positive, Western longitude negative      */
-/*      Northern latitude positive, Southern latitude negative      */
-/*      The longitude value IS critical in this function!           */
-/*      altit = the altitude which the Sun should cross             */
-/*              Set to -35/60 degrees for rise/set, -6 degrees      */
-/*              for civil, -12 degrees for nautical and -18         */
-/*              degrees for astronomical twilight.                  */
-/*        upper_limb: non-zero -> upper limb, zero -> center        */
-/*              Set to non-zero (e.g. 1) when computing rise/set    */
-/*              times, and to zero when computing start/end of      */
-/*              twilight.                                           */
-/*      *rise = where to store the rise time                       */
-/*      *set  = where to store the set  time                       */
-/*               Both times are relative to the specified altitude, */
-/*               and thus this function can be used to comupte      */
-/*               various twilight times, as well as rise/set times  */
-/* Return value:  0 = sun rises/sets this day, times stored at       */
-/*                  *trise and *tset.                              */
-/*              +1 = sun above the specified "horizon" 24 hours.    */
-/*                  *trise set to time when the sun is at south,   */
-/*                   minus 12 hours while *tset is set to the south */
-/*                   time plus 12 hours. "Day" length = 24 hours    */
-/*              -1 = sun is below the specified "horizon" 24 hours  */
-/*                   "Day" length = 0 hours, *trise and *tset are   */
-/*                   both set to the time when the sun is at south. */
-/*                                                                  */
+/* Note: year,month,date = calendar date, 1801-2099 only.             */
+/*       Eastern longitude positive, Western longitude negative       */
+/*       Northern latitude positive, Southern latitude negative       */
+/*       The longitude value IS critical in this function!            */
+/*       altit = the altitude which the Sun should cross              */
+/*               Set to -35/60 degrees for rise/set, -6 degrees       */
+/*               for civil, -12 degrees for nautical and -18          */
+/*               degrees for astronomical twilight.                   */
+/*         upper_limb: non-zero -> upper limb, zero -> center         */
+/*               Set to non-zero (e.g. 1) when computing rise/set     */
+/*               times, and to zero when computing start/end of       */
+/*               twilight.                                            */
+/*        *rise = where to store the rise time                        */
+/*        *set  = where to store the set  time                        */
+/*                Both times are relative to the specified altitude,  */
+/*                and thus this function can be used to comupte       */
+/*                various twilight times, as well as rise/set times   */
+/* Return value:  0 = sun rises/sets this day, times stored at        */
+/*                    *trise and *tset.                               */
+/*               +1 = sun above the specified "horizon" 24 hours.     */
+/*                    *trise set to time when the sun is at south,    */
+/*                    minus 12 hours while *tset is set to the south  */
+/*                    time plus 12 hours. "Day" length = 24 hours     */
+/*               -1 = sun is below the specified "horizon" 24 hours   */
+/*                    "Day" length = 0 hours, *trise and *tset are    */
+/*                    both set to the time when the sun is at south.  */
+/*                                                                    */
 /**********************************************************************/
 -(int)sunRiseSetHelperForYear:(int)year month:(int)month day:(int)day longitude:(double)lon latitude:(double)lat
                      altitude:(double)altit upper_limb:(int)upper_limb trise:(double *)trise tset:(double *)tset
@@ -295,8 +295,8 @@ __sunriset__( year, month, day, lon, lat, -35.0/60.0, 1, rise, set )
     }
     
     /* Store rise and set times - in hours UT */
-   *trise = tsouth - t;
-   *tset  = tsouth + t;
+    *trise = tsouth - t;
+    *tset  = tsouth + t;
     
     return rc;
 }  /* __sunriset__ */

@@ -4,6 +4,19 @@
 #import "../NSOutputStream+TL.h"
 
 
+static int64_t OGCompatUnsignedPeerId(int64_t peerId)
+{
+    return peerId < 0 ? (int64_t)(uint32_t)(int32_t)peerId : peerId;
+}
+
+static void OGCompatWriteThumbnailLocation(NSOutputStream *os, int64_t objectId, int64_t accessHash, NSData *fileReference, NSString *thumbSize)
+{
+    [os writeInt64:objectId];
+    [os writeInt64:accessHash];
+    [os writeBytes:fileReference ?: [NSData data]];
+    [os writeString:thumbSize ?: @""];
+}
+
 @implementation TLInputFileLocation
 
 
@@ -107,32 +120,17 @@
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    int32_t flags = self.big ? 1 : 0;
-    [os writeInt32:flags];
+    [os writeInt32:self.big ? 1 : 0];
     if (self.peer_type == 2)
     {
-        int64_t chatId = self.peer_id;
-        if (chatId < 0)
-            chatId = -chatId;
         [os writeInt32:(int32_t)0x35a95cb9];
-        [os writeInt64:chatId];
-    }
-    else if (self.peer_type == 3)
-    {
-        int64_t channelId = self.peer_id;
-        if (channelId < 0)
-            channelId = (int64_t)(uint32_t)((int32_t)channelId);
-        [os writeInt32:(int32_t)0x27bcbbfc];
-        [os writeInt64:channelId];
-        [os writeInt64:self.access_hash];
+        [os writeInt64:self.peer_id < 0 ? -self.peer_id : self.peer_id];
     }
     else
     {
-        int64_t userId = self.peer_id;
-        if (userId < 0)
-            userId = (int64_t)(uint32_t)((int32_t)userId);
-        [os writeInt32:(int32_t)0xdde8a54c];
-        [os writeInt64:userId];
+        bool isChannel = self.peer_type == 3;
+        [os writeInt32:isChannel ? (int32_t)0x27bcbbfc : (int32_t)0xdde8a54c];
+        [os writeInt64:OGCompatUnsignedPeerId(self.peer_id)];
         [os writeInt64:self.access_hash];
     }
     [os writeInt64:self.photo_id];
@@ -234,10 +232,7 @@
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt64:self.n_id];
-    [os writeInt64:self.access_hash];
-    [os writeBytes:self.file_reference ?: [NSData data]];
-    [os writeString:self.thumb_size ?: @""];
+    OGCompatWriteThumbnailLocation(os, self.n_id, self.access_hash, self.file_reference, self.thumb_size);
 }
 
 
@@ -296,10 +291,7 @@
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt64:self.n_id];
-    [os writeInt64:self.access_hash];
-    [os writeBytes:self.file_reference ?: [NSData data]];
-    [os writeString:self.thumb_size ?: @""];
+    OGCompatWriteThumbnailLocation(os, self.n_id, self.access_hash, self.file_reference, self.thumb_size);
 }
 
 

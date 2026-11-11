@@ -1,5 +1,5 @@
-#ifndef TGIOS6_RTC_BASE_THREAD_H
-#define TGIOS6_RTC_BASE_THREAD_H
+#ifndef OG_COMPAT_RTC_BASE_THREAD_H
+#define OG_COMPAT_RTC_BASE_THREAD_H
 
 #include <algorithm>
 #include <errno.h>
@@ -70,11 +70,11 @@ public:
         return current;
     }
 
-    template <class Functor>
-    void PostTask(Functor functor) { Enqueue(std::move(functor), 0); }
+    template <typename Callable>
+    void PostTask(Callable callable) { Enqueue(std::move(callable), 0); }
 
-    template <class Functor, class Delay>
-    void PostDelayedTask(Functor functor, Delay delay) { Enqueue(std::move(functor), delay.ms()); }
+    template <typename Callable, typename Delay>
+    void PostDelayedTask(Callable callable, Delay delay) { Enqueue(std::move(callable), delay.ms()); }
 
 private:
     struct Task {

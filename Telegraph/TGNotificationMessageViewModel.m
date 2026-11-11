@@ -25,6 +25,7 @@
 
 #import "TGPresentation.h"
 #import "TGCommunitySignals.h"
+#import "TGPaidMessagesSignals.h"
 #import "TGModernButtonViewModel.h"
 #import "TGAnimatedStickerViewModel.h"
 #import "TGAnimatedStickerView.h"
@@ -279,7 +280,7 @@ static UIImage *TGPluginServiceGiftImage(CGSize size, bool dark, bool classic)
     CGFloat x = CGFloor((containerSize.width - width) / 2.0f);
     _serviceBackdrop.frame = CGRectMake(x, 3.0f, width, height);
     if (gift)
-        _serviceBackdrop.image = TGPluginServiceGiftImage(CGSizeMake(width, height), _context.presentation.pallete.isDark, [TGPresentation classicIOS6Style]);
+        _serviceBackdrop.image = TGPluginServiceGiftImage(CGSizeMake(width, height), _context.presentation.pallete.isDark, [TGPresentation classicThemeStyle]);
     _serviceContent.frame = CGRectMake(x + padding, 3.0f, inner, height);
     CGFloat buttonWidth = (_serviceButtons.count == 1 ? inner : (inner - 8.0f) / 2.0f);
     for (NSUInteger index = 0; index < _serviceButtons.count; index++)
@@ -1952,6 +1953,15 @@ static TGUser *findUserInArray(int64_t uid, NSArray *array)
                 NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&typeRange objCType:@encode(NSRange)], fontAttributes, nil];
             }
+            break;
+        }
+        case TGMessageActionPaidMessagesRefunded:
+        case TGMessageActionPaidMessagesPrice:
+        case TGMessageActionNoPaidMessagesTokenUsed:
+        {
+            NSString *authorName = [authorPeer isKindOfClass:[TGUser class]] ? authorTitle : nil;
+            NSString *peerName = TGPeerIdIsUser(message.cid) ? [TGDatabaseInstance() loadUser:message.cid].displayFirstName : nil;
+            actionText = [TGPaidMessagesSignals serviceTextForAction:actionMedia outgoing:message.outgoing authorName:authorName peerName:peerName];
             break;
         }
         case TGMessageActionBotAllowed:

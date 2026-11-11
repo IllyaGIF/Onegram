@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 // Created by Oleksii Pavlovskyi on 2/2/17.
 // Copyright (c) 2017 Airbnb. All rights reserved.

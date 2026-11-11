@@ -54,15 +54,24 @@
 #import "TGLegacyComponentsContext.h"
 
 #import "TGPresentation.h"
+#import "TGCustomEmojiKeyboardView.h"
+#import "TGCustomEmojiSignals.h"
+#import "TGStickerCreationController.h"
 
 static const CGFloat preloadInset = 160.0f;
 static const CGFloat gifInset = 128.0f;
+
+static id TGStickerKeyboardItemAtIndex(NSArray *items, NSInteger index)
+{
+    return index >= 0 && index < (NSInteger)items.count ? items[(NSUInteger)index] : nil;
+}
 
 typedef enum {
     TGStickerKeyboardViewModeStickers = 0,
     TGStickerKeyboardViewModeGifs,
     TGStickerKeyboardViewModeTrendingFirst,
-    TGStickerKeyboardViewModeTrendingLast
+    TGStickerKeyboardViewModeTrendingLast,
+    TGStickerKeyboardViewModeCustomEmoji
 } TGStickerKeyboardViewMode;
 
 @interface TGStickerKeyboardCollectionView : PSUICollectionView
@@ -154,6 +163,7 @@ typedef enum {
     UIPanGestureRecognizer *_tabPanRecognizer;
     
     TGStickerKeyboardViewMode _mode;
+    TGCustomEmojiKeyboardView *_customEmojiView;
     
     bool _ignoreSetSection;
     
@@ -371,6 +381,12 @@ typedef enum {
                 [strongSelf setMode:TGStickerKeyboardViewModeGifs];
             }
         };
+        _tabPanel.navigateToCustomEmoji = ^{
+            __strong TGStickerKeyboardView *strongSelf = weakSelf;
+            if (strongSelf != nil) {
+                [strongSelf setMode:TGStickerKeyboardViewModeCustomEmoji];
+            }
+        };
         _tabPanel.navigateToTrendingFirst = ^{
             __strong TGStickerKeyboardView *strongSelf = weakSelf;
             if (strongSelf != nil) {
@@ -403,6 +419,14 @@ typedef enum {
                 strongSelf.requestedExpand(false);
             }
         };
+        if (_style == TGStickerKeyboardViewDefaultStyle)
+        {
+            _tabPanel.openStickerCreation = ^{
+                __strong TGStickerKeyboardView *strongSelf = weakSelf;
+                if (strongSelf != nil)
+                    [strongSelf openStickerCreation];
+            };
+        }
         [_tabPanel setTrendingStickersBadge:_trendingStickersBadge];
         [self addSubview:_tabPanel];
         
@@ -525,6 +549,7 @@ typedef enum {
     
     [_searchBar setPallete:presentation.keyboardSearchBarPallete];
     _tabPanel.pallete = presentation.stickerKeyboardPallete;
+    _customEmojiView.presentation = presentation;
     self.backgroundColor = presentation.pallete.chatInputKeyboardBackgroundColor;
     _searchWrapperView.backgroundColor = self.backgroundColor;
     
@@ -675,23 +700,20 @@ typedef enum {
             if (data == nil)
                 data = [[TGCachedConversationData alloc] init];
             
-            if (data.stickerPack == nil) {
-                NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
+            NSDictionary *(^makeResult)(TGStickerPack *) = ^NSDictionary *(TGStickerPack *stickerPack) {
+                NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithObjectsAndKeys:data, @"data", nil];
                 if (dict[@"conversation"] != nil)
                     result[@"conversation"] = dict[@"conversation"];
-                result[@"data"] = data;
-                return [SSignal single:result];
-            } else {
-                return [[TGStickersSignals cachedStickerPack:data.stickerPack] map:^id(TGStickerPack *stickerPack) {
-                    NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-                    if (dict[@"conversation"] != nil)
-                        result[@"conversation"] = dict[@"conversation"];
-                    result[@"data"] = data;
-                    if (stickerPack != nil)
-                        result[@"stickerPack"] = stickerPack;
-                    return result;
-                }];
+                if (stickerPack != nil)
+                    result[@"stickerPack"] = stickerPack;
+                return result;
+            };
+            if (data.stickerPack == nil) {
+                return [SSignal single:makeResult(nil)];
             }
+            return [[TGStickersSignals cachedStickerPack:data.stickerPack] map:^id(TGStickerPack *stickerPack) {
+                return makeResult(stickerPack);
+            }];
         }];
     }
     
@@ -699,22 +721,9 @@ typedef enum {
     [pinVar set:_pinPipe.signalProducer()];
     _pinPipe.sink(@true);
     
-    NSArray *keyboardSignals = @[
-        (iosMajorVersion() >= 8 && _style == TGStickerKeyboardViewDefaultStyle) ? [TGRecentGifsSignal recentGifs] : [SSignal single:@[]],
-        [[TGStickersSignals stickerPacks] startOn:[SQueue concurrentDefaultQueue]],
-        [TGRecentStickersSignal recentStickers],
-        [TGFavoriteStickersSignal favoriteStickers],
-        groupStickersSignal,
-        pinVar.signal
-    ];
-    SSignal *combinedSignal = [SSignal combineSignals:keyboardSignals withInitialStates:@[
-        @[],
-        @{@"packs": @[], @"featuredPacks": @[], @"featuredPacksUnreadIds": @[]},
-        @{@"documents": @[], @"dates": @{}},
-        @[],
-        @{},
-        @true
-    ]];
+    SSignal *recentGifsSignal = (iosMajorVersion() >= 8 && _style == TGStickerKeyboardViewDefaultStyle) ? [TGRecentGifsSignal recentGifs] : [SSignal single:@[]];
+    NSArray *initialStates = @[@[], @{@"packs": @[], @"featuredPacks": @[], @"featuredPacksUnreadIds": @[]}, @{@"documents": @[], @"dates": @{}}, @[], @{}, @true];
+    SSignal *combinedSignal = [SSignal combineSignals:@[recentGifsSignal, [[TGStickersSignals stickerPacks] startOn:[SQueue concurrentDefaultQueue]], [TGRecentStickersSignal recentStickers], [TGFavoriteStickersSignal favoriteStickers], groupStickersSignal, pinVar.signal] withInitialStates:initialStates];
     
     __weak TGStickerKeyboardView *weakSelf = self;
     _stickerPacksDisposable = [[combinedSignal deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *combinedResult)
@@ -1031,19 +1040,7 @@ typedef enum {
     _searchBar.frame = CGRectMake(0.0f, -50.0f, width, [_searchBar baseHeight]);
     _searchMaskView.frame = CGRectMake(0.0f, 0.0, self.frame.size.width, 10.0f);
     
-    if (_mode == TGStickerKeyboardViewModeStickers) {
-        _collectionView.frame = CGRectMake(left, -preloadInset, width, size.height + preloadInset * 2.0f);
-        _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-        _trendingCollectionView.frame = CGRectMake(size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-    } else if (_mode == TGStickerKeyboardViewModeGifs) {
-        _collectionView.frame = CGRectMake(size.width + left, -preloadInset, width, size.height + preloadInset * 2.0f);
-        _gifsCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
-        _trendingCollectionView.frame = CGRectMake(size.width * 2.0f + left, -gifInset, width, size.height + gifInset * 2.0f);
-    } else {
-        _collectionView.frame = CGRectMake(-size.width * 2.0 + left, -preloadInset, width, size.height + preloadInset * 2.0f);
-        _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-        _trendingCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
-    }
+    [self layoutPagesForSize:size];
     [_collectionLayout invalidateLayout];
     [_gifsCollectionLayout invalidateLayout];
     [_trendingCollectionLayout invalidateLayout];
@@ -1465,9 +1462,7 @@ typedef enum {
 
 - (TGDocumentMediaAttachment *)gifAtIndexPath:(NSIndexPath *)indexPath
 {
-    if (indexPath == nil || indexPath.item >= _recentGifs.count)
-        return nil;
-    return _recentGifs[indexPath.item];
+    return indexPath == nil ? nil : TGStickerKeyboardItemAtIndex(_recentGifs, indexPath.item);
 }
 
 - (TGStickerPack *)stickerPackAtIndexPath:(NSIndexPath *)indexPath
@@ -1478,13 +1473,12 @@ typedef enum {
     if (indexPath.section == 0 || indexPath.section == 1 || indexPath.section == 2 || indexPath.section == [self lastGroupSection])
     {
         TGDocumentMediaAttachment *document = [self documentAtIndexPath:indexPath];
-        return document == nil ? nil : _recentDocumentToStickerPack[@(document.documentId)];
+        return _recentDocumentToStickerPack[@(document.documentId)];
     }
-
-    NSInteger packIndex = indexPath.section - 3;
-    if (packIndex < 0 || packIndex >= (NSInteger)_stickerPacks.count)
-        return nil;
-    return _stickerPacks[(NSUInteger)packIndex];
+    else
+    {
+        return TGStickerKeyboardItemAtIndex(_stickerPacks, indexPath.section - 3);
+    }
 }
 
 - (NSInteger)lastGroupSection
@@ -1497,42 +1491,32 @@ typedef enum {
     if (indexPath == nil)
         return nil;
 
-    TGDocumentMediaAttachment *document = nil;
     if (indexPath.section == 0)
     {
-        if (indexPath.item >= _favoriteDocuments.count)
-            return nil;
-        document = _favoriteDocuments[indexPath.item];
+        TGDocumentMediaAttachment *document = TGStickerKeyboardItemAtIndex(_favoriteDocuments, indexPath.item);
         if (document.originInfo == nil)
             document.originInfo = [TGMediaOriginInfo mediaOriginInfoForFavoriteStickerWithFileReference:nil fileReferences:nil];
+        return document;
     }
     else if (indexPath.section == 1)
     {
-        if (indexPath.item >= _recentDocuments.count)
-            return nil;
-        document = _recentDocuments[indexPath.item];
+        TGDocumentMediaAttachment *document = TGStickerKeyboardItemAtIndex(_recentDocuments, indexPath.item);
         if (document.originInfo == nil)
             document.originInfo = [TGMediaOriginInfo mediaOriginInfoForRecentStickerWithFileReference:nil fileReferences:nil];
+        return document;
     }
     else if (indexPath.section == 2 || indexPath.section == [self lastGroupSection])
     {
-        if (indexPath.item >= _groupDocuments.count)
-            return nil;
-        document = _groupDocuments[indexPath.item];
+        return TGStickerKeyboardItemAtIndex(_groupDocuments, indexPath.item);
     }
     else
     {
-        NSInteger packIndex = indexPath.section - 3;
-        if (packIndex < 0 || packIndex >= (NSInteger)_stickerPacks.count)
-            return nil;
-        TGStickerPack *pack = _stickerPacks[(NSUInteger)packIndex];
-        if (indexPath.item >= pack.documents.count)
-            return nil;
-        document = pack.documents[indexPath.item];
-        if (document.originInfo == nil)
+        TGStickerPack *pack = TGStickerKeyboardItemAtIndex(_stickerPacks, indexPath.section - 3);
+        TGDocumentMediaAttachment *document = TGStickerKeyboardItemAtIndex(pack.documents, indexPath.item);
+        if (document != nil && document.originInfo == nil)
             document.originInfo = [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:document];
+        return document;
     }
-    return document;
 }
 
 - (PSUICollectionReusableView *)collectionView:(PSUICollectionView *)collectionView viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath
@@ -1727,9 +1711,8 @@ typedef enum {
         TGGifKeyboardCell *cell = (TGGifKeyboardCell *)[collectionView cellForItemAtIndexPath:indexPath];
         if (cell != nil && _gifSelected) {
             TGDocumentMediaAttachment *document = [self gifAtIndexPath:indexPath];
-            if (document == nil)
-                return;
-            _gifSelected(document);
+            if (document != nil)
+                _gifSelected(document);
         }
     } else if (collectionView == _trendingCollectionView) {
     } else if (collectionView == _searchCollectionView) {
@@ -1744,15 +1727,9 @@ typedef enum {
             {
                 [cell setDisabledTimeout];
                 
-                if (indexPath.section < 0 || indexPath.section >= (NSInteger)_searchLocalStickerPacks.count)
-                    return;
-                TGStickerPack *pack = _searchLocalStickerPacks[indexPath.section];
-                if (indexPath.item >= pack.documents.count)
-                    return;
-                TGDocumentMediaAttachment *document = pack.documents[indexPath.item];
-                if (document == nil)
-                    return;
-                if (_stickerSelected)
+                TGStickerPack *searchPack = TGStickerKeyboardItemAtIndex(_searchLocalStickerPacks, indexPath.section);
+                TGDocumentMediaAttachment *document = TGStickerKeyboardItemAtIndex(searchPack.documents, indexPath.item);
+                if (document != nil && _stickerSelected)
                     _stickerSelected(document);
                 
                 NSUInteger i = 0;
@@ -1777,9 +1754,7 @@ typedef enum {
             [cell setDisabledTimeout];
             
             TGDocumentMediaAttachment *document = [self documentAtIndexPath:indexPath];
-            if (document == nil)
-                return;
-            if (_stickerSelected)
+            if (document != nil && _stickerSelected)
                 _stickerSelected(document);
         }
     }
@@ -2952,6 +2927,76 @@ typedef enum {
     return false;
 }
 
+- (void)openStickerCreation
+{
+    if (self.isExpanded && self.requestedExpand != nil)
+        self.requestedExpand(false);
+
+    __weak TGStickerKeyboardView *weakSelf = self;
+    [TGStickerCreationController presentFromController:_parentViewController sourceView:_tabPanel sendSticker:^(TGDocumentMediaAttachment *document)
+    {
+        __strong TGStickerKeyboardView *strongSelf = weakSelf;
+        if (strongSelf != nil && strongSelf.stickerSelected != nil)
+            strongSelf.stickerSelected(document);
+    }];
+}
+
+- (void)setCustomEmojiSelected:(void (^)(TGCustomEmojiItem *, UIImage *))customEmojiSelected
+{
+    _customEmojiSelected = [customEmojiSelected copy];
+    bool showCustomEmoji = _customEmojiSelected != nil && _style == TGStickerKeyboardViewDefaultStyle;
+    _tabPanel.showCustomEmoji = showCustomEmoji;
+    if (showCustomEmoji)
+        [self ensureCustomEmojiView];
+}
+
+- (void)ensureCustomEmojiView
+{
+    if (_customEmojiView != nil)
+        return;
+    _customEmojiView = [[TGCustomEmojiKeyboardView alloc] initWithFrame:CGRectZero];
+    _customEmojiView.presentation = _presentation;
+    _customEmojiView.contentInset = UIEdgeInsetsMake(_tabPanel.frame.size.height, 0.0f, 0.0f, 0.0f);
+    __weak TGStickerKeyboardView *weakSelf = self;
+    _customEmojiView.itemSelected = ^(TGCustomEmojiItem *item, UIImage *image)
+    {
+        __strong TGStickerKeyboardView *strongSelf = weakSelf;
+        if (strongSelf != nil && strongSelf->_customEmojiSelected != nil)
+            strongSelf->_customEmojiSelected(item, image);
+    };
+    [self insertSubview:_customEmojiView belowSubview:_tabPanel];
+    [self layoutPagesForSize:self.bounds.size];
+}
+
+- (void)layoutPagesForSize:(CGSize)size
+{
+    CGFloat left = _safeAreaInset.left;
+    CGFloat width = size.width - _safeAreaInset.left - _safeAreaInset.right;
+    CGFloat customEmojiX = 0.0f;
+    if (_mode == TGStickerKeyboardViewModeStickers) {
+        _collectionView.frame = CGRectMake(left, -preloadInset, width, size.height + preloadInset * 2.0f);
+        _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
+        _trendingCollectionView.frame = CGRectMake(size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
+        customEmojiX = -size.width * 2.0f + left;
+    } else if (_mode == TGStickerKeyboardViewModeGifs) {
+        _collectionView.frame = CGRectMake(size.width + left, -preloadInset, width, size.height + preloadInset * 2.0f);
+        _gifsCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
+        _trendingCollectionView.frame = CGRectMake(size.width * 2.0f + left, -gifInset, width, size.height + gifInset * 2.0f);
+        customEmojiX = -size.width + left;
+    } else if (_mode == TGStickerKeyboardViewModeCustomEmoji) {
+        _collectionView.frame = CGRectMake(size.width * 2.0f + left, -preloadInset, width, size.height + preloadInset * 2.0f);
+        _gifsCollectionView.frame = CGRectMake(size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
+        _trendingCollectionView.frame = CGRectMake(size.width * 3.0f + left, -gifInset, width, size.height + gifInset * 2.0f);
+        customEmojiX = left;
+    } else {
+        _collectionView.frame = CGRectMake(-size.width * 2.0 + left, -preloadInset, width, size.height + preloadInset * 2.0f);
+        _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
+        _trendingCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
+        customEmojiX = -size.width * 3.0f + left;
+    }
+    _customEmojiView.frame = CGRectMake(customEmojiX, 0.0f, width, size.height);
+}
+
 - (void)setMode:(TGStickerKeyboardViewMode)mode {
     if (_searchActive)
         return;
@@ -2965,23 +3010,16 @@ typedef enum {
         
         CGSize size = self.bounds.size;
         
-        CGFloat left = _safeAreaInset.left;
-        CGFloat width = size.width - _safeAreaInset.left - _safeAreaInset.right;
+        if (_mode == TGStickerKeyboardViewModeCustomEmoji) {
+            [_customEmojiView loadIfNeeded];
+            CGRect tabPanelFrame = _tabPanel.frame;
+            tabPanelFrame.origin.y = 0.0f;
+            _tabPanel.frame = tabPanelFrame;
+            [self setMaskWithTabPanelOffset:0.0f];
+        }
         
         [UIView animateWithDuration:0.2 animations:^{
-            if (_mode == TGStickerKeyboardViewModeStickers) {
-                _collectionView.frame = CGRectMake(left, -preloadInset, width, size.height + preloadInset * 2.0f);
-                _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-                _trendingCollectionView.frame = CGRectMake(size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-            } else if (_mode == TGStickerKeyboardViewModeGifs) {
-                _collectionView.frame = CGRectMake(size.width + left, -preloadInset, width, size.height + preloadInset * 2.0f);
-                _gifsCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
-                _trendingCollectionView.frame = CGRectMake(size.width * 2.0f + left, -gifInset, width, size.height + gifInset * 2.0f);
-            } else {
-                _collectionView.frame = CGRectMake(-size.width * 2.0 + left, -preloadInset, width, size.height + preloadInset * 2.0f);
-                _gifsCollectionView.frame = CGRectMake(-size.width + left, -gifInset, width, size.height + gifInset * 2.0f);
-                _trendingCollectionView.frame = CGRectMake(left, -gifInset, width, size.height + gifInset * 2.0f);
-            }
+            [self layoutPagesForSize:size];
         }];
         
         if (mode == TGStickerKeyboardViewModeGifs)

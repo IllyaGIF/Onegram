@@ -2145,13 +2145,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         return;
 
     bool manageDirectMessages = [TGChannelDirectMessagesSignals canManageDirectMessagesInChannel:channel];
-    if (!manageDirectMessages && channel.sendPaidMessagesStars > 0)
-    {
-        NSString *price = [[NSString alloc] initWithFormat:@"%lld", channel.sendPaidMessagesStars];
-        [TGCustomAlertView presentAlertWithTitle:nil message:[[NSString alloc] initWithFormat:TGLocalized(@"Channel.DirectMessages.PaidUnsupported"), price] cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
-        return;
-    }
-
     TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
     [progressWindow showWithDelay:0.2];
 

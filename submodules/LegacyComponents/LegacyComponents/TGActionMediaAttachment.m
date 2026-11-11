@@ -228,6 +228,16 @@ static int64_t TGActionMediaAttachmentReadId(NSInputStream *is, bool wideIds, in
         int32_t length = (int32_t)archive.length;
         [data appendBytes:&length length:4];
         [data appendData:archive];
+    } else if (actionType == TGMessageActionPaidMessagesRefunded) {
+        int32_t count = [_actionData[@"count"] intValue];
+        [data appendBytes:&count length:4];
+        int64_t stars = [_actionData[@"stars"] longLongValue];
+        [data appendBytes:&stars length:8];
+    } else if (actionType == TGMessageActionPaidMessagesPrice) {
+        int64_t stars = [_actionData[@"stars"] longLongValue];
+        [data appendBytes:&stars length:8];
+        uint8_t broadcastMessagesAllowed = [_actionData[@"broadcastMessagesAllowed"] boolValue] ? 1 : 0;
+        [data appendBytes:&broadcastMessagesAllowed length:1];
     }
 
     int dataLength = (int)data.length - dataLengthPtr - 4;
@@ -493,6 +503,18 @@ static int64_t TGActionMediaAttachmentReadId(NSInputStream *is, bool wideIds, in
                 }
             }
         }
+    } else if (actionType == TGMessageActionPaidMessagesRefunded) {
+        int32_t count = 0;
+        [is read:(uint8_t *)&count maxLength:4];
+        int64_t stars = 0;
+        [is read:(uint8_t *)&stars maxLength:8];
+        actionAttachment.actionData = @{@"count": @(count), @"stars": @(stars)};
+    } else if (actionType == TGMessageActionPaidMessagesPrice) {
+        int64_t stars = 0;
+        [is read:(uint8_t *)&stars maxLength:8];
+        uint8_t broadcastMessagesAllowed = 0;
+        [is read:&broadcastMessagesAllowed maxLength:1];
+        actionAttachment.actionData = @{@"stars": @(stars), @"broadcastMessagesAllowed": @(broadcastMessagesAllowed != 0)};
     }
     
     return actionAttachment;

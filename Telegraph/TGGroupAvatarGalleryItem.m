@@ -15,6 +15,14 @@
 
 @end
 
+static void OGCompatResolveAvatarUrls(NSString **thumbnailUrl, NSString **fullUrl)
+{
+    NSString *full = [*fullUrl length] != 0 ? *fullUrl : *thumbnailUrl;
+    NSString *thumbnail = [*thumbnailUrl length] != 0 ? *thumbnailUrl : full;
+    *fullUrl = full ?: @"";
+    *thumbnailUrl = thumbnail ?: @"";
+}
+
 @implementation TGGroupAvatarGalleryItem
 
 - (Class)viewClass
@@ -29,23 +37,15 @@
 
 - (instancetype)initWithMessageId:(int32_t)messageId legacyThumbnailUrl:(NSString *)legacyThumbnailUrl legacyUrl:(NSString *)legacyUrl imageId:(int64_t)imageId imageSize:(CGSize)imageSize originInfo:(TGMediaOriginInfo *)originInfo
 {
-    if (legacyUrl.length == 0)
-        legacyUrl = legacyThumbnailUrl;
-    if (legacyThumbnailUrl.length == 0)
-        legacyThumbnailUrl = legacyUrl;
-    if (legacyUrl == nil)
-        legacyUrl = @"";
-    if (legacyThumbnailUrl == nil)
-        legacyThumbnailUrl = @"";
+    OGCompatResolveAvatarUrls(&legacyThumbnailUrl, &legacyUrl);
     
-    NSMutableString *imageUri = [[NSMutableString alloc] initWithString:@"peer-avatar://?"];
-    [imageUri appendFormat:@"legacy-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyUrl ?: @""]];
-    [imageUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUrl ?: @""]];
+    NSMutableArray *query = [[NSMutableArray alloc] initWithObjects:[@"legacy-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyUrl]], [@"legacy-thumbnail-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyThumbnailUrl]], nil];
     if (originInfo != nil)
-        [imageUri appendFormat:@"&origin_info=%@", [TGStringUtils stringByEscapingForURL:[originInfo stringRepresentation]]];
-    [imageUri appendFormat:@"&width=%d&height=%d", (int)imageSize.width, (int)imageSize.height];
+        [query addObject:[@"origin_info=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:[originInfo stringRepresentation]]]];
+    [query addObject:[[NSString alloc] initWithFormat:@"width=%d&height=%d", (int)imageSize.width, (int)imageSize.height]];
     if (imageId != 0)
-        [imageUri appendFormat:@"&imageId=%lld", imageId];
+        [query addObject:[[NSString alloc] initWithFormat:@"imageId=%lld", imageId]];
+    NSString *imageUri = [@"peer-avatar://?" stringByAppendingString:[query componentsJoinedByString:@"&"]];
     
     self = [super initWithUri:imageUri imageSize:imageSize];
     if (self != nil)

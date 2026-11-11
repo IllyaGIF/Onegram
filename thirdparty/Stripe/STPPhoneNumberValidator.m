@@ -12,7 +12,7 @@
 
 @implementation STPPhoneNumberValidator
 
-+ (NSString *)countryCodeOrCurrentLocaleCountryFromString:(NSString *)nillableCode {
++ (NSString *)countryCodeOrCurrentLocaleCountryFromString:(NSString *_Nullable)nillableCode {
     NSString *countryCode = nillableCode;
     if (!countryCode) {
         countryCode = [[NSLocale autoupdatingCurrentLocale] objectForKey:NSLocaleCountryCode];
@@ -29,7 +29,7 @@
 }
 
 + (BOOL)stringIsValidPartialPhoneNumber:(NSString *)string
-                         forCountryCode:(NSString *)nillableCode {
+                         forCountryCode:(NSString *_Nullable)nillableCode {
     NSString *countryCode = [self countryCodeOrCurrentLocaleCountryFromString:nillableCode];
     
     if ([countryCode isEqualToString:@"US"]) {
@@ -41,7 +41,7 @@
 }
 
 + (BOOL)stringIsValidPhoneNumber:(NSString *)string 
-                  forCountryCode:(NSString *)nillableCode {
+                  forCountryCode:(NSString *_Nullable)nillableCode {
     NSString *countryCode = [self countryCodeOrCurrentLocaleCountryFromString:nillableCode];
     
     if ([countryCode isEqualToString:@"US"]) {
@@ -58,7 +58,7 @@
 }
 
 + (NSString *)formattedSanitizedPhoneNumberForString:(NSString *)string 
-                                      forCountryCode:(NSString *)nillableCode {
+                                      forCountryCode:(NSString *_Nullable)nillableCode {
     NSString *countryCode = [self countryCodeOrCurrentLocaleCountryFromString:nillableCode];
     NSString *sanitized = [STPCardValidator sanitizedNumericStringForString:string];
     return [self formattedPhoneNumberForString:sanitized
@@ -71,7 +71,7 @@
 }
 
 + (NSString *)formattedRedactedPhoneNumberForString:(NSString *)string
-                                     forCountryCode:(NSString *)nillableCode {
+                                     forCountryCode:(NSString *_Nullable)nillableCode {
     NSString *countryCode = [self countryCodeOrCurrentLocaleCountryFromString:nillableCode];
     NSScanner *scanner = [NSScanner scannerWithString:string];
     NSMutableString *prefix = [NSMutableString stringWithCapacity:string.length];

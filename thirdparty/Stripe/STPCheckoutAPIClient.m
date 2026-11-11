@@ -7,6 +7,7 @@
 //
 
 #import "STPCheckoutAPIClient.h"
+#import "OGStripeCompat.h"
 #import "STPCheckoutBootstrapResponse.h"
 #import "NSMutableURLRequest+Stripe.h"
 #import "STPAPIClient.h"
@@ -18,8 +19,8 @@
 
 @interface STPCheckoutAPIClient()
 @property(nonatomic, copy)NSString *publishableKey;
-@property(nonatomic)id accountSession;
-@property(nonatomic)id lookupTask;
+@property(nonatomic)OGStripeURLSession accountSession;
+@property(nonatomic)OGStripeURLTask lookupTask;
 @property(nonatomic)STPAPIClient *tokenClient;
 @end
 
@@ -33,7 +34,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
         _publishableKey = publishableKey;
         _merchantName = [NSBundle stp_applicationName];
         _bootstrapPromise = [STPVoidPromise new];
-        id urlSession = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
+        OGStripeURLSession urlSession = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
         NSURL *baseURL = [NSURL URLWithString:CheckoutBaseURLString];
         NSURL *url = [baseURL URLByAppendingPathComponent:@"bootstrap"];
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
@@ -51,7 +52,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
                 if (bootstrap && !bootstrap.accountsDisabled) {
                     NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
                     NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
-                    NSArray *cookies = [NSHTTPCookie cookiesWithResponseHeaderFields:httpResponse.allHeaderFields forURL:baseURL];
+                    OG_COMPAT_GENERIC(NSArray, NSHTTPCookie *) *cookies = [NSHTTPCookie cookiesWithResponseHeaderFields:httpResponse.allHeaderFields forURL:baseURL];
                     NSMutableDictionary *cookieHeaders = [[NSHTTPCookie requestHeaderFieldsWithCookies:cookies] mutableCopy];
                     [cookieHeaders addEntriesFromDictionary:@{
                                                             @"X-Stripe-Client": @"iossdk",
@@ -86,7 +87,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
         if (!self) {
             return [STPPromise promiseWithError:[selfClass cancellationError]];
         }
-        STPPromise *lookupPromise = [STPPromise new];
+        OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccountLookup *) *lookupPromise = [OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccountLookup *) new];
         NSURL *url = [[NSURL URLWithString:CheckoutBaseURLString] URLByAppendingPathComponent:@"account/lookup"];
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
         NSDictionary *payload = @{
@@ -148,7 +149,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
     Class selfClass = self.class;
     return [self.bootstrapPromise voidFlatMap:^STPPromise *{
         STRONG(self);
-        STPPromise *accountPromise = [STPPromise new];
+        OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount*) *accountPromise = [OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount *) new];
         if (!self) {
             return [STPPromise promiseWithError:[selfClass cancellationError]];
         }
@@ -180,7 +181,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
     Class selfClass = self.class;
     return [self.bootstrapPromise voidFlatMap:^STPPromise *{
         STRONG(self);
-        STPPromise *tokenPromise = [STPPromise new];
+        OG_COMPAT_GENERIC(STPPromise, STPToken *) *tokenPromise = [STPPromise new];
         if (!self) {
             return [STPPromise promiseWithError:[selfClass cancellationError]];
         }
@@ -211,7 +212,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
                                       phone:(NSString *)phone {
     WEAK(self);
     Class selfClass = self.class;
-    return [[self.bootstrapPromise voidFlatMap:^STPPromise *{
+    return [[self.bootstrapPromise voidFlatMap:^STPPromise * _Nonnull{
         STRONG(self);
         STPPromise *tokenPromise = [STPPromise new];
         [self.tokenClient createTokenWithCard:cardParams completion:^(STPToken *token, NSError *error) {
@@ -227,7 +228,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
         if (!self) {
             return [STPPromise promiseWithError:[selfClass cancellationError]];
         }
-        STPPromise *accountPromise = [STPPromise new];
+        OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount*) *accountPromise = [OG_COMPAT_GENERIC(STPPromise, STPCheckoutAccount *) new];
         NSURL *url = [[NSURL URLWithString:CheckoutBaseURLString] URLByAppendingPathComponent:@"account"];
         NSString *internationalizedPhone = [STPCardValidator sanitizedNumericStringForString:phone];
         if  ([[[NSLocale autoupdatingCurrentLocale] localeIdentifier] isEqualToString:@"en_US"] && ![internationalizedPhone hasPrefix:@"1"]) {
@@ -261,7 +262,7 @@ static NSString *CheckoutBaseURLString = @"https://checkout.stripe.com/api";
     }];
 }
 
-- (STPToken *)parseTokenFromResponse:(NSURLResponse *)response
+- (STPToken *_Nullable)parseTokenFromResponse:(NSURLResponse *)response
                                          data:(NSData *)data {
     if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
         return nil;

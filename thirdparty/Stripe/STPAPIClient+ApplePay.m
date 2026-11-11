@@ -1,4 +1,5 @@
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import "OGStripeCompat.h"
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 //
 //  STPAPIClient+ApplePay.m
 //  Stripe
@@ -103,8 +104,6 @@ FAUXPAS_IGNORED_IN_FILE(APIAvailability)
 
 @end
 
-void linkSTPAPIClientApplePayCategory(void){}
-
-#else
-void linkSTPAPIClientApplePayCategory(void) {}
 #endif
+
+void linkSTPAPIClientApplePayCategory(void){}

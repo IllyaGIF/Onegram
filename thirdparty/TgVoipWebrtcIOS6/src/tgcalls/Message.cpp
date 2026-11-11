@@ -306,9 +306,9 @@ TryResult TryDeserialize(
 		RTC_LOG(LS_ERROR) << "Could not read message with kId: " << id;
 		return TryResult::Abort;
 	}
-	Message message;
-	message.data = parsed;
-	to = message;
+	Message wrapped;
+	wrapped.data = std::move(parsed);
+	to = std::move(wrapped);
 	return TryResult::Success;
 }
 
@@ -347,13 +347,33 @@ bool TryDeserializeRecursive(
 	return TryDeserializeNext<Types...>::Call(to, reader, singleMessagePacket);
 }
 
-} // namespace
+template <typename... Alternatives>
+struct AlternativeList {
+};
 
 template <typename T>
-void SerializeVariantValue(rtc::ByteBufferWriter &writer, const T &data, bool singleMessagePacket) {
+void WriteAlternative(rtc::ByteBufferWriter &writer, const T &alternative, bool singleMessagePacket) {
 	writer.WriteUInt8(T::kId);
-	Serialize(writer, data, singleMessagePacket);
+	Serialize(writer, alternative, singleMessagePacket);
 }
+
+void WriteHeldAlternative(rtc::ByteBufferWriter &, const Message &, bool, AlternativeList<>) {
+}
+
+template <typename First, typename... Rest>
+void WriteHeldAlternative(
+		rtc::ByteBufferWriter &writer,
+		const Message &message,
+		bool singleMessagePacket,
+		AlternativeList<First, Rest...>) {
+	if (const First *held = absl::get_if<First>(&message.data)) {
+		WriteAlternative(writer, *held, singleMessagePacket);
+		return;
+	}
+	WriteHeldAlternative(writer, message, singleMessagePacket, AlternativeList<Rest...>());
+}
+
+} // namespace
 
 rtc::CopyOnWriteBuffer SerializeMessageWithSeq(
 		const Message &message,
@@ -361,30 +381,20 @@ rtc::CopyOnWriteBuffer SerializeMessageWithSeq(
 		bool singleMessagePacket) {
 	rtc::ByteBufferWriter writer;
 	writer.WriteUInt32(seq);
-	if (const CandidatesListMessage *data = absl::get_if<CandidatesListMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const VideoFormatsMessage *data = absl::get_if<VideoFormatsMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const RequestVideoMessage *data = absl::get_if<RequestVideoMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const RemoteMediaStateMessage *data = absl::get_if<RemoteMediaStateMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const AudioDataMessage *data = absl::get_if<AudioDataMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const VideoDataMessage *data = absl::get_if<VideoDataMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const UnstructuredDataMessage *data = absl::get_if<UnstructuredDataMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const VideoParametersMessage *data = absl::get_if<VideoParametersMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const RemoteBatteryLevelIsLowMessage *data = absl::get_if<RemoteBatteryLevelIsLowMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	} else if (const RemoteNetworkStatusMessage *data = absl::get_if<RemoteNetworkStatusMessage>(&message.data)) {
-		SerializeVariantValue(writer, *data, singleMessagePacket);
-	}
+	WriteHeldAlternative(writer, message, singleMessagePacket, AlternativeList<
+		CandidatesListMessage,
+		VideoFormatsMessage,
+		RequestVideoMessage,
+		RemoteMediaStateMessage,
+		AudioDataMessage,
+		VideoDataMessage,
+		UnstructuredDataMessage,
+		VideoParametersMessage,
+		RemoteBatteryLevelIsLowMessage,
+		RemoteNetworkStatusMessage>());
 
-	auto result = rtc::CopyOnWriteBuffer();
-	result.AppendData(reinterpret_cast<const uint8_t *>(writer.Data()), writer.Length());
+	rtc::CopyOnWriteBuffer result;
+	result.AppendData(writer.Data(), writer.Length());
 
 	return result;
 }
@@ -396,10 +406,9 @@ absl::optional<Message> DeserializeMessage(
 		return absl::nullopt;
 	}
 	using Variant = decltype(std::declval<Message>().data);
-	absl::optional<Message> result((Message()));
-	return TryDeserializeRecursive(result, reader, singleMessagePacket, (Variant*)nullptr)
-		? result
-		: absl::nullopt;
+	absl::optional<Message> result{Message()};
+	const bool parsed = TryDeserializeRecursive(result, reader, singleMessagePacket, static_cast<Variant *>(nullptr));
+	return parsed ? result : absl::nullopt;
 }
 
 absl::optional<rtc::CopyOnWriteBuffer> DeserializeRawMessage(

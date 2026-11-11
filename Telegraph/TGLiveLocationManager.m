@@ -205,7 +205,7 @@
         return session.peerId == peerId;
     }], [[_sessionRemovalPipe.signalProducer() filter:^bool(NSNumber *sessionId)
     {
-        return sessionId.longLongValue == peerId;
+        return [sessionId longLongValue] == peerId;
     }] map:^id(__unused id removedSessionPeerId)
     {
         return nil;

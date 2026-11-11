@@ -6,6 +6,14 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGStringUtils.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMediaOriginInfo.h"
 
+static void OGCompatResolveAvatarUrls(NSString **thumbnailUrl, NSString **fullUrl)
+{
+    NSString *full = [*fullUrl length] != 0 ? *fullUrl : *thumbnailUrl;
+    NSString *thumbnail = [*thumbnailUrl length] != 0 ? *thumbnailUrl : full;
+    *fullUrl = full ?: @"";
+    *thumbnailUrl = thumbnail ?: @"";
+}
+
 @implementation TGUserAvatarGalleryItem
 
 - (instancetype)initWithLegacyThumbnailUrl:(NSString *)legacyThumbnailUrl legacyUrl:(NSString *)legacyUrl imageId:(int64_t)imageId imageSize:(CGSize)imageSize isCurrent:(bool)isCurrent
@@ -15,38 +23,34 @@
 
 - (instancetype)initWithLegacyThumbnailUrl:(NSString *)legacyThumbnailUrl legacyUrl:(NSString *)legacyUrl imageId:(int64_t)imageId imageSize:(CGSize)imageSize isCurrent:(bool)isCurrent originInfo:(TGMediaOriginInfo *)originInfo
 {
-    if (legacyUrl.length == 0)
-        legacyUrl = legacyThumbnailUrl;
-    if (legacyThumbnailUrl.length == 0)
-        legacyThumbnailUrl = legacyUrl;
-    if (legacyUrl == nil)
-        legacyUrl = @"";
-    if (legacyThumbnailUrl == nil)
-        legacyThumbnailUrl = @"";
+    OGCompatResolveAvatarUrls(&legacyThumbnailUrl, &legacyUrl);
     
-    NSMutableString *imageUri = nil;
+    NSString *originQuery = originInfo != nil ? [TGStringUtils stringByEscapingForURL:[originInfo stringRepresentation]] : nil;
+    NSMutableArray *query = [[NSMutableArray alloc] init];
+    NSString *scheme = nil;
     if (imageId != 0)
     {
-        NSString *legacyFilePath = [[TGRemoteImageView sharedCache] pathForCachedData:legacyUrl];
-        imageUri = [[NSMutableString alloc] initWithString:@"media-gallery-image://?"];
-        [imageUri appendFormat:@"&id=%lld", imageId];
-        [imageUri appendFormat:@"&legacy-file-path=%@", [TGStringUtils stringByEscapingForURL:legacyFilePath ?: @""]];
-        [imageUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUrl]];
-        [imageUri appendFormat:@"&width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)imageSize.width, (int)imageSize.height, (int)imageSize.width, (int)imageSize.height];
-        [imageUri appendString:@"&messageId=0&conversationId=0"];
-        if (originInfo != nil)
-            [imageUri appendFormat:@"&origin_info=%@", [TGStringUtils stringByEscapingForURL:[originInfo stringRepresentation]]];
-        [imageUri appendFormat:@"&legacy-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyUrl]];
+        scheme = @"media-gallery-image://?&";
+        NSString *cachedPath = [[TGRemoteImageView sharedCache] pathForCachedData:legacyUrl];
+        [query addObject:[[NSString alloc] initWithFormat:@"id=%lld", imageId]];
+        [query addObject:[@"legacy-file-path=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:cachedPath ?: @""]]];
+        [query addObject:[@"legacy-thumbnail-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyThumbnailUrl]]];
+        [query addObject:[[NSString alloc] initWithFormat:@"width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)imageSize.width, (int)imageSize.height, (int)imageSize.width, (int)imageSize.height]];
+        [query addObject:@"messageId=0&conversationId=0"];
+        if (originQuery != nil)
+            [query addObject:[@"origin_info=" stringByAppendingString:originQuery]];
+        [query addObject:[@"legacy-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyUrl]]];
     }
     else
     {
-        imageUri = [[NSMutableString alloc] initWithString:@"peer-avatar://?"];
-        [imageUri appendFormat:@"legacy-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyUrl]];
-        [imageUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUrl]];
-        if (originInfo != nil)
-            [imageUri appendFormat:@"&origin_info=%@", [TGStringUtils stringByEscapingForURL:[originInfo stringRepresentation]]];
-        [imageUri appendFormat:@"&width=%d&height=%d", (int)imageSize.width, (int)imageSize.height];
+        scheme = @"peer-avatar://?";
+        [query addObject:[@"legacy-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyUrl]]];
+        [query addObject:[@"legacy-thumbnail-cache-url=" stringByAppendingString:[TGStringUtils stringByEscapingForURL:legacyThumbnailUrl]]];
+        if (originQuery != nil)
+            [query addObject:[@"origin_info=" stringByAppendingString:originQuery]];
+        [query addObject:[[NSString alloc] initWithFormat:@"width=%d&height=%d", (int)imageSize.width, (int)imageSize.height]];
     }
+    NSString *imageUri = [scheme stringByAppendingString:[query componentsJoinedByString:@"&"]];
     
     self = [super initWithUri:imageUri imageSize:imageSize];
     if (self != nil)
@@ -71,14 +75,14 @@
 
 - (BOOL)isEqual:(id)object
 {
-    if (![object isKindOfClass:[TGUserAvatarGalleryItem class]])
+    if ([object isKindOfClass:[TGUserAvatarGalleryItem class]] == false)
         return false;
     
-    TGUserAvatarGalleryItem *item = (TGUserAvatarGalleryItem *)object;
-    if (self.imageId != 0 || item.imageId != 0)
-        return self.imageId == item.imageId;
+    TGUserAvatarGalleryItem *other = (TGUserAvatarGalleryItem *)object;
+    if (self.imageId != 0 || other.imageId != 0)
+        return self.imageId == other.imageId;
     
-    return (_isCurrent && item->_isCurrent) || [super isEqual:object];
+    return (_isCurrent && other->_isCurrent) || [super isEqual:object];
 }
 
 @end

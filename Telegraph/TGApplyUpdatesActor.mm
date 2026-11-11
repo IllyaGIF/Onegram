@@ -1,7 +1,5 @@
 #import "TGApplyUpdatesActor.h"
 #include <inttypes.h>
-#import "IOS6NotificationProbe.h"
-#import "IOS6FeatureProbe.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "../OnegramPlatform/OGPlatformVersion.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
@@ -109,15 +107,42 @@ static inline void maybeProcessChat(TLChat *chat, std::map<int64_t, TLChat *> &p
     processedChats[isChannel ? TGPeerIdFromChannelId(chat.n_id) : TGPeerIdFromGroupId(chat.n_id)] = chat;
 }
 
-static int64_t TGIOS6PeerIdFromFolderPeer(TLPeer *peer)
+static NSString *const OGCompatReactionSummaryKey = @"ios6ReactionSummary";
+static NSString *const OGCompatAggregateFlagKey = @"ios6Aggregate";
+
+static int64_t OGCompatPeerIdOfPeer(TLPeer *peer)
 {
-    if ([peer isKindOfClass:[TLPeer$peerUser class]])
-        return ((TLPeer$peerUser *)peer).user_id;
-    if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    int64_t resolved = 0;
     if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
-    return 0;
+        resolved = TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
+    else if ([peer isKindOfClass:[TLPeer$peerChat class]])
+        resolved = TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    else if ([peer isKindOfClass:[TLPeer$peerUser class]])
+        resolved = ((TLPeer$peerUser *)peer).user_id;
+    return resolved;
+}
+
+static int64_t OGCompatReadMarkPeerId(TLPeer *peer)
+{
+    if ([peer isKindOfClass:[TLPeer$peerChat class]])
+        return -((TLPeer$peerChat *)peer).chat_id;
+    return OGCompatPeerIdOfPeer(peer);
+}
+
+static NSString *OGCompatChatTitleForPeer(int64_t peerId)
+{
+    TGConversation *cached = [TGDatabaseInstance() loadConversationWithIdCached:peerId];
+    return cached != nil ? cached.chatTitle : [TGDatabaseInstance() loadConversationWithId:peerId].chatTitle;
+}
+
+static void OGCompatApplyReactionSummary(TGMessage *message, NSString *summary, NSString *chosenReaction)
+{
+    NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:message.contentProperties ?: @{}];
+    if (summary.length > 0)
+        properties[OGCompatReactionSummaryKey] = [[TGMessageReactionSummaryContentProperty alloc] initWithSummary:summary chosenReaction:chosenReaction];
+    else
+        [properties removeObjectForKey:OGCompatReactionSummaryKey];
+    message.contentProperties = properties;
 }
 
 static NSMutableArray *delayedNotifications()
@@ -131,37 +156,127 @@ static NSMutableArray *delayedNotifications()
     return array;
 }
 
-static bool TGIOS6ConsumeLocalNotificationBudget(NSUInteger batchCount)
+static bool OGCompatTakeNotificationSlot()
 {
-    (void)batchCount;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    static CFAbsoluteTime windowOpenedAt = 0.0;
+    static NSUInteger slotsTaken = 0;
 
-    static CFAbsoluteTime windowStart = 0.0;
-    static NSUInteger consumedInWindow = 0;
-
-    if (windowStart == 0.0 || now - windowStart >= 10.0)
+    CFAbsoluteTime current = CFAbsoluteTimeGetCurrent();
+    bool windowExpired = windowOpenedAt == 0.0 || current - windowOpenedAt >= 10.0;
+    if (windowExpired)
     {
-        windowStart = now;
-        consumedInWindow = 0;
+        windowOpenedAt = current;
+        slotsTaken = 0;
     }
 
-    if (consumedInWindow >= 5)
-        return false;
-
-    consumedInWindow++;
-    return true;
+    bool hasFreeSlot = slotsTaken < 5;
+    if (hasFreeSlot)
+        slotsTaken++;
+    return hasFreeSlot;
 }
 
-static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
+static NSString *OGCompatAggregateNotificationText(NSUInteger count)
 {
-    NSString *language = [NSLocale preferredLanguages].count == 0 ? @"en" : [NSLocale preferredLanguages][0];
-    if ([language hasPrefix:@"ru"])
-        return [NSString stringWithFormat:@"%lu новых сообщений", (unsigned long)count];
-    if ([language hasPrefix:@"uk"])
-        return [NSString stringWithFormat:@"%lu нових повідомлень", (unsigned long)count];
-    if ([language hasPrefix:@"de"])
-        return [NSString stringWithFormat:@"%lu neue Nachrichten", (unsigned long)count];
-    return [NSString stringWithFormat:@"%lu new messages", (unsigned long)count];
+    static NSDictionary *templates = nil;
+    static NSArray *prefixOrder = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        templates = @{@"ru": @"%lu новых сообщений", @"uk": @"%lu нових повідомлень", @"de": @"%lu neue Nachrichten"};
+        prefixOrder = @[@"ru", @"uk", @"de"];
+    });
+
+    NSArray *languages = [NSLocale preferredLanguages];
+    NSString *language = languages.count == 0 ? @"en" : languages[0];
+    NSString *format = @"%lu new messages";
+    for (NSString *prefix in prefixOrder)
+    {
+        if ([language hasPrefix:prefix])
+        {
+            format = templates[prefix];
+            break;
+        }
+    }
+    return [NSString stringWithFormat:format, (unsigned long)count];
+}
+
+static bool OGCompatIsHighSurrogate(unichar ch)
+{
+    return ch >= 0xd800 && ch <= 0xdbff;
+}
+
+static bool OGCompatIsLowSurrogate(unichar ch)
+{
+    return ch >= 0xdc00 && ch <= 0xdfff;
+}
+
+static bool OGCompatIsNotificationSpace(unichar ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}
+
+static bool OGCompatIsUnprintableUnit(unichar ch)
+{
+    return ch < 0x20 || (ch >= 0x7f && ch <= 0x9f) ||
+        (ch >= 0x200b && ch <= 0x200f) || (ch >= 0x202a && ch <= 0x202e) || (ch >= 0x2060 && ch <= 0x206f) ||
+        ch == 0xfffc || ch == 0xfffe || ch == 0xffff || ch == 0xfeff;
+}
+
+static NSString *OGCompatFlattenNotificationText(NSString *text, NSUInteger limit, bool *cutShort)
+{
+    NSMutableString *flat = [[NSMutableString alloc] initWithCapacity:MIN(text.length, limit)];
+    bool afterSpace = false;
+
+    NSUInteger position = 0;
+    while (position < text.length)
+    {
+        unichar unit = [text characterAtIndex:position];
+        NSUInteger span = 1;
+        bool skip = false;
+        bool collapsible = false;
+
+        if (OGCompatIsHighSurrogate(unit))
+        {
+            bool paired = position + 1 < text.length && OGCompatIsLowSurrogate([text characterAtIndex:position + 1]);
+            if (paired)
+                span = 2;
+            else
+                skip = true;
+        }
+        else if (OGCompatIsLowSurrogate(unit))
+            skip = true;
+        else if (OGCompatIsNotificationSpace(unit))
+            collapsible = true;
+        else if (OGCompatIsUnprintableUnit(unit))
+            skip = true;
+
+        if (skip)
+        {
+            position++;
+            continue;
+        }
+
+        if (collapsible)
+        {
+            if (!afterSpace && flat.length != 0)
+                [flat appendString:@" "];
+            afterSpace = true;
+            position++;
+            continue;
+        }
+
+        if (flat.length + span > limit - 1)
+        {
+            *cutShort = true;
+            break;
+        }
+
+        [flat appendString:[text substringWithRange:NSMakeRange(position, span)]];
+        afterSpace = false;
+        position += span;
+    }
+
+    return flat;
 }
 
 @interface TGApplyUpdatesActor ()
@@ -200,89 +315,42 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     }];
 }
 
-+ (NSString *)safeNotificationText:(NSString *)text
++ (NSString *)og_compat_sanitizedNotificationText:(NSString *)text
 {
-    if (![text isKindOfClass:[NSString class]] || text.length == 0)
+    if (![text isKindOfClass:[NSString class]])
+        return nil;
+    if (text.length == 0)
         return nil;
 
-    const NSUInteger maxLength = 160;
-    NSMutableString *result = [[NSMutableString alloc] initWithCapacity:MIN(text.length, maxLength)];
-    bool previousWasSpace = false;
-    bool truncated = false;
+    const NSUInteger characterLimit = 160;
+    bool cutShort = false;
+    NSString *flattened = OGCompatFlattenNotificationText(text, characterLimit, &cutShort);
 
-    for (NSUInteger i = 0; i < text.length; i++)
-    {
-        unichar ch = [text characterAtIndex:i];
-
-        if (ch >= 0xd800 && ch <= 0xdbff)
-        {
-            if (i + 1 >= text.length)
-                continue;
-            unichar low = [text characterAtIndex:i + 1];
-            if (low < 0xdc00 || low > 0xdfff)
-                continue;
-            if (result.length + 2 > maxLength - 1)
-            {
-                truncated = true;
-                break;
-            }
-            [result appendFormat:@"%C%C", ch, low];
-            i++;
-            previousWasSpace = false;
-            continue;
-        }
-        if (ch >= 0xdc00 && ch <= 0xdfff)
-            continue;
-
-        bool isWhitespace = ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
-        bool isControl = ch < 0x20 || (ch >= 0x7f && ch <= 0x9f);
-        bool isDirectionalControl = (ch >= 0x200b && ch <= 0x200f) ||
-            (ch >= 0x202a && ch <= 0x202e) || (ch >= 0x2060 && ch <= 0x206f);
-        bool isInvalid = ch == 0xfffc || ch == 0xfffe || ch == 0xffff || ch == 0xfeff;
-
-        if (isWhitespace)
-        {
-            if (!previousWasSpace && result.length != 0)
-                [result appendString:@" "];
-            previousWasSpace = true;
-            continue;
-        }
-        if (isControl || isDirectionalControl || isInvalid)
-            continue;
-        if (result.length + 1 > maxLength - 1)
-        {
-            truncated = true;
-            break;
-        }
-
-        [result appendFormat:@"%C", ch];
-        previousWasSpace = false;
-    }
-
-    NSString *clean = [result stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (clean.length == 0)
+    NSString *trimmed = [flattened stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (trimmed.length == 0)
         return nil;
-    if (truncated || text.length > maxLength)
-        clean = [clean stringByAppendingString:@"\u2026"];
-    return clean;
+    bool needsEllipsis = cutShort || text.length > characterLimit;
+    return needsEllipsis ? [trimmed stringByAppendingString:@"\u2026"] : trimmed;
 }
 
 + (void)presentSafeLocalNotification:(UILocalNotification *)notification text:(NSString *)text
 {
-    if (notification == nil || !TGIOS6BackgroundNotificationsEnabled())
+    if (notification == nil)
+        return;
+    if (!OGBackgroundNotificationsEnabled())
         return;
 
-    NSString *safeText = [self safeNotificationText:text];
+    NSString *safeText = [self og_compat_sanitizedNotificationText:text];
     if (safeText.length == 0)
         return;
 
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     static CFAbsoluteTime lastPresentationTime = 0.0;
     static CFAbsoluteTime lastSoundTime = 0.0;
     static CFAbsoluteTime aggregateBlockUntil = 0.0;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     CFAbsoluteTime presentationTime = now;
     NSDictionary *notificationUserInfo = OGPlatformLocalNotificationUserInfo(notification);
-    bool isAggregate = [[notificationUserInfo objectForKey:@"ios6Aggregate"] boolValue];
+    bool isAggregate = [[notificationUserInfo objectForKey:OGCompatAggregateFlagKey] boolValue];
 
     @synchronized(self)
     {
@@ -295,8 +363,7 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
         if (lastPresentationTime != 0.0)
             presentationTime = MAX(now, lastPresentationTime + 1.0);
         lastPresentationTime = presentationTime;
-        if (isAggregate)
-            aggregateBlockUntil = presentationTime + 10.0;
+        aggregateBlockUntil = isAggregate ? presentationTime + 10.0 : aggregateBlockUntil;
 
         NSString *soundName = OGPlatformLocalNotificationSoundName(notification);
         if (soundName.length != 0)
@@ -360,7 +427,7 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
 + (void)presentLocalNotificationsForMessageDescriptions:(NSArray *)messageDescriptions
 {
-    if (!TGIOS6BackgroundNotificationsEnabled() || messageDescriptions.count == 0)
+    if (messageDescriptions.count == 0 || !OGBackgroundNotificationsEnabled())
         return;
 
     NSArray *descriptions = [messageDescriptions copy];
@@ -372,19 +439,18 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            NSMutableArray *acceptedDescriptions = [[NSMutableArray alloc] init];
+            NSMutableArray *accepted = [[NSMutableArray alloc] init];
             NSMutableArray *mids = [[NSMutableArray alloc] init];
             NSMutableSet *midsWithoutSound = [[NSMutableSet alloc] init];
             int32_t maxMid = 0;
 
-            for (id messageDescription in descriptions)
+            for (id candidate in descriptions)
             {
-                if (![messageDescription isKindOfClass:[TLMessage class]])
+                if ([candidate isKindOfClass:[TLMessage class]] == false)
                     continue;
 
-                TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDescription];
+                TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:candidate];
                 if (message.mid == 0 || message.cid == 0 || message.outgoing || message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId) {
-                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=invalid peer=%lld mid=%d outgoing=%d", message.cid, message.mid, message.outgoing ? 1 : 0);
                     continue;
                 }
 
@@ -393,27 +459,26 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
                     continue;
 
                 if (message.mid <= MAX(conversation.maxReadMessageId, conversation.maxLocallyReadMessageId)) {
-                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=read peer=%lld mid=%d", message.cid, message.mid);
                     continue;
                 }
 
                 if (![self claimNotificationForPeerId:message.cid messageId:message.mid]) {
-                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=duplicate peer=%lld mid=%d", message.cid, message.mid);
                     continue;
                 }
 
-                [acceptedDescriptions addObject:messageDescription];
-                [mids addObject:@(message.mid)];
+                NSNumber *midNumber = @(message.mid);
+                [accepted addObject:candidate];
+                [mids addObject:midNumber];
                 if (message.isSilent)
-                    [midsWithoutSound addObject:@(message.mid)];
+                    [midsWithoutSound addObject:midNumber];
                 maxMid = MAX(maxMid, message.mid);
             }
 
-            OGPlatformDiagnosticLog(@"NOTIFY candidates=%d accepted=%d", (int)descriptions.count, (int)acceptedDescriptions.count);
+            OGPlatformDiagnosticLog(@"NOTIFY candidates=%d accepted=%d", (int)descriptions.count, (int)accepted.count);
 
-            if (acceptedDescriptions.count != 0)
+            if (accepted.count > 0)
             {
-                [delayedNotifications() addObjectsFromArray:acceptedDescriptions];
+                [delayedNotifications() addObjectsFromArray:accepted];
                 [TGApplyUpdatesActor applyDelayedNotificationsInApplicationState:applicationState maxMid:maxMid mids:mids midsWithoutSound:midsWithoutSound maxQts:0 randomIds:nil];
             }
         }];
@@ -1041,7 +1106,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
     NSMutableArray *messagesForLocalNotification = [[NSMutableArray alloc] init];
     
     NSMutableArray *allUpdates = [[NSMutableArray alloc] init];
-    NSMutableArray *reactionMessageUpdates = [[NSMutableArray alloc] init];
+    NSMutableArray *reactionEdits = [[NSMutableArray alloc] init];
     NSMutableDictionary *archiveStateByPeerId = [[NSMutableDictionary alloc] init];
     
     int currentTime = (int)OGRemoteClockTime();
@@ -1071,37 +1136,19 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
         {
             TLUpdate$updateReadHistoryInbox *concreteUpdate = wrappedUpdate.update;
             
-            int64_t peerId = 0;
-            if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerUser class]])
-                peerId = ((TLPeer$peerUser *)concreteUpdate.peer).user_id;
-            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChat class]])
-                peerId = -((TLPeer$peerChat *)concreteUpdate.peer).chat_id;
-            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChannel class]])
-                peerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)concreteUpdate.peer).channel_id);
+            int64_t peerId = OGCompatReadMarkPeerId(concreteUpdate.peer);
             
             auto it = maxInboxReadMessageIdByPeerId.find(peerId);
-            if (it == maxInboxReadMessageIdByPeerId.end())
-                maxInboxReadMessageIdByPeerId[peerId] = concreteUpdate.max_id;
-            else
-                maxInboxReadMessageIdByPeerId[peerId] = MAX(it->second, concreteUpdate.max_id);
+            maxInboxReadMessageIdByPeerId[peerId] = it == maxInboxReadMessageIdByPeerId.end() ? concreteUpdate.max_id : MAX(it->second, concreteUpdate.max_id);
         }
         else if ([wrappedUpdate.update isKindOfClass:[TLUpdate$updateReadHistoryOutbox class]])
         {
             TLUpdate$updateReadHistoryOutbox *concreteUpdate = wrappedUpdate.update;
             
-            int64_t peerId = 0;
-            if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerUser class]])
-                peerId = ((TLPeer$peerUser *)concreteUpdate.peer).user_id;
-            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChat class]])
-                peerId = -((TLPeer$peerChat *)concreteUpdate.peer).chat_id;
-            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChannel class]])
-                peerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)concreteUpdate.peer).channel_id);
+            int64_t peerId = OGCompatReadMarkPeerId(concreteUpdate.peer);
             
             auto it = maxOutboxReadMessageIdByPeerId.find(peerId);
-            if (it == maxOutboxReadMessageIdByPeerId.end())
-                maxOutboxReadMessageIdByPeerId[peerId] = concreteUpdate.max_id;
-            else
-                maxOutboxReadMessageIdByPeerId[peerId] = MAX(it->second, concreteUpdate.max_id);
+            maxOutboxReadMessageIdByPeerId[peerId] = it == maxOutboxReadMessageIdByPeerId.end() ? concreteUpdate.max_id : MAX(it->second, concreteUpdate.max_id);
         }
     }
     
@@ -1111,39 +1158,32 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
         id update = wrappedUpdate.update;
         int32_t date = wrappedUpdate.date;
         
-        if ([update isKindOfClass:[TLUpdate$updateMessageReactionsCodex class]])
+        if ([update isKindOfClass:[TLUpdate$updateMessageReactionsSummary class]])
         {
-            TLUpdate$updateMessageReactionsCodex *reactionUpdate = (TLUpdate$updateMessageReactionsCodex *)update;
-            int64_t peerId = TGIOS6PeerIdFromFolderPeer(reactionUpdate.peer);
-            if (peerId != 0 && reactionUpdate.msg_id != 0)
+            TLUpdate$updateMessageReactionsSummary *reaction = update;
+            int64_t reactionPeerId = OGCompatPeerIdOfPeer(reaction.peer);
+            int32_t reactionMid = reaction.msg_id;
+            TGMessage *reactedMessage = nil;
+            if (reactionPeerId != 0 && reactionMid != 0)
+                reactedMessage = [TGDatabaseInstance() loadMessageWithMid:reactionMid peerId:reactionPeerId];
+            if (reactedMessage != nil)
             {
-                TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:reactionUpdate.msg_id peerId:peerId];
-                if (storedMessage != nil)
-                {
-                    NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:storedMessage.contentProperties ?: @{}];
-                    if (reactionUpdate.reactionSummary.length != 0)
-                        properties[@"ios6ReactionSummary"] = [[TGMessageReactionSummaryContentProperty alloc] initWithSummary:reactionUpdate.reactionSummary chosenReaction:reactionUpdate.chosenReaction];
-                    else
-                        [properties removeObjectForKey:@"ios6ReactionSummary"];
-                    storedMessage.contentProperties = properties;
-                    [reactionMessageUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:reactionUpdate.msg_id message:storedMessage dispatchEdited:true]];
-                    IOS6FeatureProbe(@"REACTION global.apply peer=%lld mid=%d summary=%@ queued=1", peerId, reactionUpdate.msg_id, reactionUpdate.reactionSummary);
-                }
-                else
-                    IOS6FeatureProbe(@"REACTION global.apply peer=%lld mid=%d summary=%@ missingMessage=1", peerId, reactionUpdate.msg_id, reactionUpdate.reactionSummary);
+                OGCompatApplyReactionSummary(reactedMessage, reaction.reactionSummary, reaction.chosenReaction);
+                TGDatabaseUpdateMessageWithMessage *edit = [[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:reactionPeerId messageId:reactionMid message:reactedMessage dispatchEdited:true];
+                [reactionEdits addObject:edit];
             }
         }
         else if ([update isKindOfClass:[TLUpdate$updateFolderPeers class]])
         {
-            TLUpdate$updateFolderPeers *folderUpdate = (TLUpdate$updateFolderPeers *)update;
-            for (TLCodexFolderPeer *folderPeer in folderUpdate.folder_peers)
+            NSArray *folderPeers = ((TLUpdate$updateFolderPeers *)update).folder_peers;
+            for (TLFolderPeerEntry *entry in folderPeers)
             {
-                if (![folderPeer isKindOfClass:[TLCodexFolderPeer class]])
+                if (![entry isKindOfClass:[TLFolderPeerEntry class]])
                     continue;
-                int64_t peerId = TGIOS6PeerIdFromFolderPeer(folderPeer.peer);
-                if (peerId == 0)
+                int64_t archivedPeerId = OGCompatPeerIdOfPeer(entry.peer);
+                if (archivedPeerId == 0)
                     continue;
-                archiveStateByPeerId[@(peerId)] = @(folderPeer.folder_id == 1);
+                archiveStateByPeerId[@(archivedPeerId)] = @(entry.folder_id == 1);
             }
         }
         else if ([update isKindOfClass:updateNewMessageClass])
@@ -1422,10 +1462,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
         _waitingForApplyUpdates = true;
         [TGUpdateStateRequestBuilder applyUpdates:addedMessages otherUpdates:allUpdates usersDesc:usersToProcess chatsDesc:chatsToProcess chatParticipantsDesc:nil updatesWithDates:updatesWithDates addedEncryptedActionsByPeerId:nil addedEncryptedUnparsedActionsByPeerId:nil completion:^(__unused bool applied)
         {
-            if (reactionMessageUpdates.count != 0)
+            if (reactionEdits.count > 0)
             {
-                IOS6FeatureProbe(@"REACTION global.commit count=%d", (int)reactionMessageUpdates.count);
-                [TGDatabaseInstance() transactionUpdateMessages:reactionMessageUpdates updateConversationDatas:nil];
+                [TGDatabaseInstance() transactionUpdateMessages:reactionEdits updateConversationDatas:nil];
             }
             _waitingForApplyUpdates = false;
             [_updateList addObjectsFromArray:_waitingForApplyUpdatesQueue];
@@ -1434,27 +1473,23 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
             [delayedNotifications() addObjectsFromArray:messagesForLocalNotification];
 
             if (OGPlatformSupportsBackgroundVoipTransport() &&
-                [UIApplication sharedApplication].applicationState != UIApplicationStateActive &&
-                messagesForLocalNotification.count != 0)
+                messagesForLocalNotification.count != 0 &&
+                [UIApplication sharedApplication].applicationState != UIApplicationStateActive)
             {
-                NSMutableArray *directMids = [[NSMutableArray alloc] init];
-                int32_t directMaxMid = 0;
-                for (id notificationDesc in messagesForLocalNotification)
+                NSMutableArray *immediateMids = [[NSMutableArray alloc] init];
+                int32_t immediateMaxMid = 0;
+                for (id pendingDesc in messagesForLocalNotification)
                 {
-                    if ([notificationDesc isKindOfClass:[TLMessage class]])
-                    {
-                        int32_t mid = ((TLMessage *)notificationDesc).n_id;
-                        if (mid != 0)
-                        {
-                            [directMids addObject:@(mid)];
-                            directMaxMid = MAX(directMaxMid, mid);
-                        }
-                    }
+                    int32_t pendingMid = [pendingDesc isKindOfClass:[TLMessage class]] ? ((TLMessage *)pendingDesc).n_id : 0;
+                    if (pendingMid == 0)
+                        continue;
+                    [immediateMids addObject:@(pendingMid)];
+                    immediateMaxMid = MAX(immediateMaxMid, pendingMid);
                 }
 
-                if (directMids.count != 0)
+                if (immediateMids.count > 0)
                 {
-                    [TGApplyUpdatesActor applyDelayedNotifications:directMaxMid mids:directMids midsWithoutSound:[NSSet set] maxQts:stateQts randomIds:nil];
+                    [TGApplyUpdatesActor applyDelayedNotifications:immediateMaxMid mids:immediateMids midsWithoutSound:[NSSet set] maxQts:stateQts randomIds:nil];
                 }
             }
             
@@ -1615,8 +1650,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                     continue;
                 processedMidsSet.insert(mid);
 
-                NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
+                if (!OGCompatTakeNotificationSlot())
                     continue;
 
                 message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
@@ -1683,8 +1717,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                 if (randomIdsSet.find(encryptedMessage.random_id) == randomIdsSet.end())
                     continue;
 
-                NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
+                if (!OGCompatTakeNotificationSlot())
                     continue;
 
                 message = [[TGMessage alloc] init];
@@ -1697,27 +1730,17 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                 continue;
             }
 
-            bool messageIsChannel = TGPeerIdIsChannel(message.cid);
+            bool fromChannel = TGPeerIdIsChannel(message.cid);
 
-            if (messageIsChannel && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
+            if (fromChannel && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
                 continue;
 
             if (message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId)
                 continue;
 
-            if (message.containsMention)
-            {
-                if ([TGDatabaseInstance() isPeerMuted:message.fromUid]) {
-                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=mention_muted peer=%lld from=%lld mid=%d", message.cid, message.fromUid, message.mid);
-                    continue;
-                }
-            }
-            else
-            {
-                if ([TGDatabaseInstance() isPeerMuted:message.cid]) {
-                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=peer_muted peer=%lld mid=%d", message.cid, message.mid);
-                    continue;
-                }
+            int64_t mutedCheckPeerId = message.containsMention ? message.fromUid : message.cid;
+            if ([TGDatabaseInstance() isPeerMuted:mutedCheckPeerId]) {
+                continue;
             }
 
             id localNotification = OGPlatformCreateLocalNotification();
@@ -1729,16 +1752,12 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
 
             int64_t notificationPeerId = 0;
 
-            if (messageIsChannel)
+            if (fromChannel)
             {
                 notificationPeerId = message.cid;
                 if (message.fromUid != 0)
                     user = [TGDatabaseInstance() loadUser:message.fromUid];
-                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
-                if (conversation != nil)
-                    chatName = conversation.chatTitle;
-                else
-                    chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
+                chatName = OGCompatChatTitleForPeer(message.cid);
             }
             else if (TGPeerIdIsSecretChat(message.cid))
             {
@@ -1751,20 +1770,12 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
             }
             else
             {
-                if (message.containsMention)
-                    notificationPeerId = message.fromUid;
-                else
-                    notificationPeerId = message.cid;
+                notificationPeerId = message.containsMention ? message.fromUid : message.cid;
                 user = [TGDatabaseInstance() loadUser:message.fromUid];
-                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
-                if (conversation != nil)
-                    chatName = conversation.chatTitle;
-                else
-                    chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
+                chatName = OGCompatChatTitleForPeer(message.cid);
             }
 
             if ([TGDatabaseInstance() isPeerMuted:notificationPeerId]) {
-                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=notification_peer_muted peer=%lld title=%@ mid=%d", notificationPeerId, chatName ?: @"", message.mid);
                 continue;
             }
 
@@ -1786,7 +1797,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                     authorName = authorConversation.chatTitle;
                 }
             }
-            if (authorName.length == 0 && messageIsChannel && message.fromUid == message.cid)
+            if (authorName.length == 0 && fromChannel && message.fromUid == message.cid)
                 authorName = chatName;
             if (authorName.length == 0 && message.cid > 0)
             {
@@ -1807,7 +1818,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
             if (soundIdVal != nil) {
                 soundId = soundIdVal.intValue;
             } else {
-                soundId = (message.cid > 0 || (message.cid <= INT_MIN && !messageIsChannel)) ? globalMessageSoundId : globalGroupSoundId;
+                soundId = (message.cid > 0 || (message.cid <= INT_MIN && !fromChannel)) ? globalMessageSoundId : globalGroupSoundId;
             }
 
             NSString *text = nil;
@@ -1923,7 +1934,8 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                         }
                         case TGMessageActionJoinedByLink:
                         {
-                            NSString *formatString = [actionAttachment.actionData[@"joinedByRequest"] boolValue] ? TGLocalized(@"Notification.JoinedChat") : TGLocalized(@"Notification.JoinedGroupByLink");
+                            bool joinedByRequest = [actionAttachment.actionData[@"joinedByRequest"] boolValue];
+                            NSString *formatString = TGLocalized(joinedByRequest ? @"Notification.JoinedChat" : @"Notification.JoinedGroupByLink");
                             text = [[NSString alloc] initWithFormat:formatString, authorName];
                             attachmentFound = true;
 
@@ -2256,12 +2268,12 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                 continue;
             }
 
-            bool notificationWithoutSound = [midsWithoutSound containsObject:@(message.mid)];
-            if (iosMajorVersion() <= 6 && !notificationWithoutSound)
+            bool soundSuppressed = [midsWithoutSound containsObject:@(message.mid)];
+            if (iosMajorVersion() <= 6 && !soundSuppressed)
             {
                 OGPlatformSetLocalNotificationSoundName(localNotification, @"notification.caf");
             }
-            else if (soundId > 0 && !notificationWithoutSound)
+            else if (soundId > 0 && !soundSuppressed)
             {
                 OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
 
@@ -2280,14 +2292,12 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
             }
             else
             {
-                if (messageIsChannel)
+                if (fromChannel)
                 {
                     if (globalGroupPreviewText && !attachmentFound)
                     {
-                        if (authorName.length != 0)
-                            text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
-                        else
-                            text = [[NSString alloc] initWithFormat:@"%@: %@", chatName, message.text];
+                        NSString *speaker = authorName.length != 0 ? [[NSString alloc] initWithFormat:@"%@@%@", authorName, chatName] : [[NSString alloc] initWithFormat:@"%@", chatName];
+                        text = [[NSString alloc] initWithFormat:@"%@: %@", speaker, message.text];
                     }
                     else if (!attachmentFound)
                     {
@@ -2322,9 +2332,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
 
             OGPlatformSetLocalNotificationUserInfo(localNotification, [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil]);
 
-            NSString *notificationTitle = chatName;
-            if (notificationTitle.length == 0)
-                notificationTitle = authorName;
+            NSString *notificationTitle = chatName.length != 0 ? chatName : authorName;
             if (notificationTitle.length != 0)
                 OGPlatformSetLocalNotificationAlertTitle(localNotification, notificationTitle);
 
@@ -2340,17 +2348,16 @@ static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromU
                     OGPlatformSetLocalNotificationCategory(localNotification, @"r");
             }
 
-            NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-            if (notificationBatchCount >= 5)
+            NSUInteger batchSize = mids.count != 0 ? mids.count : randomIds.count;
+            if (batchSize >= 5)
             {
-                text = TGIOS6AggregateNotificationText(notificationBatchCount);
+                text = OGCompatAggregateNotificationText(batchSize);
                 NSMutableDictionary *aggregateInfo = [OGPlatformLocalNotificationUserInfo(localNotification) mutableCopy];
                 if (aggregateInfo == nil)
                     aggregateInfo = [[NSMutableDictionary alloc] init];
-                aggregateInfo[@"ios6Aggregate"] = @true;
+                aggregateInfo[OGCompatAggregateFlagKey] = @true;
                 OGPlatformSetLocalNotificationUserInfo(localNotification, aggregateInfo);
             }
-            IOS6NotificationProbe(@"NOTIFY_READY", @"peer=%lld title=%@ mid=%d batch=%d", message.cid, chatName ?: @"", message.mid, (int)notificationBatchCount);
             [TGApplyUpdatesActor presentSafeLocalNotification:(UILocalNotification *)localNotification text:text];
         }
     }

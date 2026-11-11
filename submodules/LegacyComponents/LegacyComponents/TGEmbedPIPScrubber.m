@@ -19,9 +19,6 @@
     {
         self.userInteractionEnabled = false;
         
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id lightBlurEffect = nil;
-#endif
         _playProgressView = [[UIView alloc] initWithFrame:CGRectZero];
         [self addSubview:_playProgressView];
         
@@ -29,9 +26,6 @@
         _downloadProgressView.backgroundColor = UIColorRGBA(0x000000, 0.45f);
         [self addSubview:_downloadProgressView];
         
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id blurEffect = nil;
-#endif
         _remainingProgressView = [[UIView alloc] initWithFrame:CGRectZero];
         [self addSubview:_remainingProgressView];
     }

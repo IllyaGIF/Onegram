@@ -210,7 +210,7 @@
 - (NSInteger)collectionView:(PSUICollectionView *)__unused collectionView numberOfItemsInSection:(NSInteger)__unused section
 {
     if (section == 0) {
-        return (_showGifs ? 1 : 0) + (_showTrendingFirst ? 1 : 0);
+        return (_showGifs ? 1 : 0) + (_showCustomEmoji ? 1 : 0) + (_showTrendingFirst ? 1 : 0);
     } else if (section == 1) {
         return (_showFavorite ? 1 : 0);
     } else if (section == 2) {
@@ -220,7 +220,7 @@
     } else if (section == 4) {
         return _stickerPacks.count;
     } else if (section == 5) {
-        return 1 + (_showGroupLast ? 1 : 0) + (_showTrendingLast ? 1 : 0);
+        return 1 + (_showGroupLast ? 1 : 0) + (_showTrendingLast ? 1 : 0) + (_openStickerCreation != nil ? 1 : 0);
     } else {
         return 0;
     }
@@ -263,6 +263,9 @@
             
             if (_expanded)
                 [cell setInnerAlpha:0.0f];
+        } else if (indexPath.item == [self customEmojiItemIndex]) {
+            [cell setMode:TGStickerKeyboardTabSettingsCellCustomEmoji];
+            [cell setBadge:nil];
         } else {
             [cell setMode:TGStickerKeyboardTabSettingsCellTrending];
             [cell setBadge:_trendingStickersBadge];
@@ -323,10 +326,14 @@
             [cell setPallete:_pallete];
             [cell setStyle:_style];
 
-            if (_showTrendingLast && ((_showGroupLast && indexPath.item == 1) || (!_showGroupLast && indexPath.item == 0))) {
+            if (indexPath.item == [self trendingLastItemIndex]) {
                 [cell setBadge:_trendingStickersBadge];
                 [cell setMode:TGStickerKeyboardTabSettingsCellTrending];
                 cell.pressed = nil;
+            } else if (indexPath.item == [self createStickerItemIndex]) {
+                [cell setBadge:nil];
+                [cell setMode:TGStickerKeyboardTabSettingsCellCreateSticker];
+                cell.pressed = self.openStickerCreation;
             } else {
                 [cell setBadge:nil];
                 [cell setMode:TGStickerKeyboardTabSettingsCellSettings];
@@ -410,6 +417,8 @@
     if (indexPath.section == 0) {
         if (indexPath.item == 0 && _showGifs) {
             [self scrollToGifsButton];
+        } else if (indexPath.item == [self customEmojiItemIndex]) {
+            [self scrollToCustomEmojiButton];
         } else {
             [self scrollToTrendingButton];
         }
@@ -420,7 +429,7 @@
         if (_showGroupLast && indexPath.item == 0) {
             if (_currentStickerPackIndexChanged)
                 _currentStickerPackIndexChanged(_stickerPacks.count + 3);
-        } else if (_showTrendingLast && (indexPath.item == 0 || indexPath.item == 1)) {
+        } else if (indexPath.item == [self trendingLastItemIndex]) {
             [self scrollToTrendingButton];
         }
     }
@@ -517,14 +526,61 @@
     }
 }
 
+- (NSInteger)trendingLastItemIndex {
+    return _showTrendingLast ? (_showGroupLast ? 1 : 0) : -1;
+}
+
+- (NSInteger)createStickerItemIndex {
+    return _openStickerCreation != nil ? (_showGroupLast ? 1 : 0) + (_showTrendingLast ? 1 : 0) : -1;
+}
+
+- (void)setOpenStickerCreation:(void (^)(void))openStickerCreation {
+    bool changed = (_openStickerCreation != nil) != (openStickerCreation != nil);
+    _openStickerCreation = [openStickerCreation copy];
+    if (changed)
+        [_collectionView reloadData];
+}
+
+- (NSInteger)customEmojiItemIndex {
+    return _showCustomEmoji ? (_showGifs ? 1 : 0) : -1;
+}
+
+- (void)setShowCustomEmoji:(bool)showCustomEmoji {
+    if (_showCustomEmoji == showCustomEmoji)
+        return;
+    _showCustomEmoji = showCustomEmoji;
+    [_collectionView reloadData];
+}
+
+- (void)setCurrentCustomEmojiModeSelected {
+    [self scrollToCustomEmojiButton];
+}
+
+- (void)scrollToCustomEmojiButton {
+    NSInteger item = [self customEmojiItemIndex];
+    if (item < 0 || item >= [self collectionView:_collectionView numberOfItemsInSection:0])
+        return;
+    NSIndexPath *indexPath = [NSIndexPath indexPathForItem:item inSection:0];
+    PSTCollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:indexPath];
+    UICollectionViewScrollPosition scrollPosition = UICollectionViewScrollPositionNone;
+    if (!CGRectContainsRect(_collectionView.bounds, attributes.frame))
+    {
+        if (attributes.frame.origin.x < _collectionView.bounds.origin.x + _collectionView.bounds.size.width / 2.0f)
+            scrollPosition = UICollectionViewScrollPositionLeft;
+        else
+            scrollPosition = UICollectionViewScrollPositionRight;
+    }
+    [_collectionView selectItemAtIndexPath:indexPath animated:false scrollPosition:scrollPosition];
+    
+    if (_navigateToCustomEmoji) {
+        _navigateToCustomEmoji();
+    }
+}
+
 - (void)scrollToTrendingButton {
-    NSIndexPath *indexPath = [NSIndexPath indexPathForItem:_showGifs ? 1 : 0 inSection:0];
+    NSIndexPath *indexPath = [NSIndexPath indexPathForItem:(_showGifs ? 1 : 0) + (_showCustomEmoji ? 1 : 0) inSection:0];
     if (_showTrendingLast) {
-        NSInteger item = 0;
-        if ([self collectionView:_collectionView numberOfItemsInSection:5] > 2)
-            item = 1;
-        
-        indexPath = [NSIndexPath indexPathForItem:item inSection:5];
+        indexPath = [NSIndexPath indexPathForItem:[self trendingLastItemIndex] inSection:5];
     }
     if (indexPath.section < [self numberOfSectionsInCollectionView:_collectionView] && indexPath.item < [self collectionView:_collectionView numberOfItemsInSection:indexPath.section]) {
         PSTCollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:indexPath];
@@ -561,9 +617,12 @@
                 }
             }
         }
-        TGStickerKeyboardTabSettingsCell *cell = (TGStickerKeyboardTabSettingsCell *)[_collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:5]];
-        if (cell != nil) {
-            [cell setBadge:badge];
+        NSInteger trendingItem = [self trendingLastItemIndex];
+        if (trendingItem >= 0) {
+            TGStickerKeyboardTabSettingsCell *cell = (TGStickerKeyboardTabSettingsCell *)[_collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:trendingItem inSection:5]];
+            if ([cell isKindOfClass:[TGStickerKeyboardTabSettingsCell class]]) {
+                [cell setBadge:badge];
+            }
         }
     }
 }
@@ -636,6 +695,14 @@
     pallete->_settingsIcon = settingsIcon;
     pallete->_badge = badge;
     pallete->_badgeTextColor = badgeTextColor;
+    return pallete;
+}
+
+- (instancetype)palleteWithCustomEmojiIcon:(UIImage *)customEmojiIcon createStickerIcon:(UIImage *)createStickerIcon
+{
+    TGStickerKeyboardPallete *pallete = [TGStickerKeyboardPallete palleteWithBackgroundColor:_backgroundColor separatorColor:_separatorColor selectionColor:_selectionColor gifIcon:_gifIcon trendingIcon:_trendingIcon favoritesIcon:_favoritesIcon recentIcon:_recentIcon settingsIcon:_settingsIcon badge:_badge badgeTextColor:_badgeTextColor];
+    pallete->_customEmojiIcon = customEmojiIcon;
+    pallete->_createStickerIcon = createStickerIcon;
     return pallete;
 }
 

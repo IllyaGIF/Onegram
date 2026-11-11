@@ -15,15 +15,15 @@
 
 @property(nonatomic)BOOL liveMode;
 @property(nonatomic)BOOL accountsDisabled;
-@property(nonatomic)NSString *sessionID;
-@property(nonatomic)NSString *csrfToken;
-@property(nonatomic)STPAPIClient *tokenClient;
+@property(nonatomic)NSString *_Nonnull sessionID;
+@property(nonatomic)NSString *_Nonnull csrfToken;
+@property(nonatomic)STPAPIClient *_Nonnull tokenClient;
 
 @end
 
 @implementation STPCheckoutBootstrapResponse
 
-+ (instancetype)bootstrapResponseWithData:(NSData *)data
++ (instancetype _Nullable)bootstrapResponseWithData:(NSData *)data
                                        URLResponse:( NSURLResponse *)response {
     if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
         return nil;

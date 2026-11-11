@@ -7,18 +7,12 @@
 //
 
 #import "STPRememberMeTermsView.h"
+#import "OGStripeCompat.h"
 #import "STPImageLibrary.h"
 #import "STPImageLibrary+Private.h"
 #import "STPLocalizationUtils.h"
 #import "STPWebViewController.h"
 #import "STPStringUtils.h"
-
-#ifndef NSLinkAttributeName
-#define NSLinkAttributeName @"NSLink"
-#endif
-#ifndef NSBaselineOffsetAttributeName
-#define NSBaselineOffsetAttributeName @"NSBaselineOffset"
-#endif
 
 @interface STPRememberMeTermsView()<UITextViewDelegate>
 
@@ -42,9 +36,12 @@
 
         // This disables 3D touch previews in the text view.
         for (UIGestureRecognizer *recognizer in textView.gestureRecognizers) {
-            if ([[NSStringFromClass([recognizer class]) lowercaseString] rangeOfString:@"preview"].location != NSNotFound ||
-                [[NSStringFromClass([recognizer class]) lowercaseString] rangeOfString:@"reveal"].location != NSNotFound) {
-                recognizer.enabled = NO;
+            NSString *recognizerName = [NSStringFromClass([recognizer class]) lowercaseString];
+            for (NSString *marker in @[@"preview", @"reveal"]) {
+                if ([recognizerName rangeOfString:marker].location != NSNotFound) {
+                    recognizer.enabled = NO;
+                    break;
+                }
             }
         }
         _textView = textView;
@@ -69,12 +66,15 @@ static NSString *const FooterLinkTagMoreInfo = @"infolink";
     
     [STPStringUtils parseRangesFromString:contents 
                                  withTags:[NSSet setWithArray:@[FooterLinkTagPrivacyPolicy, FooterLinkTagTermsOfService, FooterLinkTagMoreInfo]] 
-                               completion:^(NSString *string, NSDictionary *tagMap) {
+                               completion:^(NSString *string, OG_COMPAT_GENERIC(NSDictionary, NSString *,NSValue *) *tagMap) {
                                    contents = string;
                                    
-                                   privacyRange = [(NSValue *)tagMap[FooterLinkTagPrivacyPolicy] rangeValue];
-                                   termsRange = [(NSValue *)tagMap[FooterLinkTagTermsOfService] rangeValue];
-                                   learnMoreRange = [(NSValue *)tagMap[FooterLinkTagMoreInfo] rangeValue];
+                                   NSRange (^rangeForTag)(NSString *) = ^NSRange(NSString *tag) {
+                                       return [tagMap[tag] rangeValue];
+                                   };
+                                   privacyRange = rangeForTag(FooterLinkTagPrivacyPolicy);
+                                   termsRange = rangeForTag(FooterLinkTagTermsOfService);
+                                   learnMoreRange = rangeForTag(FooterLinkTagMoreInfo);
                                }];
     
     NSURL *privacyURL = [NSURL URLWithString:@"https://checkout.stripe.com/-/privacy"];
@@ -103,17 +103,17 @@ static NSString *const FooterLinkTagMoreInfo = @"infolink";
         [attributedString addAttribute:NSLinkAttributeName value:learnMoreURL range:learnMoreRange];
     }
     if (learnMoreURL) {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
         NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
         attachment.image = [STPImageLibrary smallRightChevronIcon];
         NSMutableAttributedString *chevron = [[NSMutableAttributedString alloc] initWithString:@" " attributes:@{}];
         [chevron appendAttributedString:[NSMutableAttributedString attributedStringWithAttachment:attachment]];
 #else
-        NSMutableAttributedString *chevron = [[NSMutableAttributedString alloc] initWithString:@" >" attributes:@{}];
+        NSMutableAttributedString *chevron = [[NSMutableAttributedString alloc] initWithString:@" >"];
 #endif
         NSRange chevronRange = NSMakeRange(0, chevron.length);
         [chevron addAttribute:NSLinkAttributeName value:learnMoreURL range:chevronRange];
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
         [chevron addAttribute:NSBaselineOffsetAttributeName value:@(-1) range:chevronRange];
 #endif
         [attributedString appendAttributedString:chevron];
@@ -128,7 +128,7 @@ static NSString *const FooterLinkTagMoreInfo = @"infolink";
 
 - (void)updateAppearance {
     self.textView.attributedText = [self buildAttributedString];
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
     self.textView.linkTextAttributes = @{
                                          NSFontAttributeName: self.theme.smallFont,
                                          NSForegroundColorAttributeName: self.theme.primaryForegroundColor

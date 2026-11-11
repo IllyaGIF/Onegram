@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTLayerContainer.h
 //  Lottie
@@ -17,22 +17,22 @@
 
 @interface LOTLayerContainer : CALayer
 
-- (instancetype )initWithModel:(LOTLayer * )layer
-                 inLayerGroup:(LOTLayerGroup * )layerGroup;
+- (instancetype _Nonnull)initWithModel:(LOTLayer * _Nullable)layer
+                 inLayerGroup:(LOTLayerGroup * _Nullable)layerGroup;
 
-@property (nonatomic,  readonly, strong) NSString *layerName;
-@property (nonatomic) NSNumber *currentFrame;
-@property (nonatomic, readonly) NSNumber *timeStretchFactor;
+@property (nonatomic, readonly, strong) NSString *_Nullable layerName;
+@property (nonatomic) NSNumber *_Nullable currentFrame;
+@property (nonatomic, readonly) NSNumber *_Nonnull timeStretchFactor;
 @property (nonatomic, assign) CGRect viewportBounds;
-@property (nonatomic, readonly) CALayer *wrapperLayer;
-@property (nonatomic, readonly) NSDictionary *valueInterpolators;
+@property (nonatomic, readonly) CALayer *_Nonnull wrapperLayer;
+@property (nonatomic, readonly) NSDictionary *_Nonnull valueInterpolators;
 
-- (void)displayWithFrame:(NSNumber * )frame;
-- (void)displayWithFrame:(NSNumber * )frame forceUpdate:(BOOL)forceUpdate;
+- (void)displayWithFrame:(NSNumber * _Nonnull)frame;
+- (void)displayWithFrame:(NSNumber * _Nonnull)frame forceUpdate:(BOOL)forceUpdate;
 
-- (void)searchNodesForKeypath:(LOTKeypath * )keypath;
+- (void)searchNodesForKeypath:(LOTKeypath * _Nonnull)keypath;
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate
-              forKeypath:(LOTKeypath * )keypath;
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate
+              forKeypath:(LOTKeypath * _Nonnull)keypath;
 
 @end

@@ -766,8 +766,8 @@ static UIImage *pagerLeftButtonHighlightedImage() {
     self.transform = transform;
     
 #if !defined(ONEGRAM_ARMV6)
-    TGSetLayerRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
+    OGCompatLayerSetShouldRasterize(self.layer, true);
 #endif
     
     self.alpha = 1.0f;
@@ -789,7 +789,7 @@ static UIImage *pagerLeftButtonHighlightedImage() {
                     if (finished)
                     {
 #if !defined(ONEGRAM_ARMV6)
-                        TGSetLayerShouldRasterize(self.layer, false);
+                        OGCompatLayerSetShouldRasterize(self.layer, false);
 #endif
                     }
                 }];
@@ -834,37 +834,27 @@ static UIImage *pagerLeftButtonHighlightedImage() {
 
 - (void)buttonPressed:(TGMenuButtonView *)buttonView
 {
-    TGMenuView *strongSelf = self;
-    TGMenuContainerView *containerView = [strongSelf.superview isKindOfClass:[TGMenuContainerView class]] ? (TGMenuContainerView *)strongSelf.superview : nil;
+    NSUInteger index = [_buttonViews indexOfObjectIdenticalTo:buttonView];
+    if (index == NSNotFound)
+        return;
     
-    NSInteger index = -1;
-    for (TGMenuButtonView *listButtonView in _buttonViews)
+    TGMenuContainerView *containerView = [self.superview isKindOfClass:[TGMenuContainerView class]] ? (TGMenuContainerView *)self.superview : nil;
+    buttonView.selected = true;
+    
+    if (index < _buttonDescriptions.count)
     {
-        index++;
-        
-        if (listButtonView == buttonView)
+        id action = [[_buttonDescriptions objectAtIndex:index] objectForKey:@"action"];
+        if ([action isKindOfClass:[NSString class]] && [(NSString *)action length] != 0)
         {
-            buttonView.selected = true;
-            
-            if (index < (NSInteger)_buttonDescriptions.count)
-            {
-                id actionValue = [[_buttonDescriptions objectAtIndex:index] objectForKey:@"action"];
-                if ([actionValue isKindOfClass:[NSString class]] && [(NSString *)actionValue length] != 0)
-                {
-                    NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
-                    options[@"action"] = actionValue;
-                    if (_userInfo != nil)
-                        options[@"userInfo"] = _userInfo;
-                    [_watcherHandle requestAction:@"menuAction" options:options];
-                }
-            }
-            
-            if (containerView != nil)
-                [containerView hideMenu];
-            
-            break;
+            NSMutableDictionary *options = [NSMutableDictionary dictionaryWithObject:action forKey:@"action"];
+            if (_userInfo != nil)
+                options[@"userInfo"] = _userInfo;
+            [_watcherHandle requestAction:@"menuAction" options:options];
         }
     }
+    
+    if (containerView != nil)
+        [containerView hideMenu];
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {

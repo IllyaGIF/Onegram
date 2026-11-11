@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimationCache.m
 //  Lottie
@@ -35,7 +35,7 @@ const NSInteger kLOTCacheSize = 50;
 }
 
 - (void)addAnimation:(LOTComposition *)animation forKey:(NSString *)key {
-  if (!animation || key.length == 0) {
+  if (animation == nil || [key length] == 0) {
     return;
   }
   if (lruOrderArray_.count >= kLOTCacheSize) {

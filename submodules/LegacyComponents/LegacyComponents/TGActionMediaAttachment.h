@@ -44,6 +44,9 @@ typedef enum {
     TGMessageActionStarGiftUnique = 36,
     TGMessageActionStarGiftPurchaseOffer = 37,
     TGMessageActionStarGiftPurchaseOfferDeclined = 38,
+    TGMessageActionPaidMessagesRefunded = 39,
+    TGMessageActionPaidMessagesPrice = 40,
+    TGMessageActionNoPaidMessagesTokenUsed = 41,
     TGMessageActionCustom = 1000
 } TGMessageAction;
 

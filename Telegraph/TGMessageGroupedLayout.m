@@ -22,26 +22,36 @@
 
 @interface TGMessageGroupedLayoutAttempt : NSObject
 
-@property (nonatomic, readonly) NSArray *lineCounts;
-@property (nonatomic, readonly) NSArray *heights;
+@property (nonatomic, readonly) NSArray *rowCounts;
+@property (nonatomic, readonly) NSArray *rowHeights;
 
-- (instancetype)initWithLineCounts:(NSArray *)lineCounts heights:(NSArray *)heights;
+- (instancetype)initWithRowCounts:(NSArray *)rowCounts rowHeights:(NSArray *)rowHeights;
 
 @end
 
 @interface TGMessageGroupedLayout ()
 {
-    NSMutableDictionary *_layouts;
-    int32_t _mainMessageId;
-    NSString *_caption;
-    NSArray *_captionTextCheckingResults;
-    int32_t _captionMessageId;
-    NSString *_reactionSummary;
-    NSString *_chosenReaction;
+    NSMutableDictionary *_infoByMessageId;
+    int32_t _leadMessageId;
+    NSString *_groupCaption;
+    NSArray *_groupCaptionLinks;
+    int32_t _groupCaptionOwnerId;
+    NSString *_groupReactionText;
+    NSString *_groupChosenReaction;
     TGMessageDiscussionContentProperty *_discussion;
     int32_t _discussionMessageId;
 }
+
+- (void)og_compat_adoptCaptionOfMessage:(TGMessage *)message;
+
 @end
+
+static NSString *OGCompatReactionSummaryText(id value)
+{
+    if ([value isKindOfClass:[NSString class]])
+        return value;
+    return [value isKindOfClass:[TGMessageReactionSummaryContentProperty class]] ? [(TGMessageReactionSummaryContentProperty *)value summary] : nil;
+}
 
 static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMessage *message)
 {
@@ -53,6 +63,13 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 @implementation TGMessageGroupedLayout
 
+@synthesize mainMessageId = _leadMessageId;
+@synthesize caption = _groupCaption;
+@synthesize captionTextCheckingResults = _groupCaptionLinks;
+@synthesize captionMessageId = _groupCaptionOwnerId;
+@synthesize reactionSummary = _groupReactionText;
+@synthesize chosenReaction = _groupChosenReaction;
+
 - (instancetype)initWithMessages:(NSArray *)messages larger:(bool)larger
 {
     self = [super init];
@@ -60,25 +77,31 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     {
         CGSize maxSize;
         [TGImageMessageViewModel calculateImageSizesForImageSize:CGSizeMake(720.0f, 660.0f) thumbnailSize:NULL renderSize:&maxSize squareAspect:false larger:larger];
-        CGFloat spacing = [TGPresentation classicIOS6Style] ? 0.0f : 1.0f;
+        const CGFloat spacing = [TGPresentation classicThemeStyle] ? 0.0f : 1.0f;
         
         NSString *proportions = @"";
         CGFloat averageAspectRatio = 0.0f;
         bool forceCalc = false;
-        NSMutableArray *photos = [[NSMutableArray alloc] init];
+        NSMutableArray *photoInfos = [NSMutableArray array];
+        CGFloat (^ratioOf)(NSUInteger) = ^CGFloat(NSUInteger index)
+        {
+            return ((TGMessagePhotoInfo *)[photoInfos objectAtIndex:index]).aspectRatio;
+        };
+        void (^placePhoto)(NSUInteger, CGRect, TGMessageGroupPositionFlags) = ^(NSUInteger index, CGRect frame, TGMessageGroupPositionFlags flags)
+        {
+            TGMessagePhotoInfo *target = [photoInfos objectAtIndex:index];
+            target.layoutFrame = frame;
+            target.positionFlags = flags;
+        };
         for (TGMessage *message in messages)
         {
-            if (_caption.length == 0 && message.caption.length != 0)
-            {
-                _caption = [message.caption copy];
-                _captionTextCheckingResults = [message.textCheckingResults copy];
-                _captionMessageId = message.mid;
-            }
+            if (message.caption.length != 0 && _groupCaption.length == 0)
+                [self og_compat_adoptCaptionOfMessage:message];
 
             TGMessagePhotoInfo *photo = [[TGMessagePhotoInfo alloc] initWithMessage:message];
             if (photo != nil)
             {
-                [photos addObject:photo];
+                [photoInfos addObject:photo];
                 
                 CGFloat aspectRatio = photo.aspectRatio;
                 if (aspectRatio > 1.2f)
@@ -95,18 +118,18 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             }
         }
         
-        if (photos.count < 2)
+        if (photoInfos.count < 2)
             return nil;
 
         const CGFloat minWidth = 68.0f;
         CGFloat maxAspectRatio = maxSize.width / maxSize.height;
-        if (photos.count > 0)
-            averageAspectRatio = averageAspectRatio / photos.count;
-        bool documentGroup = photos.count == messages.count && photos.count > 1;
-        for (TGMessagePhotoInfo *info in photos)
+        if (photoInfos.count > 0)
+            averageAspectRatio = averageAspectRatio / photoInfos.count;
+        bool documentGroup = photoInfos.count == messages.count && photoInfos.count > 1;
+        for (TGMessagePhotoInfo *info in photoInfos)
             documentGroup = documentGroup && info.document;
         bool containsDocument = false;
-        for (TGMessagePhotoInfo *info in photos)
+        for (TGMessagePhotoInfo *info in photoInfos)
             containsDocument = containsDocument || info.document;
         if (containsDocument && !documentGroup)
             return nil;
@@ -115,14 +138,14 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         if (documentGroup)
         {
             CGFloat y = 0.0f;
-            for (NSUInteger index = 0; index < photos.count; index++)
+            for (NSUInteger index = 0; index < photoInfos.count; index++)
             {
-                TGMessagePhotoInfo *info = photos[index];
+                TGMessagePhotoInfo *info = photoInfos[index];
                 info.layoutFrame = CGRectMake(0.0f, y, maxSize.width, info.imageSize.height);
                 info.positionFlags = TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
                 if (index == 0)
                     info.positionFlags |= TGMessageGroupPositionTop;
-                if (index + 1 == photos.count)
+                if (index + 1 == photoInfos.count)
                     info.positionFlags |= TGMessageGroupPositionBottom;
                 y += info.imageSize.height;
             }
@@ -131,34 +154,30 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         
         if (!documentGroup && !forceCalc)
         {
-            if (photos.count == 2)
+            if (photoInfos.count == 2)
             {
-                if ([proportions isEqualToString:@"ww"] && averageAspectRatio > 1.4 * maxAspectRatio && ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio - ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio < 0.2)
+                if ([proportions isEqualToString:@"ww"] && averageAspectRatio > 1.4 * maxAspectRatio && ratioOf(1) - ratioOf(0) < 0.2)
                 {
                     CGFloat width = maxSize.width;
-                    CGFloat height = TGScreenPixelFloor(MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio, (maxSize.height - spacing) / 2.0f)));
+                    CGFloat height = TGScreenPixelFloor(MIN(width / ratioOf(0), MIN(width / ratioOf(1), (maxSize.height - spacing) / 2.0f)));
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, width, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, width, height), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(0.0f, height + spacing, width, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionBottom | TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
+                    placePhoto(1, CGRectMake(0.0f, height + spacing, width, height), TGMessageGroupPositionBottom | TGMessageGroupPositionLeft | TGMessageGroupPositionRight);
                 }
                 else if ([proportions isEqualToString:@"ww"] || [proportions isEqualToString:@"qq"])
                 {
                     CGFloat width = (maxSize.width - spacing) / 2.0f;
-                    CGFloat height = TGScreenPixelFloor(MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio, maxSize.height)));
+                    CGFloat height = TGScreenPixelFloor(MIN(width / ratioOf(0), MIN(width / ratioOf(1), maxSize.height)));
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, width, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, width, height), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(width + spacing, 0.0f, width, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(1, CGRectMake(width + spacing, 0.0f, width, height), TGMessageGroupPositionTop | TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
                 else
                 {
                     CGFloat minimalWidth = TGScreenPixelFloor(minWidth * 1.5f);
-                    CGFloat secondWidth = TGScreenPixelFloor(MAX(0.4 * (maxSize.width - spacing), round((maxSize.width - spacing) / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio / (1.0f / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio + 1.0f / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio))));
+                    CGFloat secondWidth = TGScreenPixelFloor(MAX(0.4 * (maxSize.width - spacing), round((maxSize.width - spacing) / ratioOf(0) / (1.0f / ratioOf(0) + 1.0f / ratioOf(1)))));
                     CGFloat firstWidth = maxSize.width - secondWidth - spacing;
                     if (firstWidth < minimalWidth)
                     {
@@ -167,102 +186,86 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
                         secondWidth -= diff;
                     }
                     
-                    CGFloat height = TGScreenPixelFloor(MIN(maxSize.height, round(MIN(firstWidth / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, secondWidth / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio))));
+                    CGFloat height = TGScreenPixelFloor(MIN(maxSize.height, round(MIN(firstWidth / ratioOf(0), secondWidth / ratioOf(1)))));
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, firstWidth, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, firstWidth, height), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(firstWidth + spacing, 0.0f, secondWidth, height);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(1, CGRectMake(firstWidth + spacing, 0.0f, secondWidth, height), TGMessageGroupPositionTop | TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
             }
-            else if (photos.count == 3)
+            else if (photoInfos.count == 3)
             {
                 if ([proportions hasPrefix:@"n"])
                 {
                     CGFloat firstHeight = maxSize.height;
                     
-                    CGFloat thirdHeight = MIN((maxSize.height - spacing) * 0.5f, round(((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio * (maxSize.width - spacing) / (((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio + ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio)));
+                    CGFloat thirdHeight = MIN((maxSize.height - spacing) * 0.5f, round(ratioOf(1) * (maxSize.width - spacing) / (ratioOf(2) + ratioOf(1))));
                     CGFloat secondHeight = maxSize.height - thirdHeight - spacing;
-                    CGFloat rightWidth = MAX(minWidth, MIN((maxSize.width - spacing) * 0.5f, round(MIN(thirdHeight * ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio, secondHeight * ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio))));
+                    CGFloat rightWidth = MAX(minWidth, MIN((maxSize.width - spacing) * 0.5f, round(MIN(thirdHeight * ratioOf(2), secondHeight * ratioOf(1)))));
                     
-                    CGFloat leftWidth = round(MIN(firstHeight * ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, (maxSize.width - spacing - rightWidth)));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, leftWidth, firstHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    CGFloat leftWidth = round(MIN(firstHeight * ratioOf(0), (maxSize.width - spacing - rightWidth)));
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, leftWidth, firstHeight), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(leftWidth + spacing, 0.0f, rightWidth, secondHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionTop;
+                    placePhoto(1, CGRectMake(leftWidth + spacing, 0.0f, rightWidth, secondHeight), TGMessageGroupPositionRight | TGMessageGroupPositionTop);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).layoutFrame = CGRectMake(leftWidth + spacing, secondHeight + spacing, rightWidth, thirdHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(2, CGRectMake(leftWidth + spacing, secondHeight + spacing, rightWidth, thirdHeight), TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
                 else
                 {
                     CGFloat width = maxSize.width;
-                    CGFloat firstHeight = TGScreenPixelFloor(MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, (maxSize.height - spacing) * 0.66f));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, width, firstHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
+                    CGFloat firstHeight = TGScreenPixelFloor(MIN(width / ratioOf(0), (maxSize.height - spacing) * 0.66f));
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, width, firstHeight), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight);
                     
                     width = (maxSize.width - spacing) / 2.0f;
-                    CGFloat secondHeight = MIN(maxSize.height - firstHeight - spacing, round(MIN(width / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio, width / ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio)));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(0.0f, firstHeight + spacing, width, secondHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    CGFloat secondHeight = MIN(maxSize.height - firstHeight - spacing, round(MIN(width / ratioOf(1), width / ratioOf(2))));
+                    placePhoto(1, CGRectMake(0.0f, firstHeight + spacing, width, secondHeight), TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).layoutFrame = CGRectMake(width + spacing, firstHeight + spacing, width, secondHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(2, CGRectMake(width + spacing, firstHeight + spacing, width, secondHeight), TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
             }
-            else if (photos.count == 4)
+            else if (photoInfos.count == 4)
             {
                 if ([proportions isEqualToString:@"wwww"] || [proportions hasPrefix:@"w"])
                 {
                     CGFloat w = maxSize.width;
-                    CGFloat h0 = round(MIN(w / ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, (maxSize.height - spacing) * 0.66f));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, w, h0);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
+                    CGFloat h0 = round(MIN(w / ratioOf(0), (maxSize.height - spacing) * 0.66f));
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, w, h0), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionRight);
                     
-                    CGFloat h = round((maxSize.width - 2 * spacing) / (((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio + ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio + ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).aspectRatio));
-                    CGFloat w0 = MAX(minWidth, MIN((maxSize.width - 2 * spacing) * 0.4f, h * ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio));
-                    CGFloat w2 = MAX(MAX(minWidth, (maxSize.width - 2 * spacing) * 0.33f), h * ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).aspectRatio);
+                    CGFloat h = round((maxSize.width - 2 * spacing) / (ratioOf(1) + ratioOf(2) + ratioOf(3)));
+                    CGFloat w0 = MAX(minWidth, MIN((maxSize.width - 2 * spacing) * 0.4f, h * ratioOf(1)));
+                    CGFloat w2 = MAX(MAX(minWidth, (maxSize.width - 2 * spacing) * 0.33f), h * ratioOf(3));
                     CGFloat w1 = w - w0 - w2 - 2 * spacing;
                     h = MIN(maxSize.height - h0 - spacing, h);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(0.0f, h0 + spacing, w0, h);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    placePhoto(1, CGRectMake(0.0f, h0 + spacing, w0, h), TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).layoutFrame = CGRectMake(w0 + spacing, h0 + spacing, w1, h);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).positionFlags = TGMessageGroupPositionBottom;
+                    placePhoto(2, CGRectMake(w0 + spacing, h0 + spacing, w1, h), TGMessageGroupPositionBottom);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).layoutFrame = CGRectMake(w0 + w1 + 2 * spacing, h0 + spacing, w2, h);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(3, CGRectMake(w0 + w1 + 2 * spacing, h0 + spacing, w2, h), TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
                 else
                 {
                     CGFloat h = maxSize.height;
-                    CGFloat w0 = round(MIN(h * ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).aspectRatio, (maxSize.width - spacing) * 0.6f));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).layoutFrame = CGRectMake(0.0f, 0.0f, w0, h);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:0]).positionFlags = TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom;
+                    CGFloat w0 = round(MIN(h * ratioOf(0), (maxSize.width - spacing) * 0.6f));
+                    placePhoto(0, CGRectMake(0.0f, 0.0f, w0, h), TGMessageGroupPositionTop | TGMessageGroupPositionLeft | TGMessageGroupPositionBottom);
                     
-                    CGFloat w = round((maxSize.height - 2 * spacing) / (1.0f / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio + 1.0f /  ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio + 1.0f / ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).aspectRatio));
-                    CGFloat h0 = TGScreenPixelFloor(w / ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).aspectRatio);
-                    CGFloat h1 = TGScreenPixelFloor(w / ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).aspectRatio);
+                    CGFloat w = round((maxSize.height - 2 * spacing) / (1.0f / ratioOf(1) + 1.0f /  ratioOf(2) + 1.0f / ratioOf(3)));
+                    CGFloat h0 = TGScreenPixelFloor(w / ratioOf(1));
+                    CGFloat h1 = TGScreenPixelFloor(w / ratioOf(2));
                     CGFloat h2 = h - h0 - h1 - 2 * spacing;
                     w = MAX(minWidth, MIN(maxSize.width - w0 - spacing, w));
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).layoutFrame = CGRectMake(w0 + spacing, 0.0f, w, h0);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:1]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionTop;
+                    placePhoto(1, CGRectMake(w0 + spacing, 0.0f, w, h0), TGMessageGroupPositionRight | TGMessageGroupPositionTop);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).layoutFrame = CGRectMake(w0 + spacing, h0 + spacing, w, h1);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:2]).positionFlags = TGMessageGroupPositionRight;
+                    placePhoto(2, CGRectMake(w0 + spacing, h0 + spacing, w, h1), TGMessageGroupPositionRight);
                     
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).layoutFrame = CGRectMake(w0 + spacing, h0 + h1 + 2 * spacing, w, h2);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:3]).positionFlags = TGMessageGroupPositionRight | TGMessageGroupPositionBottom;
+                    placePhoto(3, CGRectMake(w0 + spacing, h0 + h1 + 2 * spacing, w, h2), TGMessageGroupPositionRight | TGMessageGroupPositionBottom);
                 }
             }
         }
         
-        if (!documentGroup && (forceCalc || photos.count >= 5))
+        if (!documentGroup && (forceCalc || photoInfos.count >= 5))
         {
-            NSMutableArray *croppedRatios = [[NSMutableArray alloc] init];
-            for (TGMessagePhotoInfo *photo in photos)
+            NSMutableArray *clampedRatios = [NSMutableArray array];
+            for (TGMessagePhotoInfo *photo in photoInfos)
             {
                 CGFloat aspectRatio = photo.aspectRatio;
                 CGFloat croppedRatio = aspectRatio;
@@ -272,7 +275,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
                     croppedRatio = MIN(1.0f, aspectRatio);
                 
                 croppedRatio = MAX(0.66667f, MIN(2.75f, croppedRatio));
-                [croppedRatios addObject:@(croppedRatio)];
+                [clampedRatios addObject:@(croppedRatio)];
             }
             
             NSNumber *(^multiHeight)(NSArray *) = ^NSNumber *(NSArray *ratios)
@@ -286,9 +289,9 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             };
  
             NSMutableArray *attempts = [[NSMutableArray alloc] init];
-            void (^addAttempt)(NSArray *, NSArray *) = ^(NSArray *lineCounts, NSArray *heights)
+            void (^addAttempt)(NSArray *, NSArray *) = ^(NSArray *rowCounts, NSArray *rowHeights)
             {
-                [attempts addObject:[[TGMessageGroupedLayoutAttempt alloc] initWithLineCounts:lineCounts heights:heights]];
+                [attempts addObject:[[TGMessageGroupedLayoutAttempt alloc] initWithRowCounts:rowCounts rowHeights:rowHeights]];
             };
             
             NSUInteger firstLine = 0;
@@ -296,38 +299,38 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             NSUInteger thirdLine = 0;
             NSUInteger fourthLine = 0;
             
-            for (firstLine = 1; firstLine < croppedRatios.count; firstLine++)
+            for (firstLine = 1; firstLine < clampedRatios.count; firstLine++)
             {
-                secondLine = croppedRatios.count - firstLine;
+                secondLine = clampedRatios.count - firstLine;
                 if (firstLine > 3 || secondLine > 3)
                     continue;
 
-                addAttempt(@[@(firstLine), @(croppedRatios.count - firstLine)], @[multiHeight([croppedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine, croppedRatios.count - firstLine)])]);
+                addAttempt(@[@(firstLine), @(clampedRatios.count - firstLine)], @[multiHeight([clampedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine, clampedRatios.count - firstLine)])]);
             }
 
-            for (firstLine = 1; firstLine < croppedRatios.count - 1; firstLine++)
+            for (firstLine = 1; firstLine < clampedRatios.count - 1; firstLine++)
             {
-                for (secondLine = 1; secondLine < croppedRatios.count - firstLine; secondLine++)
+                for (secondLine = 1; secondLine < clampedRatios.count - firstLine; secondLine++)
                 {
-                    thirdLine = croppedRatios.count - firstLine - secondLine;
+                    thirdLine = clampedRatios.count - firstLine - secondLine;
                     if (firstLine > 3 || secondLine > (averageAspectRatio < 0.85f ? 4 : 3) || thirdLine > 3)
                         continue;
                     
-                    addAttempt(@[@(firstLine), @(secondLine), @(thirdLine)], @[multiHeight([croppedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine, croppedRatios.count - firstLine - thirdLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine, croppedRatios.count - firstLine - secondLine)])]);
+                    addAttempt(@[@(firstLine), @(secondLine), @(thirdLine)], @[multiHeight([clampedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine, clampedRatios.count - firstLine - thirdLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine, clampedRatios.count - firstLine - secondLine)])]);
                 }
             }
             
-            for (firstLine = 1; firstLine < croppedRatios.count - 2; firstLine++)
+            for (firstLine = 1; firstLine < clampedRatios.count - 2; firstLine++)
             {
-                for (secondLine = 1; secondLine < croppedRatios.count - firstLine; secondLine++)
+                for (secondLine = 1; secondLine < clampedRatios.count - firstLine; secondLine++)
                 {
-                    for (thirdLine = 1; thirdLine < croppedRatios.count - firstLine - secondLine; thirdLine++)
+                    for (thirdLine = 1; thirdLine < clampedRatios.count - firstLine - secondLine; thirdLine++)
                     {
-                        fourthLine = croppedRatios.count - firstLine - secondLine - thirdLine;
+                        fourthLine = clampedRatios.count - firstLine - secondLine - thirdLine;
                         if (firstLine > 3 || secondLine > 3 || thirdLine > 3 || fourthLine > 3)
                             continue;
                         
-                        addAttempt(@[@(firstLine), @(secondLine), @(thirdLine), @(fourthLine)], @[multiHeight([croppedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine, croppedRatios.count - firstLine - thirdLine - fourthLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine, croppedRatios.count - firstLine - secondLine - fourthLine)]), multiHeight([croppedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine + thirdLine, croppedRatios.count - firstLine - secondLine - thirdLine)])]);
+                        addAttempt(@[@(firstLine), @(secondLine), @(thirdLine), @(fourthLine)], @[multiHeight([clampedRatios subarrayWithRange:NSMakeRange(0, firstLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine, clampedRatios.count - firstLine - thirdLine - fourthLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine, clampedRatios.count - firstLine - secondLine - fourthLine)]), multiHeight([clampedRatios subarrayWithRange:NSMakeRange(firstLine + secondLine + thirdLine, clampedRatios.count - firstLine - secondLine - thirdLine)])]);
                     }
                 }
             }
@@ -337,10 +340,10 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             CGFloat optimalDiff = 0.0f;
             for (TGMessageGroupedLayoutAttempt *attempt in attempts)
             {
-                CGFloat totalHeight = spacing * (attempt.heights.count - 1);
+                CGFloat totalHeight = spacing * (attempt.rowHeights.count - 1);
                 CGFloat minLineHeight = FLT_MAX;
                 CGFloat maxLineHeight = 0.0f;
-                for (NSNumber *h in attempt.heights)
+                for (NSNumber *h in attempt.rowHeights)
                 {
                     CGFloat lineHeight = h.floatValue;
                     totalHeight += lineHeight;
@@ -352,11 +355,13 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
                 
                 CGFloat diff = fabs(totalHeight - maxHeight);
                 
-                if (attempt.lineCounts.count > 1)
+                NSArray *rowCounts = attempt.rowCounts;
+                for (NSUInteger pairIndex = 0; pairIndex < 3 && pairIndex + 1 < rowCounts.count; pairIndex++)
                 {
-                    if (([(NSNumber *)[attempt.lineCounts objectAtIndex:0] integerValue] > [(NSNumber *)[attempt.lineCounts objectAtIndex:1] integerValue]) || (attempt.lineCounts.count > 2 && [(NSNumber *)[attempt.lineCounts objectAtIndex:1] integerValue] > [(NSNumber *)[attempt.lineCounts objectAtIndex:2] integerValue]) || (attempt.lineCounts.count > 3 && [(NSNumber *)[attempt.lineCounts objectAtIndex:2] integerValue] > [(NSNumber *)[attempt.lineCounts objectAtIndex:3] integerValue]))
+                    if ([[rowCounts objectAtIndex:pairIndex] integerValue] > [[rowCounts objectAtIndex:pairIndex + 1] integerValue])
                     {
                         diff *= 1.5f;
+                        break;
                     }
                 }
                 
@@ -372,16 +377,16 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             
             NSInteger index = 0;
             CGFloat y = 0.0f;
-            for (NSUInteger i = 0; i < optimal.lineCounts.count; i++)
+            for (NSUInteger i = 0; i < optimal.rowCounts.count; i++)
             {
-                NSInteger count = [(NSNumber *)[optimal.lineCounts objectAtIndex:i] integerValue];
-                CGFloat lineHeight = [(NSNumber *)[optimal.heights objectAtIndex:i] floatValue];
+                CGFloat lineHeight = [[optimal.rowHeights objectAtIndex:i] floatValue];
+                NSInteger count = [[optimal.rowCounts objectAtIndex:i] integerValue];
                 CGFloat x = 0.0f;
                 
                 TGMessageGroupPositionFlags positionFlags = TGMessageGroupPositionNone;
                 if (i == 0)
                     positionFlags |= TGMessageGroupPositionTop;
-                if (i == optimal.lineCounts.count - 1)
+                if (i == optimal.rowCounts.count - 1)
                     positionFlags |= TGMessageGroupPositionBottom;
                 
                 for (NSInteger k = 0; k < count; k++)
@@ -396,10 +401,9 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
                     if (positionFlags == TGMessageGroupPositionNone)
                         innerPositionFlags = TGMessageGroupPositionInside;
                     
-                    CGFloat ratio = [(NSNumber *)[croppedRatios objectAtIndex:index] floatValue];
+                    CGFloat ratio = [[clampedRatios objectAtIndex:index] floatValue];
                     CGFloat width = ratio * lineHeight;
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:index]).layoutFrame = CGRectMake(x, y, width, lineHeight);
-                    ((TGMessagePhotoInfo *)[photos objectAtIndex:index]).positionFlags = innerPositionFlags;
+                    placePhoto(index, CGRectMake(x, y, width, lineHeight), innerPositionFlags);
                     
                     x += width + spacing;
                     index++;
@@ -410,13 +414,14 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         }
         
         CGSize dimensions = CGSizeZero;
-        _layouts = [[NSMutableDictionary alloc] init];
-        for (TGMessagePhotoInfo *photo in photos)
+        _infoByMessageId = [[NSMutableDictionary alloc] init];
+        for (TGMessagePhotoInfo *photo in photoInfos)
         {
-            _layouts[@(photo.mid)] = photo;
+            _infoByMessageId[@(photo.mid)] = photo;
 
-            if ((photo.positionFlags & TGMessageGroupPositionTop) && (photo.positionFlags & TGMessageGroupPositionLeft))
-                _mainMessageId = photo.mid;
+            TGMessageGroupPositionFlags photoFlags = photo.positionFlags;
+            if ((photoFlags & TGMessageGroupPositionLeft) && (photoFlags & TGMessageGroupPositionTop))
+                _leadMessageId = photo.mid;
             
             if (CGRectGetMaxX(photo.layoutFrame) > dimensions.width)
                 dimensions.width = CGRectGetMaxX(photo.layoutFrame);
@@ -425,44 +430,34 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         }
         _dimensions = dimensions;
 
-        TGMessage *reactionMessage = nil;
+        TGMessage *reactionSource = nil;
         for (TGMessage *message in messages)
         {
-            id value = [message.contentProperties objectForKey:@"ios6ReactionSummary"];
-            NSString *summary = nil;
-            if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-                summary = ((TGMessageReactionSummaryContentProperty *)value).summary;
-            else if ([value isKindOfClass:[NSString class]])
-                summary = value;
+            bool carriesSummary = OGCompatReactionSummaryText([message.contentProperties objectForKey:@"ios6ReactionSummary"]).length != 0;
+            bool isLead = message.mid == _leadMessageId;
 
-            if (summary.length != 0 && (reactionMessage == nil || message.mid == _mainMessageId))
-                reactionMessage = message;
-            if (message.mid == _mainMessageId && summary.length != 0)
+            if (carriesSummary && (isLead || reactionSource == nil))
+                reactionSource = message;
+            if (carriesSummary && isLead)
                 break;
         }
 
-        id reactionValue = [reactionMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
-        if ([reactionValue isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-        {
-            _reactionSummary = [((TGMessageReactionSummaryContentProperty *)reactionValue).summary copy];
-            _chosenReaction = [((TGMessageReactionSummaryContentProperty *)reactionValue).chosenReaction copy];
-        }
-        else if ([reactionValue isKindOfClass:[NSString class]])
-        {
-            _reactionSummary = [reactionValue copy];
-        }
+        id summaryProperty = [reactionSource.contentProperties objectForKey:@"ios6ReactionSummary"];
+        if ([summaryProperty isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
+            _groupChosenReaction = [((TGMessageReactionSummaryContentProperty *)summaryProperty).chosenReaction copy];
+        _groupReactionText = [OGCompatReactionSummaryText(summaryProperty) copy];
 
         for (TGMessage *message in messages)
         {
             TGMessageDiscussionContentProperty *discussion = TGMessageGroupedLayoutDiscussion(message);
             if (discussion == nil)
                 continue;
-            if (_discussion == nil || message.mid == _mainMessageId)
+            if (_discussion == nil || message.mid == _leadMessageId)
             {
                 _discussion = discussion;
                 _discussionMessageId = message.mid;
             }
-            if (message.mid == _mainMessageId)
+            if (message.mid == _leadMessageId)
                 break;
         }
     }
@@ -471,30 +466,27 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 - (NSUInteger)count
 {
-    return _layouts.count;
+    return _infoByMessageId.count;
 }
 
 - (void)updateDocumentMessage:(TGMessage *)message
 {
-    if (!_documentGroup || _layouts[@(message.mid)] == nil)
+    if (!_documentGroup || _infoByMessageId[@(message.mid)] == nil)
         return;
-    if (message.mid == _captionMessageId || message.caption.length != 0) {
-        _caption = [message.caption copy];
-        _captionTextCheckingResults = [message.textCheckingResults copy];
-        _captionMessageId = message.caption.length == 0 ? 0 : message.mid;
-    }
+    if (message.mid == _groupCaptionOwnerId || message.caption.length != 0)
+        [self og_compat_adoptCaptionOfMessage:message];
     if (message.mid == _statusMessage.mid)
         _statusMessage = message;
     id reaction = message.contentProperties[@"ios6ReactionSummary"];
-    if (message.mid == _mainMessageId || _reactionSummary.length == 0) {
+    if (message.mid == _leadMessageId || _groupReactionText.length == 0) {
         if ([reaction isKindOfClass:[TGMessageReactionSummaryContentProperty class]]) {
-            _reactionSummary = [((TGMessageReactionSummaryContentProperty *)reaction).summary copy];
-            _chosenReaction = [((TGMessageReactionSummaryContentProperty *)reaction).chosenReaction copy];
+            _groupReactionText = [((TGMessageReactionSummaryContentProperty *)reaction).summary copy];
+            _groupChosenReaction = [((TGMessageReactionSummaryContentProperty *)reaction).chosenReaction copy];
         } else if ([reaction isKindOfClass:[NSString class]]) {
-            _reactionSummary = [reaction copy];
-        } else if (message.mid == _mainMessageId) {
-            _reactionSummary = nil;
-            _chosenReaction = nil;
+            _groupReactionText = [reaction copy];
+        } else if (message.mid == _leadMessageId) {
+            _groupReactionText = nil;
+            _groupChosenReaction = nil;
         }
     }
     [self updateDiscussion:TGMessageGroupedLayoutDiscussion(message) messageId:message.mid];
@@ -508,7 +500,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 - (CGRect)frameForMessageId:(int32_t)messageId
 {
-    TGMessagePhotoInfo *info = _layouts[@(messageId)];
+    TGMessagePhotoInfo *info = _infoByMessageId[@(messageId)];
     if (info != nil)
         return info.layoutFrame;
     
@@ -517,7 +509,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 - (TGMessageGroupPositionFlags)positionForMessageId:(int32_t)messageId
 {
-    TGMessagePhotoInfo *info = _layouts[@(messageId)];
+    TGMessagePhotoInfo *info = _infoByMessageId[@(messageId)];
     if (info != nil)
         return info.positionFlags;
     
@@ -526,7 +518,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 - (int32_t)messageIdForPosition:(TGMessageGroupPositionFlags)position
 {
-    for (TGMessagePhotoInfo *info in [_layouts allValues])
+    for (TGMessagePhotoInfo *info in [_infoByMessageId allValues])
     {
         if (info.positionFlags == position)
             return info.mid;
@@ -539,7 +531,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     if (enumerationBlock == nil)
         return;
     
-    for (TGMessagePhotoInfo *info in [_layouts allValues])
+    for (TGMessagePhotoInfo *info in [_infoByMessageId allValues])
     {
         enumerationBlock(info.mid, info.layoutFrame);
     }
@@ -548,18 +540,18 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 - (TGMessageGroupedLayout *)groupedLayoutAfterMessageUpdate:(TGMessage *)message previousMessage:(TGMessage *)previousMessage
 {
     TGMessageGroupedLayout *groupedLayout = [[TGMessageGroupedLayout alloc] init];
-    NSMutableDictionary *newLayouts = [_layouts mutableCopy];
-    groupedLayout->_layouts = newLayouts;
+    NSMutableDictionary *newLayouts = [_infoByMessageId mutableCopy];
+    groupedLayout->_infoByMessageId = newLayouts;
     groupedLayout->_dimensions = _dimensions;
     groupedLayout->_documentGroup = _documentGroup;
     groupedLayout->_documentContentWidth = _documentContentWidth;
     groupedLayout->_statusMessage = _statusMessage.mid == previousMessage.mid ? message : _statusMessage;
-    groupedLayout->_mainMessageId = _mainMessageId;
-    groupedLayout->_caption = [_caption copy];
-    groupedLayout->_captionTextCheckingResults = [_captionTextCheckingResults copy];
-    groupedLayout->_captionMessageId = _captionMessageId;
-    groupedLayout->_reactionSummary = [_reactionSummary copy];
-    groupedLayout->_chosenReaction = [_chosenReaction copy];
+    groupedLayout->_leadMessageId = _leadMessageId;
+    groupedLayout->_groupCaption = [_groupCaption copy];
+    groupedLayout->_groupCaptionLinks = [_groupCaptionLinks copy];
+    groupedLayout->_groupCaptionOwnerId = _groupCaptionOwnerId;
+    groupedLayout->_groupReactionText = [_groupReactionText copy];
+    groupedLayout->_groupChosenReaction = [_groupChosenReaction copy];
     groupedLayout->_discussion = _discussion;
     groupedLayout->_discussionMessageId = _discussionMessageId;
     groupedLayout->_headerVisible = _headerVisible;
@@ -570,30 +562,33 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     {
         newLayouts[@(message.mid)] = info;
         [newLayouts removeObjectForKey:@(previousMessage.mid)];
-        if (groupedLayout->_mainMessageId == previousMessage.mid)
-            groupedLayout->_mainMessageId = message.mid;
+        if (groupedLayout->_leadMessageId == previousMessage.mid)
+            groupedLayout->_leadMessageId = message.mid;
         if (groupedLayout->_discussionMessageId == previousMessage.mid)
             groupedLayout->_discussionMessageId = message.mid;
     }
     [groupedLayout updateDiscussion:TGMessageGroupedLayoutDiscussion(message) messageId:message.mid];
 
-    if (previousMessage.mid == _captionMessageId || message.caption.length != 0)
-    {
-        groupedLayout->_caption = [message.caption copy];
-        groupedLayout->_captionTextCheckingResults = [message.textCheckingResults copy];
-        groupedLayout->_captionMessageId = message.caption.length == 0 ? 0 : message.mid;
-    }
+    if (message.caption.length != 0 || previousMessage.mid == _groupCaptionOwnerId)
+        [groupedLayout og_compat_adoptCaptionOfMessage:message];
 
     return groupedLayout;
 }
 
+- (void)og_compat_adoptCaptionOfMessage:(TGMessage *)message
+{
+    _groupCaptionLinks = [message.textCheckingResults copy];
+    _groupCaption = [message.caption copy];
+    _groupCaptionOwnerId = message.caption.length == 0 ? 0 : message.mid;
+}
+
 - (void)updateReactionSummary:(NSString *)reactionSummary chosenReaction:(NSString *)chosenReaction messageId:(int32_t)messageId
 {
-    if (messageId != _mainMessageId)
-        return;
-
-    _reactionSummary = [reactionSummary copy];
-    _chosenReaction = [chosenReaction copy];
+    if (messageId == _leadMessageId)
+    {
+        _groupChosenReaction = [chosenReaction copy];
+        _groupReactionText = [reactionSummary copy];
+    }
 }
 
 - (void)updateDiscussion:(TGMessageDiscussionContentProperty *)discussion messageId:(int32_t)messageId
@@ -608,7 +603,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         return;
     }
 
-    if (_discussion == nil || messageId == _discussionMessageId || messageId == _mainMessageId)
+    if (_discussion == nil || messageId == _discussionMessageId || messageId == _leadMessageId)
     {
         _discussion = discussion;
         _discussionMessageId = messageId;
@@ -690,13 +685,13 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
 
 @implementation TGMessageGroupedLayoutAttempt
 
-- (instancetype)initWithLineCounts:(NSArray *)lineCounts heights:(NSArray *)heights
+- (instancetype)initWithRowCounts:(NSArray *)rowCounts rowHeights:(NSArray *)rowHeights
 {
     self = [super init];
     if (self != nil)
     {
-        _lineCounts = lineCounts;
-        _heights = heights;
+        _rowHeights = rowHeights;
+        _rowCounts = rowCounts;
     }
     return self;
 }

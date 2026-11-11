@@ -35,7 +35,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x3bd4b7c2;
+    return (int32_t)0x75c1ad70;
 }
 
 - (int32_t)TLconstructorName
@@ -56,6 +56,7 @@
     object.monoforum_peer_id = metaObject->getObject((int32_t)0x5e0016bb);
     object.todo_item_id = metaObject->getInt32((int32_t)0x407f2ee1);
     object.poll_option = metaObject->getBytes((int32_t)0xe3ea8a4f);
+    object.quote_rich = metaObject->getArray((int32_t)0xa29373c7);
     return object;
 }
 
@@ -129,8 +130,14 @@
         value.nativeObject = self.poll_option;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xe3ea8a4f, value));
     }
+    if (self.flags & (1 << 8))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeVector;
+        value.nativeObject = self.quote_rich;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xa29373c7, value));
+    }
 }
 
 
 @end
-

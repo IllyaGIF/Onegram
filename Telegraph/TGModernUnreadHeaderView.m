@@ -5,44 +5,63 @@
 #import "TGPresentation.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
-static UIImage *TGClassicIOS6UnreadHeaderBackgroundImage(void)
+static UIImage *OGCompatUnreadHeaderGlossImage(void)
 {
-    static UIImage *image = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    static UIImage *glossImage = nil;
+    static dispatch_once_t glossToken;
+    dispatch_once(&glossToken, ^
     {
-        CGSize size = CGSizeMake(2.0f, 25.0f);
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-        CGContextRef context = UIGraphicsGetCurrentContext();
+        const CGFloat width = 2.0f;
+        const CGFloat height = 25.0f;
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, height), false, 0.0f);
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
 
-        NSArray *colors = @[(id)UIColorRGB(0xf8fafc).CGColor, (id)UIColorRGB(0xdce2e8).CGColor, (id)UIColorRGB(0xaeb8c2).CGColor];
-        CGFloat locations[] = {0.0f, 0.48f, 1.0f};
-        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-        CGGradientRef gradient = CGGradientCreateWithColors(colorSpace, (__bridge CFArrayRef)colors, locations);
-        if (context != NULL)
+        if (ctx != NULL)
         {
-            CGContextDrawLinearGradient(context, gradient, CGPointZero, CGPointMake(0.0f, size.height), 0);
+            CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+            NSArray *stops = @[(id)UIColorRGB(0xf8fafc).CGColor, (id)UIColorRGB(0xdce2e8).CGColor, (id)UIColorRGB(0xaeb8c2).CGColor];
+            const CGFloat positions[3] = {0.0f, 0.48f, 1.0f};
+            CGGradientRef ramp = CGGradientCreateWithColors(rgb, (__bridge CFArrayRef)stops, positions);
+            CGContextDrawLinearGradient(ctx, ramp, CGPointZero, CGPointMake(0.0f, height), 0);
+            CGGradientRelease(ramp);
+            CGColorSpaceRelease(rgb);
         }
 
-        CGGradientRelease(gradient);
-        CGColorSpaceRelease(colorSpace);
+        struct { CGFloat y; int rgb; CGFloat alpha; } lines[] = {
+            { 0.0f, 0xffffff, 0.9f },
+            { height - 1.0f, 0x7d8995, 1.0f },
+            { height - 2.0f, 0xffffff, 0.35f }
+        };
+        for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+        {
+            CGContextSetFillColorWithColor(ctx, UIColorRGBA(lines[i].rgb, lines[i].alpha).CGColor);
+            CGContextFillRect(ctx, CGRectMake(0.0f, lines[i].y, width, 1.0f));
+        }
 
-        CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.9f).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, 0.0f, size.width, 1.0f));
-        CGContextSetFillColorWithColor(context, UIColorRGB(0x7d8995).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, size.height - 1.0f, size.width, 1.0f));
-        CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.35f).CGColor);
-        CGContextFillRect(context, CGRectMake(0.0f, size.height - 2.0f, size.width, 1.0f));
-
-        image = UIGraphicsGetImageFromCurrentImageContext();
+        glossImage = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
     });
-    return image;
+    return glossImage;
 }
 
-static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
+static void OGCompatUnreadHeaderStyleViews(UIImageView *backgroundView, UILabel *label, TGPresentation *presentation)
 {
-    return UIColorRGB(0x43576b);
+    if ([TGPresentation classicThemeStyle])
+    {
+        backgroundView.image = OGCompatUnreadHeaderGlossImage();
+        label.textColor = UIColorRGB(0x43576b);
+        label.font = TGBoldSystemFontOfSize(13.0f);
+        label.shadowColor = UIColorRGBA(0xffffff, 0.9f);
+        label.shadowOffset = CGSizeMake(0.0f, 1.0f);
+    }
+    else
+    {
+        backgroundView.image = presentation.images.chatUnreadBackground;
+        label.textColor = presentation.pallete.chatUnreadTextColor;
+        label.font = TGSystemFontOfSize(13.0f);
+        label.shadowColor = [UIColor clearColor];
+        label.shadowOffset = CGSizeZero;
+    }
 }
 
 static OGConversationAppearance *TGBrandedUnreadHeaderAppearance(void)
@@ -99,32 +118,21 @@ static CGFloat TGBrandedUnreadHeaderTextY(OGConversationAppearance *appearance, 
         return;
     }
 
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    UIImage *backgroundImage = classicIOS6Style ? TGClassicIOS6UnreadHeaderBackgroundImage() : presentation.images.chatUnreadBackground;
-    UIImageView *backgroundImageView = [[UIImageView alloc] initWithImage:backgroundImage];
-    CGRect backgroundFrame = CGRectMake(0.0f, 3.0f, containerWidth, 25.0f);
-    backgroundImageView.frame = CGRectOffset(backgroundFrame, position.x, position.y);
-    [backgroundContainer addSubview:backgroundImageView];
-    
-    static UIFont *font = nil;
-    static UIFont *classicFont = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        font = TGSystemFontOfSize(13.0f);
-        classicFont = TGBoldSystemFontOfSize(13.0f);
-    });
-    
+    bool glossy = [TGPresentation classicThemeStyle];
+    UIImageView *stripView = [[UIImageView alloc] initWithImage:glossy ? OGCompatUnreadHeaderGlossImage() : presentation.images.chatUnreadBackground];
+    stripView.frame = CGRectOffset(CGRectMake(0.0f, 3.0f, containerWidth, 25.0f), position.x, position.y);
+    [backgroundContainer addSubview:stripView];
+
     NSString *text = TGLocalized(@"Conversation.UnreadMessages");
-    UIFont *effectiveFont = classicIOS6Style ? classicFont : font;
-    CGSize textSize = [text sizeWithFont:effectiveFont];
-    
+    UIFont *textFont = glossy ? TGBoldSystemFontOfSize(13.0f) : TGSystemFontOfSize(13.0f);
+    UIColor *textColor = glossy ? UIColorRGB(0x43576b) : presentation.pallete.chatUnreadTextColor;
+    CGSize textSize = [text sizeWithFont:textFont];
+
     CGContextSaveGState(context);
-    if (classicIOS6Style)
+    if (glossy)
         CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, 0.9f).CGColor);
-    CGContextSetFillColorWithColor(context, (classicIOS6Style ? TGClassicIOS6UnreadHeaderTextColor() : presentation.pallete.chatUnreadTextColor).CGColor);
-    CGPoint textOrigin = CGPointMake(CGFloor((containerWidth - textSize.width) / 2) + 1, 7.0f + TGRetinaPixel);
-    [text drawAtPoint:textOrigin withFont:effectiveFont];
+    CGContextSetFillColorWithColor(context, textColor.CGColor);
+    [text drawAtPoint:CGPointMake(CGFloor((containerWidth - textSize.width) / 2) + 1, 7.0f + TGRetinaPixel) withFont:textFont];
     CGContextRestoreGState(context);
 }
 
@@ -135,16 +143,12 @@ static CGFloat TGBrandedUnreadHeaderTextY(OGConversationAppearance *appearance, 
     {
         self.viewIdentifier = @"_unread";
         
-        bool classicIOS6Style = [TGPresentation classicIOS6Style];
-        _backgroundView = [[UIImageView alloc] initWithImage:classicIOS6Style ? TGClassicIOS6UnreadHeaderBackgroundImage() : presentation.images.chatUnreadBackground];
+        _backgroundView = [[UIImageView alloc] init];
         [self addSubview:_backgroundView];
         
         _labelView = [[UILabel alloc] init];
         _labelView.backgroundColor = [UIColor clearColor];
-        _labelView.textColor = classicIOS6Style ? TGClassicIOS6UnreadHeaderTextColor() : presentation.pallete.chatUnreadTextColor;
-        _labelView.font = classicIOS6Style ? TGBoldSystemFontOfSize(13.0f) : TGSystemFontOfSize(13.0f);
-        _labelView.shadowColor = classicIOS6Style ? UIColorRGBA(0xffffff, 0.9f) : [UIColor clearColor];
-        _labelView.shadowOffset = classicIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
+        OGCompatUnreadHeaderStyleViews(_backgroundView, _labelView, presentation);
         _labelView.text = TGLocalized(@"Conversation.UnreadMessages");
         _labelView.transform = CGAffineTransformMakeRotation((CGFloat)M_PI);
         [_labelView sizeToFit];
@@ -170,12 +174,7 @@ static CGFloat TGBrandedUnreadHeaderTextY(OGConversationAppearance *appearance, 
 }
 - (void)setPresentation:(TGPresentation *)presentation
 {
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    _backgroundView.image = classicIOS6Style ? TGClassicIOS6UnreadHeaderBackgroundImage() : presentation.images.chatUnreadBackground;
-    _labelView.textColor = classicIOS6Style ? TGClassicIOS6UnreadHeaderTextColor() : presentation.pallete.chatUnreadTextColor;
-    _labelView.font = classicIOS6Style ? TGBoldSystemFontOfSize(13.0f) : TGSystemFontOfSize(13.0f);
-    _labelView.shadowColor = classicIOS6Style ? UIColorRGBA(0xffffff, 0.9f) : [UIColor clearColor];
-    _labelView.shadowOffset = classicIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
+    OGCompatUnreadHeaderStyleViews(_backgroundView, _labelView, presentation);
     [_labelView sizeToFit];
     [self applyBrandedStyle];
 }

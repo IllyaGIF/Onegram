@@ -183,54 +183,88 @@ void TGAssert(bool value)
         NSLog(@"TGAssert failed");
 }
 
-static Class TGIOS6RuntimeSystemClass(NSString *name, Class compatibilityClass)
+static Class OGCompatResolveSystemClass(NSString *name, Class stubClass)
 {
-    Class systemClass = NSClassFromString(name);
-    if (systemClass == Nil)
+    Class resolved = NSClassFromString(name);
+    if (resolved == Nil)
     {
+        NSString *frameworkPath = nil;
         if ([name hasPrefix:@"PH"])
-            dlopen("/System/Library/Frameworks/Photos.framework/Photos", RTLD_LAZY | RTLD_LOCAL);
+            frameworkPath = @"/System/Library/Frameworks/Photos.framework/Photos";
         else if ([name hasPrefix:@"CN"])
-            dlopen("/System/Library/Frameworks/Contacts.framework/Contacts", RTLD_LAZY | RTLD_LOCAL);
+            frameworkPath = @"/System/Library/Frameworks/Contacts.framework/Contacts";
         else if ([name isEqualToString:@"WCSession"])
-            dlopen("/System/Library/Frameworks/WatchConnectivity.framework/WatchConnectivity", RTLD_LAZY | RTLD_LOCAL);
+            frameworkPath = @"/System/Library/Frameworks/WatchConnectivity.framework/WatchConnectivity";
+        if (frameworkPath != nil)
+            dlopen([frameworkPath fileSystemRepresentation], RTLD_LAZY | RTLD_LOCAL);
 
-        systemClass = NSClassFromString(name);
+        resolved = NSClassFromString(name);
     }
-    if (systemClass == Nil || systemClass == compatibilityClass)
-        return Nil;
-    return systemClass;
+    return (resolved == Nil || resolved == stubClass) ? Nil : resolved;
 }
 
-#define TGIOS6_RUNTIME_PROXY_METHODS(systemName) \
+static IMP OGCompatSystemFactory(NSString *name, Class stubClass, SEL selector, Class *systemClassOut)
+{
+    Class resolved = OGCompatResolveSystemClass(name, stubClass);
+    if (resolved == Nil || ![resolved respondsToSelector:selector])
+        return NULL;
+    *systemClassOut = resolved;
+    return [resolved methodForSelector:selector];
+}
+
+#define OG_COMPAT_SYSTEM_CLASS_FORWARDING(systemName) \
 + (id)allocWithZone:(NSZone *)zone \
 { \
-    Class systemClass = TGIOS6RuntimeSystemClass(@systemName, self); \
-    if (systemClass != Nil) \
-        return [systemClass allocWithZone:zone]; \
-    return [super allocWithZone:zone]; \
+    Class resolved = OGCompatResolveSystemClass(@systemName, self); \
+    return resolved != Nil ? [resolved allocWithZone:zone] : [super allocWithZone:zone]; \
 } \
 + (id)forwardingTargetForSelector:(SEL)selector \
 { \
-    Class systemClass = TGIOS6RuntimeSystemClass(@systemName, self); \
-    if (systemClass != Nil && [systemClass respondsToSelector:selector]) \
-        return systemClass; \
-    return nil; \
+    Class resolved = OGCompatResolveSystemClass(@systemName, self); \
+    return (resolved != Nil && [resolved respondsToSelector:selector]) ? resolved : nil; \
 }
+
+#define OG_COMPAT_FORWARDED_STUB(ClassName) \
+@implementation ClassName \
+OG_COMPAT_SYSTEM_CLASS_FORWARDING(#ClassName) \
+@end
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
+OG_COMPAT_FORWARDED_STUB(PHAsset)
+OG_COMPAT_FORWARDED_STUB(PHAssetChangeRequest)
+OG_COMPAT_FORWARDED_STUB(PHAssetCollection)
+OG_COMPAT_FORWARDED_STUB(PHCachingImageManager)
+OG_COMPAT_FORWARDED_STUB(PHFetchOptions)
+OG_COMPAT_FORWARDED_STUB(PHImageManager)
+OG_COMPAT_FORWARDED_STUB(PHImageRequestOptions)
+OG_COMPAT_FORWARDED_STUB(PHObject)
+OG_COMPAT_FORWARDED_STUB(PHPhotoLibrary)
+OG_COMPAT_FORWARDED_STUB(PHVideoRequestOptions)
+OG_COMPAT_FORWARDED_STUB(UIAlertController)
+OG_COMPAT_FORWARDED_STUB(UIDocumentPickerViewController)
+#endif
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
+OG_COMPAT_FORWARDED_STUB(CNContactFormatter)
+OG_COMPAT_FORWARDED_STUB(CNContactVCardSerialization)
+OG_COMPAT_FORWARDED_STUB(CNLabeledValue)
+OG_COMPAT_FORWARDED_STUB(CNMutableContact)
+OG_COMPAT_FORWARDED_STUB(CNPhoneNumber)
+OG_COMPAT_FORWARDED_STUB(PHAssetResource)
+OG_COMPAT_FORWARDED_STUB(PHAssetResourceManager)
+OG_COMPAT_FORWARDED_STUB(PHLivePhotoRequestOptions)
+OG_COMPAT_FORWARDED_STUB(WCSession)
+#endif
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSessionConfiguration
-TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionConfiguration")
+OG_COMPAT_SYSTEM_CLASS_FORWARDING("NSURLSessionConfiguration")
 + (instancetype)defaultSessionConfiguration
 {
-    Class systemClass = TGIOS6RuntimeSystemClass(@"NSURLSessionConfiguration", self);
-    SEL selector = @selector(defaultSessionConfiguration);
-    if (systemClass != Nil && [systemClass respondsToSelector:selector])
-    {
-        IMP implementation = [systemClass methodForSelector:selector];
-        id (*function)(id, SEL) = (void *)implementation;
-        return function(systemClass, selector);
-    }
+    Class systemClass = Nil;
+    IMP factory = OGCompatSystemFactory(@"NSURLSessionConfiguration", self, @selector(defaultSessionConfiguration), &systemClass);
+    if (factory != NULL)
+        return ((id (*)(id, SEL))factory)(systemClass, @selector(defaultSessionConfiguration));
     return [[self alloc] init];
 }
 @end
@@ -238,29 +272,21 @@ TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionConfiguration")
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSession
-TGIOS6_RUNTIME_PROXY_METHODS("NSURLSession")
+OG_COMPAT_SYSTEM_CLASS_FORWARDING("NSURLSession")
 + (instancetype)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration
 {
-    Class systemClass = TGIOS6RuntimeSystemClass(@"NSURLSession", self);
-    SEL selector = @selector(sessionWithConfiguration:);
-    if (systemClass != Nil && [systemClass respondsToSelector:selector])
-    {
-        IMP implementation = [systemClass methodForSelector:selector];
-        id (*function)(id, SEL, id) = (void *)implementation;
-        return function(systemClass, selector, configuration);
-    }
+    Class systemClass = Nil;
+    IMP factory = OGCompatSystemFactory(@"NSURLSession", self, @selector(sessionWithConfiguration:), &systemClass);
+    if (factory != NULL)
+        return ((id (*)(id, SEL, id))factory)(systemClass, @selector(sessionWithConfiguration:), configuration);
     return [[self alloc] init];
 }
 + (instancetype)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id)delegate delegateQueue:(NSOperationQueue *)queue
 {
-    Class systemClass = TGIOS6RuntimeSystemClass(@"NSURLSession", self);
-    SEL selector = @selector(sessionWithConfiguration:delegate:delegateQueue:);
-    if (systemClass != Nil && [systemClass respondsToSelector:selector])
-    {
-        IMP implementation = [systemClass methodForSelector:selector];
-        id (*function)(id, SEL, id, id, id) = (void *)implementation;
-        return function(systemClass, selector, configuration, delegate, queue);
-    }
+    Class systemClass = Nil;
+    IMP factory = OGCompatSystemFactory(@"NSURLSession", self, @selector(sessionWithConfiguration:delegate:delegateQueue:), &systemClass);
+    if (factory != NULL)
+        return ((id (*)(id, SEL, id, id, id))factory)(systemClass, @selector(sessionWithConfiguration:delegate:delegateQueue:), configuration, delegate, queue);
     return [[self alloc] init];
 }
 - (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url
@@ -273,25 +299,19 @@ TGIOS6_RUNTIME_PROXY_METHODS("NSURLSession")
 }
 - (void)invalidateAndCancel {}
 @end
-#endif
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+OG_COMPAT_FORWARDED_STUB(NSURLSessionDataTask)
+
 @implementation NSURLSessionTask
-TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionTask")
-- (void)resume {}
+OG_COMPAT_SYSTEM_CLASS_FORWARDING("NSURLSessionTask")
 - (void)cancel {}
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
-@implementation NSURLSessionDataTask
-TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionDataTask")
+- (void)resume {}
 @end
 #endif
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 100000
 @implementation UIImpactFeedbackGenerator
-TGIOS6_RUNTIME_PROXY_METHODS("UIImpactFeedbackGenerator")
+OG_COMPAT_SYSTEM_CLASS_FORWARDING("UIImpactFeedbackGenerator")
 - (instancetype)initWithStyle:(NSInteger)style
 {
     return [super init];
@@ -303,275 +323,139 @@ TGIOS6_RUNTIME_PROXY_METHODS("UIImpactFeedbackGenerator")
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation UIKeyCommand
-TGIOS6_RUNTIME_PROXY_METHODS("UIKeyCommand")
+OG_COMPAT_SYSTEM_CLASS_FORWARDING("UIKeyCommand")
 + (instancetype)keyCommandWithInput:(NSString *)input modifierFlags:(NSUInteger)modifierFlags action:(SEL)action
 {
-    if (iosMajorVersion() >= 7)
-    {
-        Class systemKeyCommandClass = NSClassFromString(@"UIKeyCommand");
-        SEL factorySelector = @selector(keyCommandWithInput:modifierFlags:action:);
-        if (systemKeyCommandClass != Nil && systemKeyCommandClass != [self class] &&
-            [systemKeyCommandClass respondsToSelector:factorySelector])
-        {
-            IMP implementation = [systemKeyCommandClass methodForSelector:factorySelector];
-            id (*factory)(id, SEL, NSString *, NSUInteger, SEL) = (void *)implementation;
-            return factory(systemKeyCommandClass, factorySelector, input, modifierFlags, action);
-        }
-    }
+    Class systemClass = Nil;
+    IMP factory = iosMajorVersion() >= 7 ? OGCompatSystemFactory(@"UIKeyCommand", self, @selector(keyCommandWithInput:modifierFlags:action:), &systemClass) : NULL;
+    if (factory != NULL)
+        return ((id (*)(id, SEL, NSString *, NSUInteger, SEL))factory)(systemClass, @selector(keyCommandWithInput:modifierFlags:action:), input, modifierFlags, action);
 
     return [[self alloc] init];
 }
 @end
 #endif
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation UIAlertController
-TGIOS6_RUNTIME_PROXY_METHODS("UIAlertController")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation UIDocumentPickerViewController
-TGIOS6_RUNTIME_PROXY_METHODS("UIDocumentPickerViewController")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHObject
-TGIOS6_RUNTIME_PROXY_METHODS("PHObject")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHAsset
-TGIOS6_RUNTIME_PROXY_METHODS("PHAsset")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHAssetChangeRequest
-TGIOS6_RUNTIME_PROXY_METHODS("PHAssetChangeRequest")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHAssetCollection
-TGIOS6_RUNTIME_PROXY_METHODS("PHAssetCollection")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation PHAssetResource
-TGIOS6_RUNTIME_PROXY_METHODS("PHAssetResource")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation PHAssetResourceManager
-TGIOS6_RUNTIME_PROXY_METHODS("PHAssetResourceManager")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHCachingImageManager
-TGIOS6_RUNTIME_PROXY_METHODS("PHCachingImageManager")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHFetchOptions
-TGIOS6_RUNTIME_PROXY_METHODS("PHFetchOptions")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHImageManager
-TGIOS6_RUNTIME_PROXY_METHODS("PHImageManager")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHImageRequestOptions
-TGIOS6_RUNTIME_PROXY_METHODS("PHImageRequestOptions")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation PHLivePhotoRequestOptions
-TGIOS6_RUNTIME_PROXY_METHODS("PHLivePhotoRequestOptions")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHPhotoLibrary
-TGIOS6_RUNTIME_PROXY_METHODS("PHPhotoLibrary")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-@implementation PHVideoRequestOptions
-TGIOS6_RUNTIME_PROXY_METHODS("PHVideoRequestOptions")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation CNContactFormatter
-TGIOS6_RUNTIME_PROXY_METHODS("CNContactFormatter")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation CNContactVCardSerialization
-TGIOS6_RUNTIME_PROXY_METHODS("CNContactVCardSerialization")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation CNLabeledValue
-TGIOS6_RUNTIME_PROXY_METHODS("CNLabeledValue")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation CNMutableContact
-TGIOS6_RUNTIME_PROXY_METHODS("CNMutableContact")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation CNPhoneNumber
-TGIOS6_RUNTIME_PROXY_METHODS("CNPhoneNumber")
-@end
-#endif
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
-@implementation WCSession
-TGIOS6_RUNTIME_PROXY_METHODS("WCSession")
-@end
-#endif
-
-static NSString *TGIos6YouTubeDecodedString(NSString *string)
+static NSCharacterSet *OGCompatIdentifierInvalidCharacters(void)
 {
-    NSString *result = string;
-    for (NSUInteger i = 0; i < 3 && result.length != 0; i++)
+    static NSCharacterSet *invalid = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
     {
-        NSString *decoded = [result stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-        if (decoded.length == 0 || [decoded isEqualToString:result])
-            break;
-        result = decoded;
-    }
-    return result;
+        invalid = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"] invertedSet];
+    });
+    return invalid;
 }
 
-static NSString *TGIos6YouTubeQueryValue(NSURL *url, NSArray *names)
+static NSString *OGCompatUnescapedRepeatedly(NSString *text)
 {
-    NSString *query = url.query;
-    if (query.length == 0)
+    NSString *current = text;
+    for (NSUInteger pass = 0; pass < 3 && current.length != 0; pass++)
+    {
+        NSString *next = [current stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+        if (next.length == 0 || [next isEqualToString:current])
+            break;
+        current = next;
+    }
+    return current;
+}
+
+static NSString *OGCompatQueryParameter(NSURL *url, NSArray *acceptedNames)
+{
+    if (url.query.length == 0)
         return nil;
 
-    for (NSString *item in [query componentsSeparatedByString:@"&"])
+    for (NSString *pair in [url.query componentsSeparatedByString:@"&"])
     {
-        NSRange separator = [item rangeOfString:@"="];
-        NSString *rawKey = separator.location == NSNotFound ? item : [item substringToIndex:separator.location];
-        NSString *key = [[TGIos6YouTubeDecodedString(rawKey) lowercaseString] stringByReplacingOccurrencesOfString:@"+" withString:@" "];
-        if (![names containsObject:key])
+        NSRange equals = [pair rangeOfString:@"="];
+        bool hasValue = equals.location != NSNotFound;
+        NSString *name = [[OGCompatUnescapedRepeatedly(hasValue ? [pair substringToIndex:equals.location] : pair) lowercaseString] stringByReplacingOccurrencesOfString:@"+" withString:@" "];
+        if (![acceptedNames containsObject:name])
             continue;
 
-        NSString *rawValue = separator.location == NSNotFound ? @"" : [item substringFromIndex:separator.location + 1];
-        return TGIos6YouTubeDecodedString([rawValue stringByReplacingOccurrencesOfString:@"+" withString:@" "]);
+        NSString *value = hasValue ? [pair substringFromIndex:NSMaxRange(equals)] : @"";
+        return OGCompatUnescapedRepeatedly([value stringByReplacingOccurrencesOfString:@"+" withString:@" "]);
     }
     return nil;
 }
 
-static BOOL TGIos6YouTubeHostMatches(NSString *host, NSString *domain)
+static BOOL OGCompatHostBelongsToDomain(NSString *host, NSString *domain)
 {
-    if ([host isEqualToString:domain])
-        return YES;
-    return [host hasSuffix:[@"." stringByAppendingString:domain]];
+    return [host isEqualToString:domain] || [host hasSuffix:[@"." stringByAppendingString:domain]];
 }
 
-static NSString *TGIos6YouTubeValidatedVideoId(NSString *candidate)
+static NSString *OGCompatYouTubeIdentifier(NSString *rawCandidate)
 {
-    candidate = TGIos6YouTubeDecodedString(candidate);
-    if (candidate.length == 0)
+    NSString *candidate = OGCompatUnescapedRepeatedly(rawCandidate);
+    if (candidate.length < 1)
         return nil;
 
-    NSCharacterSet *invalidCharacters = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"] invertedSet];
-    NSRange invalidRange = [candidate rangeOfCharacterFromSet:invalidCharacters];
-    if (invalidRange.location == 0)
+    NSRange firstInvalid = [candidate rangeOfCharacterFromSet:OGCompatIdentifierInvalidCharacters()];
+    if (firstInvalid.location == 0)
         return nil;
-    if (invalidRange.location != NSNotFound)
-        candidate = [candidate substringToIndex:invalidRange.location];
+    if (firstInvalid.location != NSNotFound)
+        candidate = [candidate substringToIndex:firstInvalid.location];
 
-    return candidate.length == 11 ? candidate : nil;
+    return candidate.length != 11 ? nil : candidate;
 }
 
-static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
+static NSString *OGCompatYouTubeVideoId(NSURL *url, NSUInteger depth)
 {
-    if (url == nil || depth > 3)
-        return nil;
-
     NSString *host = [url.host lowercaseString];
-    if (host.length == 0)
+    if (url == nil || depth > 3 || host.length == 0)
         return nil;
 
-    BOOL shortHost = TGIos6YouTubeHostMatches(host, @"youtu.be");
-    BOOL youtubeHost = TGIos6YouTubeHostMatches(host, @"youtube.com") || TGIos6YouTubeHostMatches(host, @"youtube-nocookie.com");
-    if (!shortHost && !youtubeHost)
+    BOOL shortHost = OGCompatHostBelongsToDomain(host, @"youtu.be");
+    BOOL youtubeHost = OGCompatHostBelongsToDomain(host, @"youtube.com") || OGCompatHostBelongsToDomain(host, @"youtube-nocookie.com");
+    if (!(shortHost || youtubeHost))
         return nil;
 
-    if (youtubeHost)
+    NSArray *pathParts = [url.path componentsSeparatedByString:@"/"];
+    NSString *rawIdentifier = nil;
+
+    if (youtubeHost && [@[@"/redirect", @"/attribution_link"] containsObject:[url.path lowercaseString]])
     {
-        NSString *lowerPath = [url.path lowercaseString];
-        if ([lowerPath isEqualToString:@"/redirect"] || [lowerPath isEqualToString:@"/attribution_link"])
+        NSString *wrapped = OGCompatQueryParameter(url, @[@"u", @"url", @"q"]);
+        if (wrapped.length != 0)
         {
-            NSString *wrappedString = TGIos6YouTubeQueryValue(url, @[@"u", @"url", @"q"]);
-            if (wrappedString.length != 0)
-            {
-                if ([wrappedString hasPrefix:@"//"])
-                    wrappedString = [@"https:" stringByAppendingString:wrappedString];
-                else if ([wrappedString hasPrefix:@"/"])
-                    wrappedString = [@"https://www.youtube.com" stringByAppendingString:wrappedString];
-                else if ([wrappedString rangeOfString:@"://"].location == NSNotFound)
-                    wrappedString = [@"https://" stringByAppendingString:wrappedString];
+            if ([wrapped hasPrefix:@"//"])
+                wrapped = [@"https:" stringByAppendingString:wrapped];
+            else if ([wrapped hasPrefix:@"/"])
+                wrapped = [@"https://www.youtube.com" stringByAppendingString:wrapped];
+            else if ([wrapped rangeOfString:@"://"].location == NSNotFound)
+                wrapped = [@"https://" stringByAppendingString:wrapped];
 
-                NSString *wrappedId = TGIos6YouTubeVideoIdFromURL([NSURL URLWithString:wrappedString], depth + 1);
-                if (wrappedId.length != 0)
-                    return wrappedId;
-            }
+            NSString *innerId = OGCompatYouTubeVideoId([NSURL URLWithString:wrapped], depth + 1);
+            if (innerId.length != 0)
+                return innerId;
         }
     }
 
-    NSString *candidate = nil;
     if (shortHost)
     {
-        for (NSString *component in [url.path componentsSeparatedByString:@"/"])
-        {
-            if (component.length != 0)
-            {
-                candidate = component;
-                break;
-            }
-        }
+        NSUInteger partIndex = 0;
+        while (partIndex < pathParts.count && [pathParts[partIndex] length] == 0)
+            partIndex++;
+        if (partIndex < pathParts.count)
+            rawIdentifier = pathParts[partIndex];
     }
     else
     {
-        candidate = TGIos6YouTubeQueryValue(url, @[@"v"]);
-        if (candidate.length == 0)
+        rawIdentifier = OGCompatQueryParameter(url, @[@"v"]);
+        if (rawIdentifier.length < 1)
         {
-            NSArray *components = [url.path componentsSeparatedByString:@"/"];
-            for (NSUInteger index = 0; index + 1 < components.count; index++)
+            NSArray *markers = @[@"shorts", @"live", @"embed", @"v"];
+            for (NSUInteger index = 0; index + 1 < pathParts.count; index++)
             {
-                NSString *component = [[components objectAtIndex:index] lowercaseString];
-                if ([component isEqualToString:@"shorts"] || [component isEqualToString:@"live"] || [component isEqualToString:@"embed"] || [component isEqualToString:@"v"])
+                if ([markers containsObject:[[pathParts objectAtIndex:index] lowercaseString]])
                 {
-                    candidate = [components objectAtIndex:index + 1];
+                    rawIdentifier = [pathParts objectAtIndex:index + 1];
                     break;
                 }
             }
         }
     }
-    return TGIos6YouTubeValidatedVideoId(candidate);
+    return OGCompatYouTubeIdentifier(rawIdentifier);
 }
 
 @interface TGApplication ()
@@ -593,6 +477,13 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
 
 - (void)sendEvent:(UIEvent *)event
 {
+    void (^touchTracker)(UITouch *) = _touchTracker;
+    if (touchTracker != nil && event.type == UIEventTypeTouches)
+    {
+        UITouch *touch = [[event allTouches] anyObject];
+        if (touch != nil)
+            touchTracker(touch);
+    }
     if (!OGDiagnosticsEnabled() || event.type != UIEventTypeTouches)
     {
         [super sendEvent:event];
@@ -629,20 +520,15 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
         return nil;
     if (![host isEqualToString:@"t.me"] && ![host isEqualToString:@"telegram.me"] && ![host isEqualToString:@"telegram.dog"])
         return nil;
-    NSMutableArray *components = [[NSMutableArray alloc] init];
-    for (NSString *component in [url.path componentsSeparatedByString:@"/"])
-    {
-        if (component.length != 0)
-            [components addObject:component];
-    }
+    NSPredicate *nonEmpty = [NSPredicate predicateWithFormat:@"length > 0"];
+    NSArray *components = [[url.path componentsSeparatedByString:@"/"] filteredArrayUsingPredicate:nonEmpty];
     if (components.count < 2 || ![[components[0] lowercaseString] isEqualToString:@"addtheme"])
         return nil;
     NSString *slug = components[1];
-    NSCharacterSet *invalidCharacters = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"] invertedSet];
-    return [slug rangeOfCharacterFromSet:invalidCharacters].location == NSNotFound ? slug : nil;
+    return [slug rangeOfCharacterFromSet:OGCompatIdentifierInvalidCharacters()].location == NSNotFound ? slug : nil;
 }
 
-- (NSString *)telegramMeLinkFromText:(NSString *)text startPrivatePayload:(__autoreleasing NSString **)startPrivatePayload startGroupPayload:(__autoreleasing NSString **)startGroupPayload gamePayload:(__autoreleasing NSString **)gamePayload groupedSingle:(bool *)groupedSingle
+- (NSString *)telegramMeLinkFromText:(NSString *)text startPrivatePayload:(__autoreleasing NSString **)startPrivatePayload startGroupPayload:(__autoreleasing NSString **)startGroupPayload gamePayload:(__autoreleasing NSString **)gamePayload freeToken:(__autoreleasing NSString **)freeToken groupedSingle:(bool *)groupedSingle
 {
     NSString *pattern = @"https?:\\/\\/(telegram\\.me|t\\.me|telegram\\.dog)\\/([a-zA-Z0-9_\\/]+)(\\?.*)?$";
     NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL];
@@ -659,7 +545,13 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
             }
             else
             {
-                NSDictionary *dict = [TGStringUtils argumentDictionaryInUrlString:arguments];
+                NSMutableDictionary *dict = [[TGStringUtils argumentDictionaryInUrlString:arguments] mutableCopy];
+                if ([dict[@"free"] isKindOfClass:[NSString class]])
+                {
+                    if (freeToken)
+                        *freeToken = dict[@"free"];
+                    [dict removeObjectForKey:@"free"];
+                }
                 if (dict.count == 1 && (dict[@"start"] != nil || dict[@"startgroup"] || dict[@"game"]))
                 {
                     if (startPrivatePayload)
@@ -669,7 +561,7 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
                     if (gamePayload)
                        *gamePayload = dict[@"game"];
                 }
-                else
+                else if (dict.count != 0)
                     return nil;
             }
         }
@@ -685,7 +577,13 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
             NSString *arguments = ([match numberOfRanges] >= 2 && [match rangeAtIndex:2].location != NSNotFound) ? [[text substringWithRange:[match rangeAtIndex:2]] substringFromIndex:1] : nil;
             if (arguments.length != 0)
             {
-                NSDictionary *dict = [TGStringUtils argumentDictionaryInUrlString:arguments];
+                NSMutableDictionary *dict = [[TGStringUtils argumentDictionaryInUrlString:arguments] mutableCopy];
+                if ([dict[@"free"] isKindOfClass:[NSString class]])
+                {
+                    if (freeToken)
+                        *freeToken = dict[@"free"];
+                    [dict removeObjectForKey:@"free"];
+                }
                 if (dict.count == 1 && (dict[@"start"] != nil || dict[@"startgroup"] || dict[@"game"]))
                 {
                     if (startPrivatePayload)
@@ -695,7 +593,7 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
                     if (gamePayload)
                        *gamePayload = dict[@"game"];
                 }
-                else
+                else if (dict.count != 0)
                     return nil;
             }
             return [text substringWithRange:[match rangeAtIndex:1]];
@@ -792,18 +690,17 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
         url = [NSURL URLWithString:[@"http://" stringByAppendingString:[url absoluteString]]];
     }
 
-    NSString *lowercaseScheme = [url.scheme lowercaseString];
-    if ([lowercaseScheme isEqualToString:@"http"] || [lowercaseScheme isEqualToString:@"https"])
+    NSString *normalizedScheme = [url.scheme lowercaseString];
+    if ([@[@"http", @"https"] containsObject:normalizedScheme])
     {
-        NSString *youtubeVideoId = TGIos6YouTubeVideoIdFromURL(url, 0);
-        if (youtubeVideoId.length != 0)
+        NSString *videoId = OGCompatYouTubeVideoId(url, 0);
+        if (videoId.length != 0)
         {
-            NSArray *applicationSchemes = @[@"youtube", @"vnd.youtube"];
-            for (NSString *applicationScheme in applicationSchemes)
+            for (NSString *appScheme in @[@"youtube", @"vnd.youtube"])
             {
-                NSURL *applicationUrl = [NSURL URLWithString:[NSString stringWithFormat:@"%@://watch?v=%@", applicationScheme, youtubeVideoId]];
-                if ([super canOpenURL:applicationUrl])
-                    return [super openURL:applicationUrl];
+                NSURL *appURL = [NSURL URLWithString:[NSString stringWithFormat:@"%@://watch?v=%@", appScheme, videoId]];
+                if ([super canOpenURL:appURL])
+                    return [super openURL:appURL];
             }
         }
     }
@@ -938,8 +835,9 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
     NSString *startPrivatePayload = nil;
     NSString *startGroupPayload = nil;
     NSString *gamePayload = nil;
+    NSString *freeToken = nil;
     bool groupedSingle = false;
-    NSString *telegramMeLink = [self telegramMeLinkFromText:rawAbsoluteString startPrivatePayload:&startPrivatePayload startGroupPayload:&startGroupPayload gamePayload:&gamePayload groupedSingle:&groupedSingle];
+    NSString *telegramMeLink = [self telegramMeLinkFromText:rawAbsoluteString startPrivatePayload:&startPrivatePayload startGroupPayload:&startGroupPayload gamePayload:&gamePayload freeToken:&freeToken groupedSingle:&groupedSingle];
     if (telegramMeLink.length != 0 && ![telegramMeLink isEqualToString:@"iv"])
     {
         NSString *domainName = telegramMeLink;
@@ -968,6 +866,8 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
             if (gamePayload.length != 0)
                 [internalUrl appendFormat:@"&game=%@", gamePayload];
         }
+        if (freeToken.length != 0)
+            [internalUrl appendFormat:@"&free=%@", [TGStringUtils stringByEscapingForURL:freeToken]];
         [(TGAppDelegate *)self.delegate handleOpenDocument:[NSURL URLWithString:internalUrl] animated:true keepStack:keepStack];
         return true;
     }

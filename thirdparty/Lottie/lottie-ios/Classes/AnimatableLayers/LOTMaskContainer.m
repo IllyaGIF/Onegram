@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTMaskContainer.m
 //  Lottie
@@ -65,10 +65,10 @@
 @end
 
 @implementation LOTMaskContainer {
-  NSArray *_masks;
+  OG_COMPAT_GENERIC(NSArray, LOTMaskNodeLayer *) *_masks;
 }
 
-- (instancetype)initWithMasks:(NSArray *)masks {
+- (instancetype)initWithMasks:(OG_COMPAT_GENERIC(NSArray, LOTMask *) *)masks {
   self = [super init];
   if (self) {
     NSMutableArray *maskNodes = [NSMutableArray array];
@@ -78,7 +78,7 @@
       LOTMaskNodeLayer *node = [[LOTMaskNodeLayer alloc] initWithMask:mask];
       [maskNodes addObject:node];
       if (mask.maskMode == LOTMaskModeAdd ||
-          mask == [masks objectAtIndex:0]) {
+          mask == masks.firstObject) {
         [containerLayer addSublayer:node];
       } else {
         containerLayer.mask = node;

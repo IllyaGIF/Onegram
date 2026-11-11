@@ -60,9 +60,7 @@
         if (iosMajorVersion() >= 8)
         {
         
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
             _effectView = [[UIView alloc] initWithFrame:CGRectZero];
-#endif
             _effectView.clipsToBounds = true;
             _effectView.layer.cornerRadius = 8.0f;
             [_wrapperView addSubview:_effectView];

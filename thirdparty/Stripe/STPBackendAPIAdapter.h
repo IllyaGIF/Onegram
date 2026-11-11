@@ -23,7 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
  *  @param customer     a deserialized `STPCustomer` object obtained from your backend API, or nil if an error occurred.
  *  @param error        any error that occurred while communicating with your server, or nil if your call succeeded
  */
-typedef void (^STPCustomerCompletionBlock)(STPCustomer * customer, NSError * error);
+typedef void (^STPCustomerCompletionBlock)(STPCustomer * __nullable customer, NSError * __nullable error);
 
 /**
  *  You should make your application's API client conform to this interface in order to use it with an `STPPaymentContext`. It provides a "bridge" from the prebuilt UI we expose (such as `STPPaymentMethodsViewController`) to your backend to fetch the information it needs to power those views. To read about how to implement this protocol, see https://stripe.com/docs/mobile/ios#prepare-your-api . To see examples of implementing these APIs, see MyAPIClient.swift in our example project and https://github.com/stripe/example-ios-backend .

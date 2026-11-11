@@ -102,6 +102,46 @@ typedef enum {
 
 int64_t TGMessageModernConversationItemLocalUserId = 0;
 
+static TGVideoMediaAttachment *TGMessageItemRoundVideoFromDocument(TGDocumentMediaAttachment *document)
+{
+    TGDocumentAttributeVideo *videoAttribute = nil;
+    for (id attribute in document.attributes)
+    {
+        if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]])
+        {
+            videoAttribute = attribute;
+            break;
+        }
+    }
+    if (videoAttribute == nil)
+        return nil;
+
+    TGVideoMediaAttachment *video = [[TGVideoMediaAttachment alloc] init];
+    video.videoId = document.documentId;
+    video.localVideoId = document.localDocumentId;
+    video.accessHash = document.accessHash;
+    video.duration = videoAttribute.duration;
+    video.dimensions = videoAttribute.size;
+    video.thumbnailInfo = document.thumbnailInfo;
+    video.caption = document.caption;
+    video.originInfo = document.originInfo;
+    video.roundMessage = true;
+
+    TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
+    [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", document.documentId, document.accessHash, document.datacenterId, document.size] size:document.size];
+    video.videoInfo = videoInfo;
+    return video;
+}
+
+static bool OGCompatDocumentIsAnimation(TGDocumentMediaAttachment *document, bool flaggedAnimated)
+{
+    if (flaggedAnimated || [document.mimeType isEqualToString:@"image/gif"])
+        return true;
+
+    NSString *fileName = [[document safeFileName] lowercaseString];
+    return [fileName.pathExtension isEqualToString:@"gif"] || ([document.mimeType isEqualToString:@"video/mp4"] && [fileName isEqualToString:@"animation.mp4"]);
+}
+
 static UIColor *coloredNameForUser(TGUser *user, bool dark)
 {
     int colorIndex = user.nameColorId >= 0 && user.nameColorId < 7 ? user.nameColorId : [[TGInterfaceAssets instance] userColorIndexForId:user.uid];
@@ -557,8 +597,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                     break;
                 } else if ([media isKindOfClass:[TGDocumentMediaAttachment class]]) {
                     TGDocumentMediaAttachment *documentMedia = (TGDocumentMediaAttachment *)media;
-                    NSString *safeFileName = [[documentMedia safeFileName] lowercaseString];
-                    bool isAnimatedDocument = documentMedia.isAnimated || [documentMedia.mimeType isEqualToString:@"image/gif"] || [safeFileName.pathExtension isEqualToString:@"gif"] || ([documentMedia.mimeType isEqualToString:@"video/mp4"] && [safeFileName isEqualToString:@"animation.mp4"]);
+                    bool isAnimatedDocument = OGCompatDocumentIsAnimation(documentMedia, documentMedia.isAnimated);
                     if ([_viewModel isKindOfClass:[TGAnimatedImageMessageViewModel class]] && !isAnimatedDocument) {
                         replaceModel = true;
                         break;
@@ -924,6 +963,24 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         return model;
     }
 
+    if (message.storyReplyStoryId != 0)
+    {
+        int64_t storyPeerId = message.storyReplyPeerId;
+        replyMessage = [[TGMessage alloc] init];
+        replyMessage.text = TGLocalized(@"StoryReply.Header");
+        replyMessage.fromUid = storyPeerId;
+        for (TGUser *user in _additionalUsers)
+        {
+            if (user.uid == storyPeerId)
+            {
+                replyPeer = user;
+                break;
+            }
+        }
+        if (replyPeer == nil)
+            replyPeer = TGPeerIdIsUser(storyPeerId) ? (id)[TGDatabaseInstance() loadUser:storyPeerId] : (id)[TGDatabaseInstance() loadConversationWithId:storyPeerId];
+    }
+
     if (message.mediaAttachments.count != 0)
     {
         int index = -1;
@@ -1228,43 +1285,16 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                         [model layoutForContainerSize:containerSize];
                         return model;
                     } else {
-                        if ([documentAttachment isRoundVideo])
+                        TGVideoMediaAttachment *roundVideo = [documentAttachment isRoundVideo] ? TGMessageItemRoundVideoFromDocument(documentAttachment) : nil;
+                        if (roundVideo != nil)
                         {
-                            TGDocumentAttributeVideo *videoAttribute = nil;
-                            for (id attribute in documentAttachment.attributes)
-                            {
-                                if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]])
-                                {
-                                    videoAttribute = (TGDocumentAttributeVideo *)attribute;
-                                    break;
-                                }
+                            TGRoundMessageViewModel *model = [[TGRoundMessageViewModel alloc] initWithMessage:_message video:roundVideo authorPeer:useAuthor ? [self currentAuthorPeer] : nil context:_context forwardPeer:forwardPeer forwardAuthor:forwardAuthor forwardMessageId:forwardMessageId replyHeader:replyMessage replyPeer:replyPeer];
+                            if (useAuthor) {
+                                [self _setupMessageAuthor:model];
                             }
-                            
-                            if (videoAttribute != nil)
-                            {
-                                TGVideoMediaAttachment *video = [[TGVideoMediaAttachment alloc] init];
-                                video.videoId = documentAttachment.documentId;
-                                video.localVideoId = documentAttachment.localDocumentId;
-                                video.accessHash = documentAttachment.accessHash;
-                                video.duration = videoAttribute.duration;
-                                video.dimensions = videoAttribute.size;
-                                video.thumbnailInfo = documentAttachment.thumbnailInfo;
-                                video.caption = documentAttachment.caption;
-                                video.roundMessage = true;
-                                video.originInfo = documentAttachment.originInfo;
-                                
-                                TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
-                                [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", video.videoId, video.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
-                                video.videoInfo = videoInfo;
-                                
-                                TGRoundMessageViewModel *model = [[TGRoundMessageViewModel alloc] initWithMessage:_message video:video authorPeer:useAuthor ? [self currentAuthorPeer] : nil context:_context forwardPeer:forwardPeer forwardAuthor:forwardAuthor forwardMessageId:forwardMessageId replyHeader:replyMessage replyPeer:replyPeer];
-                                if (useAuthor) {
-                                    [self _setupMessageAuthor:model];
-                                }
-                                model.collapseFlags = _collapseFlags;
-                                [model layoutForContainerSize:containerSize];
-                                return model;
-                            }
+                            model.collapseFlags = _collapseFlags;
+                            [model layoutForContainerSize:containerSize];
+                            return model;
                         }
 
                         bool isAnimated = false;
@@ -1334,8 +1364,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                             }
                         }
                         
-                        NSString *safeFileName = [[documentAttachment safeFileName] lowercaseString];
-                        bool isAnimatedDocument = isAnimated || [documentAttachment.mimeType isEqualToString:@"image/gif"] || [safeFileName.pathExtension isEqualToString:@"gif"] || ([documentAttachment.mimeType isEqualToString:@"video/mp4"] && [safeFileName isEqualToString:@"animation.mp4"]);
+                        bool isAnimatedDocument = OGCompatDocumentIsAnimation(documentAttachment, isAnimated);
                         if (isAnimatedDocument && ((imageSize.width > FLT_EPSILON && imageSize.height > FLT_EPSILON) || (documentAttachment.thumbnailInfo != nil && ![documentAttachment.thumbnailInfo empty])))
                         {
                             TGAnimatedImageMessageViewModel *model = [[TGAnimatedImageMessageViewModel alloc] initWithMessage:_message imageInfo:documentAttachment.thumbnailInfo document:documentAttachment authorPeer:useAuthor ? [self currentAuthorPeer] : nil context:_context forwardPeer:forwardPeer forwardAuthor:forwardAuthor forwardMessageId:forwardMessageId replyHeader:replyMessage replyAuthor:replyPeer viaUser:viaUser caption:_message.caption textCheckingResults:documentAttachment.textCheckingResults];

@@ -7,6 +7,7 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "OGStripeCompat.h"
 #import "STPAddress.h"
 #import "STPAddressFieldTableViewCell.h"
 
@@ -22,7 +23,7 @@
 
 @interface STPAddressViewModel : NSObject
 
-@property(nonatomic, readonly) NSArray *addressCells;
+@property(nonatomic, readonly) OG_COMPAT_GENERIC(NSArray, STPAddressFieldTableViewCell *) *addressCells;
 @property(nonatomic, unsafe_unretained) id<STPAddressViewModelDelegate>delegate;
 @property(nonatomic) UIResponder *previousField;
 @property(nonatomic)STPAddress *address;

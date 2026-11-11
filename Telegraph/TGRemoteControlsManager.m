@@ -61,7 +61,7 @@
     return singleton;
 }
 
-- (bool)isEnabled
+- (bool)og_compat_usesCommandCenter
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     return iosMajorVersion() > 7 || (iosMajorVersion() == 7 && iosMinorVersion() >= 1);
@@ -70,9 +70,9 @@
 #endif
 }
 
-- (void)setReceivingLegacyRemoteControlEvents:(bool)receiving
+- (void)og_compat_setLegacyReceiving:(bool)receiving
 {
-    if ([self isEnabled])
+    if ([self og_compat_usesCommandCenter])
         return;
     dispatch_async(dispatch_get_main_queue(), ^
     {
@@ -92,7 +92,7 @@
         _currentClients = [[NSMutableArray alloc] init];
         
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-        if ([self isEnabled])
+        if ([self og_compat_usesCommandCenter])
         {
             MPRemoteCommandCenter *commandCenter = [MPRemoteCommandCenter sharedCommandCenter];
             [commandCenter.playCommand addTarget:self action:@selector(playCommandEvent:)];
@@ -201,7 +201,7 @@
 - (void)handleLegacyRemoteControlEvent:(UIEvent *)event
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-    if ([self isEnabled] || event.type != UIEventTypeRemoteControl)
+    if (event.type != UIEventTypeRemoteControl || [self og_compat_usesCommandCenter])
         return;
 
     switch (event.subtype)
@@ -209,24 +209,19 @@
         case UIEventSubtypeRemoteControlPlay:
             [self playCommandEvent:nil];
             break;
-
         case UIEventSubtypeRemoteControlPause:
         case UIEventSubtypeRemoteControlStop:
             [self pauseCommandEvent:nil];
             break;
-
         case UIEventSubtypeRemoteControlTogglePlayPause:
             [self togglePlayPauseCommandEvent:nil];
             break;
-
         case UIEventSubtypeRemoteControlNextTrack:
             [self nextTrackCommandEvent:nil];
             break;
-
         case UIEventSubtypeRemoteControlPreviousTrack:
             [self previousTrackCommandEvent:nil];
             break;
-
         default:
             break;
     }
@@ -263,10 +258,10 @@
         
         [_currentClients removeAllObjects];
         [_currentClients addObject:[[TGRemoteControlsClient alloc] initWithId:clientId previous:previous next:next play:play pause:pause position:position]];
-        [self setReceivingLegacyRemoteControlEvents:true];
+        [self og_compat_setLegacyReceiving:true];
         
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-        if ([self isEnabled])
+        if ([self og_compat_usesCommandCenter])
         {
             MPRemoteCommandCenter *commandCenter = [MPRemoteCommandCenter sharedCommandCenter];
             commandCenter.playCommand.enabled = play != nil;
@@ -310,9 +305,9 @@
         
         if (_currentClients.count == 0 && previousHadClients)
         {
-            [self setReceivingLegacyRemoteControlEvents:false];
+            [self og_compat_setLegacyReceiving:false];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-            if ([self isEnabled])
+            if ([self og_compat_usesCommandCenter])
             {
                 MPRemoteCommandCenter *commandCenter = [MPRemoteCommandCenter sharedCommandCenter];
                 commandCenter.playCommand.enabled = false;

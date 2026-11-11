@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimationView_Internal.h
 //  Lottie
@@ -17,7 +17,7 @@ typedef enum : NSUInteger {
 
 @interface LOTAnimationView () <CAAnimationDelegate>
 
-- (CALayer * )layerForKey:(NSString * )keyname;
-- (NSArray * )compositionLayers;
+- (CALayer * _Nullable)layerForKey:(NSString * _Nonnull)keyname;
+- (NSArray * _Nonnull)compositionLayers;
 
 @end

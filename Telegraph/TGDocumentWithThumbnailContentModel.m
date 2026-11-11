@@ -28,53 +28,64 @@
 
 @end
 
-static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *document)
+NSString *OGCompatDocumentDisplayName(TGDocumentMediaAttachment *document)
 {
-    NSString *fileName = document.fileName.length == 0 ? @"file" : document.fileName;
-    if ([fileName pathExtension].length != 0)
-        return fileName;
+    NSString *name = document.fileName.length != 0 ? document.fileName : @"file";
+    if ([name pathExtension].length != 0)
+        return name;
     
-    NSString *mimeType = [document.mimeType lowercaseString];
-    bool zipMime = [mimeType isEqualToString:@"application/zip"] || [mimeType isEqualToString:@"application/x-zip-compressed"];
-    if (zipMime)
-        return [fileName stringByAppendingPathExtension:(document.size > 1024 * 1024 ? @"ipa" : @"zip")];
+    NSString *mime = [document.mimeType lowercaseString];
+    bool large = document.size > 1024 * 1024;
+    NSString *suffix = nil;
     
-    NSDictionary *mimeExtensions = @{
-        @"application/pdf": @"pdf",
-        @"application/x-rar-compressed": @"rar",
-        @"application/x-7z-compressed": @"7z",
-        @"application/gzip": @"gz",
-        @"application/x-tar": @"tar",
-        @"application/vnd.android.package-archive": @"apk",
-        @"application/x-debian-package": @"deb",
-        @"application/x-itunes-ipa": @"ipa",
-        @"text/plain": @"txt",
-        @"text/html": @"html",
-        @"text/css": @"css",
-        @"text/javascript": @"js",
-        @"application/javascript": @"js",
-        @"application/json": @"json",
-        @"application/xml": @"xml",
-        @"text/xml": @"xml",
-        @"image/jpeg": @"jpg",
-        @"image/png": @"png",
-        @"image/gif": @"gif",
-        @"image/webp": @"webp",
-        @"audio/mpeg": @"mp3",
-        @"audio/mp4": @"m4a",
-        @"audio/ogg": @"ogg",
-        @"video/mp4": @"mp4",
-        @"video/quicktime": @"mov"
-    };
-    NSString *extension = mimeExtensions[mimeType];
-    if (extension.length != 0)
-        return [fileName stringByAppendingPathExtension:extension];
+    if ([@[@"application/zip", @"application/x-zip-compressed"] containsObject:mime])
+        suffix = large ? @"ipa" : @"zip";
+    else
+    {
+        static NSDictionary *suffixByMime = nil;
+        static dispatch_once_t suffixToken;
+        dispatch_once(&suffixToken, ^
+        {
+            NSDictionary *mimesBySuffix = @{
+                @"pdf": @[@"application/pdf"],
+                @"rar": @[@"application/x-rar-compressed"],
+                @"7z": @[@"application/x-7z-compressed"],
+                @"gz": @[@"application/gzip"],
+                @"tar": @[@"application/x-tar"],
+                @"apk": @[@"application/vnd.android.package-archive"],
+                @"deb": @[@"application/x-debian-package"],
+                @"ipa": @[@"application/x-itunes-ipa"],
+                @"txt": @[@"text/plain"],
+                @"html": @[@"text/html"],
+                @"css": @[@"text/css"],
+                @"js": @[@"text/javascript", @"application/javascript"],
+                @"json": @[@"application/json"],
+                @"xml": @[@"application/xml", @"text/xml"],
+                @"jpg": @[@"image/jpeg"],
+                @"png": @[@"image/png"],
+                @"gif": @[@"image/gif"],
+                @"webp": @[@"image/webp"],
+                @"mp3": @[@"audio/mpeg"],
+                @"m4a": @[@"audio/mp4"],
+                @"ogg": @[@"audio/ogg"],
+                @"mp4": @[@"video/mp4"],
+                @"mov": @[@"video/quicktime"]
+            };
+            NSMutableDictionary *inverse = [[NSMutableDictionary alloc] init];
+            [mimesBySuffix enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSArray *mimes, __unused BOOL *stop)
+            {
+                for (NSString *item in mimes)
+                    inverse[item] = key;
+            }];
+            suffixByMime = inverse;
+        });
+        
+        suffix = suffixByMime[mime];
+        if (suffix.length == 0 && large && (mime.length == 0 || [mime isEqualToString:@"application/octet-stream"]))
+            suffix = @"ipa";
+    }
     
-    bool genericMime = mimeType.length == 0 || [mimeType isEqualToString:@"application/octet-stream"];
-    if (genericMime && document.size > 1024 * 1024)
-        return [fileName stringByAppendingPathExtension:@"ipa"];
-    
-    return fileName;
+    return suffix.length != 0 ? [name stringByAppendingPathExtension:suffix] : name;
 }
 
 @implementation TGDocumentWithThumbnailContentModel
@@ -102,7 +113,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
             else
                 [previewUri appendFormat:@"local-id=%" PRId64 "", document.localDocumentId];
             
-            [previewUri appendFormat:@"&file-name=%@", [TGIOS6DisplayFileNameForDocument(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+            [previewUri appendFormat:@"&file-name=%@", [OGCompatDocumentDisplayName(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
             
             CGSize thumbnailSize = CGSizeMake(86.0f, 86.0f);
             CGSize renderSize = CGSizeZero;

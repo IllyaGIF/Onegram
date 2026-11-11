@@ -38,7 +38,7 @@ typedef void (^STPVoidBlock)();
  *
  *  @param error The error that occurred, if any.
  */
-typedef void (^STPErrorBlock)(NSError * error);
+typedef void (^STPErrorBlock)(NSError * __nullable error);
 
 /**
  *  A callback to be run with a token response from the Stripe API.
@@ -46,4 +46,4 @@ typedef void (^STPErrorBlock)(NSError * error);
  *  @param token The Stripe token from the response. Will be nil if an error occurs. @see STPToken
  *  @param error The error returned from the response, or nil in one occurs. @see StripeError.h for possible values.
  */
-typedef void (^STPTokenCompletionBlock)(STPToken * token, NSError * error);
+typedef void (^STPTokenCompletionBlock)(STPToken * __nullable token, NSError * __nullable error);

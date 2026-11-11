@@ -334,7 +334,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x263d7c26;
+    return (int32_t)0x66d1670b;
 }
 
 - (int32_t)TLconstructorName
@@ -345,6 +345,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLPageBlock$pageBlockBlockquote *object = [[TLPageBlock$pageBlockBlockquote alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.text = metaObject->getObject((int32_t)0x94f1580d);
     object.caption = metaObject->getObject((int32_t)0x9bcfcf5a);
     return object;
@@ -352,6 +353,12 @@
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;

@@ -40,9 +40,9 @@
     }] startOn:[SQueue concurrentDefaultQueue]];
 }
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
 + (SSignal *)recognizeBarcodeInImage:(UIImage *)image
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
     if (NSClassFromString(@"VNDetectBarcodesRequest") == Nil || NSClassFromString(@"VNImageRequestHandler") == Nil)
         return [SSignal single:nil];
 
@@ -73,13 +73,10 @@
         
         return nil;
     }] startOn:[SQueue concurrentDefaultQueue]];
-}
-
 #else
-+ (SSignal *)recognizeBarcodeInImage:(UIImage *)__unused image
-{
+    (void)image;
     return [SSignal single:nil];
-}
 #endif
+}
 
 @end

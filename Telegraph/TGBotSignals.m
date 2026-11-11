@@ -67,8 +67,6 @@
 #import "TLPayments_sendPaymentForm.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
 
-static const bool TGIOS6BotVerboseButtonLogs = false;
-
 @implementation TGBotSignals
 
 + (TGBotInfo *)botInfoForInfo:(TLBotInfo *)info
@@ -95,11 +93,9 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
         TLReplyMarkup$replyKeyboardMarkup *concreteMarkup = (TLReplyMarkup$replyKeyboardMarkup *)markup;
         
         NSMutableArray *rows = [[NSMutableArray alloc] init];
-        int rowIndex = 0;
         for (TLKeyboardButtonRow *rowInfo in concreteMarkup.rows)
         {
             NSMutableArray *buttons = [[NSMutableArray alloc] init];
-            int buttonIndex = 0;
             for (TLKeyboardButton *button in rowInfo.buttons)
             {
                 id<NSCoding, PSCoding> action = nil;
@@ -123,10 +119,8 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                 }
                 
                 [buttons addObject:[[TGBotReplyMarkupButton alloc] initWithText:button.text action:action]];
-                buttonIndex++;
             }
             [rows addObject:[[TGBotReplyMarkupRow alloc] initWithButtons:buttons]];
-            rowIndex++;
         }
         
         if (onlyIfRelevantToUser)
@@ -138,11 +132,9 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
         TLReplyMarkup$replyInlineMarkup *concreteMarkup = (TLReplyMarkup$replyInlineMarkup *)markup;
         
         NSMutableArray *rows = [[NSMutableArray alloc] init];
-        int rowIndex = 0;
         for (TLKeyboardButtonRow *rowInfo in concreteMarkup.rows)
         {
             NSMutableArray *buttons = [[NSMutableArray alloc] init];
-            int buttonIndex = 0;
             for (TLKeyboardButton *button in rowInfo.buttons)
             {
                 id<NSCoding, PSCoding> action = nil;
@@ -166,10 +158,8 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                 }
                 
                 [buttons addObject:[[TGBotReplyMarkupButton alloc] initWithText:button.text action:action]];
-                buttonIndex++;
             }
             [rows addObject:[[TGBotReplyMarkupRow alloc] initWithButtons:buttons]];
-            rowIndex++;
         }
         
         return [[TGBotReplyMarkup alloc] initWithUserId:userId messageId:messageId rows:rows matchDefaultHeight:false hideKeyboardOnActivation:false alreadyActivated:false manuallyHidden:false isInline:true];

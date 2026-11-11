@@ -22,7 +22,7 @@
 static CTFontRef TGModernDateViewModelCreateFont(UIFont *font)
 {
     if (iosMajorVersion() >= 7)
-        return TGIos6CreateCTFontFromUIFont(font);
+        return OGCompatCreateCTFont(font);
     return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, nil);
 }
 

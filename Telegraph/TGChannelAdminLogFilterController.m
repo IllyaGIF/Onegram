@@ -14,7 +14,7 @@
     
     id<SDisposable> _disposable;
     
-    NSArray *_users;
+    NSArray *_roster;
     NSDictionary *_memberDatas;
     
     TGSwitchCollectionItem *_allEventsItem;
@@ -184,7 +184,7 @@ static bool filterIsFull(TGChannelEventFilter filter) {
 
 - (void)setUsers:(NSArray *)users memberDatas:(NSDictionary *)memberDatas isFinal:(bool)__unused isFinal {
     self.navigationItem.rightBarButtonItem.enabled = true;
-    _users = [users sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
+    _roster = [users sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
         if (user1.uid == TGTelegraphInstance.clientUserId) {
             return NSOrderedAscending;
         } else if (user2.uid == TGTelegraphInstance.clientUserId) {
@@ -214,7 +214,7 @@ static bool filterIsFull(TGChannelEventFilter filter) {
     
     bool hasDisabled = false;
     bool first = true;
-    for (TGUser *user in _users) {
+    for (TGUser *user in _roster) {
         TGGroupInfoUserCollectionItem *userItem = [[TGGroupInfoUserCollectionItem alloc] init];
         
         if (first) {
@@ -328,7 +328,7 @@ static bool filterIsFull(TGChannelEventFilter filter) {
 }
 
 - (void)toggleUserChecked:(int64_t)userId {
-    bool allUsers = _users.count != 0;
+    bool allUsers = _roster.count != 0;
     for (TGGroupInfoUserCollectionItem *item in _usersSection.items) {
         if ([item isKindOfClass:[TGGroupInfoUserCollectionItem class]]) {
             if (item.user.uid == userId) {

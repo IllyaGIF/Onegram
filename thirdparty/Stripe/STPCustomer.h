@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPSource.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -26,8 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
  *  @return an instance of STPCustomer
  */
 + (instancetype)customerWithStripeID:(NSString *)stripeID
-                       defaultSource:(id<STPSource>)defaultSource
-                             sources:(NSArray *)sources;
+                       defaultSource:(id<STPSource> _Nullable)defaultSource
+                             sources:(OG_COMPAT_GENERIC(NSArray, id<STPSource>) *)sources;
 
 /**
  *  The Stripe ID of the customer, e.g. `cus_1234`
@@ -37,12 +38,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  The default source used to charge the customer.
  */
-@property(nonatomic, readonly) id<STPSource> defaultSource;
+@property(nonatomic, readonly) id<STPSource> _Nullable defaultSource;
 
 /**
  *  The available payment sources the customer has (this may be an empty array).
  */
-@property(nonatomic, readonly) NSArray *sources;
+@property(nonatomic, readonly) OG_COMPAT_GENERIC(NSArray, id<STPSource>) *sources;
 
 @end
 
@@ -59,9 +60,9 @@ NS_ASSUME_NONNULL_BEGIN
  *  @param error       Any error that occurred from the URL session task (if this is non-nil, the `error` property will be set to this value after initialization).
  *
  */
-- (instancetype)initWithData:(NSData *)data
-                 urlResponse:(NSURLResponse *)urlResponse
-                       error:(NSError *)error;
+- (instancetype)initWithData:(NSData *_Nullable)data
+                 urlResponse:(NSURLResponse *_Nullable)urlResponse
+                       error:(NSError *_Nullable)error;
 
 /**
  *  Initializes a customer deserializer with a JSON dictionary. This JSON should be in the exact same format as what the Stripe API returns. If it's successfully parsed, the `customer` parameter will be present after initialization; otherwise `error` will be present.
@@ -74,12 +75,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  If a customer was successfully parsed from the response, it will be set here. Otherwise, this value wil be nil (and the `error` property will explain what went wrong).
  */
-@property(nonatomic, readonly)STPCustomer *customer;
+@property(nonatomic, readonly)STPCustomer *_Nullable customer;
 
 /**
  *  If the deserializer failed to parse a customer, this property will explain why (and the `customer` property will be nil).
  */
-@property(nonatomic, readonly)NSError *error;
+@property(nonatomic, readonly)NSError *_Nullable error;
 
 @end
 

@@ -21,3 +21,11 @@
 @interface TGMessageEntitySpoiler : TGMessageEntity
 
 @end
+
+@interface TGMessageEntityCustomEmoji : TGMessageEntity
+
+@property (nonatomic, readonly) int64_t documentId;
+
+- (instancetype)initWithRange:(NSRange)range documentId:(int64_t)documentId;
+
+@end

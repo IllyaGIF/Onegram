@@ -84,24 +84,21 @@ const int32_t TGBuilitinWallpaperCurrentVersion = 1;
     return _progressAlpha;
 }
 
+- (NSString *)builtinImagePath
+{
+    NSString *resourceName = [[NSString alloc] initWithFormat:@"%@builtin-wallpaper-%d", [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? @"pad-" : @"", _builtinId];
+    NSBundle *bundle = [NSBundle mainBundle];
+    return [bundle pathForResource:resourceName ofType:@"jpg"] ?: [bundle pathForResource:resourceName ofType:@"jpg" inDirectory:@"ClassicIOS6"];
+}
+
 - (UIImage *)image
 {
-    NSString *name = [[NSString alloc] initWithFormat:@"%@builtin-wallpaper-%d", [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? @"pad-" : @"", _builtinId];
-    NSString *filePath = [[NSBundle mainBundle] pathForResource:name ofType:@"jpg"];
-    if (filePath == nil)
-        filePath = [[NSBundle mainBundle] pathForResource:[@"ClassicIOS6/" stringByAppendingString:name] ofType:@"jpg"];
-    
-    return [[UIImage alloc] initWithContentsOfFile:filePath];
+    return [[UIImage alloc] initWithContentsOfFile:[self builtinImagePath]];
 }
 
 - (NSData *)imageData
 {
-    NSString *name = [[NSString alloc] initWithFormat:@"%@builtin-wallpaper-%d", [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? @"pad-" : @"", _builtinId];
-    NSString *filePath = [[NSBundle mainBundle] pathForResource:name ofType:@"jpg"];
-    if (filePath == nil)
-        filePath = [[NSBundle mainBundle] pathForResource:[@"ClassicIOS6/" stringByAppendingString:name] ofType:@"jpg"];
-    
-    return [[NSData alloc] initWithContentsOfFile:filePath];
+    return [[NSData alloc] initWithContentsOfFile:[self builtinImagePath]];
 }
 
 - (bool)hasData

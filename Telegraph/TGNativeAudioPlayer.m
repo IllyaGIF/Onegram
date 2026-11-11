@@ -18,33 +18,33 @@
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVPlayerItem *_currentItem;
     TGObserverProxy *_didPlayToEndObserver;
-    AVPlayerItem *_queuedItem;
-    TGObserverProxy *_queuedDidPlayToEndObserver;
+    AVPlayerItem *_upcomingItem;
+    TGObserverProxy *_upcomingEndObserver;
 #else
-    AVAudioPlayer *_queuedItem;
+    AVAudioPlayer *_upcomingItem;
 #endif
-    NSString *_currentPath;
-    NSString *_queuedPath;
+    NSString *_activePath;
+    NSString *_upcomingPath;
 }
 
 @end
 
-static NSString *TGNativeAudioPlayerRealPath(NSString *path)
+static NSString *OGCompatPlayablePath(NSString *path)
 {
     if (path.length == 0)
         return nil;
-    NSString *realPath = path;
-    NSArray *audioExtensions = @[@"mp3", @"aac", @"m4a", @"mov", @"mp4"];
-    if (![audioExtensions containsObject:realPath.pathExtension.lowercaseString])
-    {
-        realPath = [path stringByAppendingPathExtension:@"mp3"];
-        [[NSFileManager defaultManager] createSymbolicLinkAtPath:realPath withDestinationPath:path error:nil];
-    }
-    return realPath;
+
+    NSArray *playable = @[@"mp3", @"aac", @"m4a", @"mov", @"mp4"];
+    if ([playable containsObject:path.pathExtension.lowercaseString])
+        return path;
+
+    NSString *linkedPath = [path stringByAppendingPathExtension:@"mp3"];
+    [[NSFileManager defaultManager] createSymbolicLinkAtPath:linkedPath withDestinationPath:path error:nil];
+    return linkedPath;
 }
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
-static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate)
+static void OGCompatApplyLegacyRate(AVAudioPlayer *player, CGFloat rate)
 {
     SEL enableRateSelector = NSSelectorFromString(@"setEnableRate:");
     if ([player respondsToSelector:enableRateSelector])
@@ -73,14 +73,10 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
         _rate = 1.0f;
         
         __autoreleasing NSError *error = nil;
-        NSString *realPath = TGNativeAudioPlayerRealPath(path);
-        _currentPath = [realPath copy];
+        NSString *realPath = OGCompatPlayablePath(path);
+        _activePath = [realPath copy];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-        _currentItem = [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:realPath]];
-        if (_currentItem != nil) {
-            _player = [[AVQueuePlayer alloc] initWithItems:@[_currentItem]];
-            _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:_currentItem];
-        }
+        [self og_compat_beginWithItem:[self og_compat_itemForPath:realPath]];
 #else
         _player = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
         [_player setDelegate:self];
@@ -102,12 +98,7 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
     if (self != nil)
     {
         _rate = 1.0f;
-        _currentItem = [[AVPlayerItem alloc] initWithURL:url];
-        if (_currentItem != nil)
-        {
-            _player = [[AVQueuePlayer alloc] initWithItems:@[_currentItem]];
-            _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:_currentItem];
-        }
+        [self og_compat_beginWithItem:[[AVPlayerItem alloc] initWithURL:url]];
         if (_player == nil)
             [self cleanupWithError];
     }
@@ -115,55 +106,83 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
 }
 #endif
 
+- (void)og_compat_forgetUpcoming
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    _upcomingEndObserver = nil;
+#endif
+    _upcomingItem = nil;
+    _upcomingPath = nil;
+}
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+- (AVPlayerItem *)og_compat_itemForPath:(NSString *)path
+{
+    return [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:path]];
+}
+
+- (TGObserverProxy *)og_compat_endObserverForItem:(AVPlayerItem *)item
+{
+    return [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:item];
+}
+
+- (void)og_compat_beginWithItem:(AVPlayerItem *)item
+{
+    _currentItem = item;
+    if (item == nil)
+        return;
+
+    _player = [[AVQueuePlayer alloc] initWithItems:@[item]];
+    _didPlayToEndObserver = [self og_compat_endObserverForItem:item];
+}
+#endif
+
 - (bool)replaceWithPath:(NSString *)path
 {
-    NSString *realPath = TGNativeAudioPlayerRealPath(path);
-    if (realPath.length == 0 || _player == nil)
+    NSString *resolvedPath = OGCompatPlayablePath(path);
+    if (_player == nil || resolvedPath.length == 0)
         return false;
 
-    __block bool replaced = false;
+    __block bool swapped = false;
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-        if (_queuedItem != nil && [_queuedPath isEqualToString:realPath] && ((AVQueuePlayer *)_player).currentItem == _queuedItem)
+        if (_upcomingItem != nil && [_upcomingPath isEqualToString:resolvedPath] && ((AVQueuePlayer *)_player).currentItem == _upcomingItem)
         {
-            _currentItem = _queuedItem;
-            _currentPath = _queuedPath;
-            _didPlayToEndObserver = _queuedDidPlayToEndObserver;
-            _queuedItem = nil;
-            _queuedPath = nil;
-            _queuedDidPlayToEndObserver = nil;
-            replaced = true;
+            _currentItem = _upcomingItem;
+            _activePath = _upcomingPath;
+            _didPlayToEndObserver = _upcomingEndObserver;
+            [self og_compat_forgetUpcoming];
+            swapped = true;
             return;
         }
 
-        AVPlayerItem *nextItem = [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:realPath]];
-        if (nextItem != nil)
+        AVPlayerItem *nextItem = [self og_compat_itemForPath:resolvedPath];
+        if (nextItem)
         {
             _didPlayToEndObserver = nil;
-            _queuedDidPlayToEndObserver = nil;
-            _queuedItem = nil;
-            _queuedPath = nil;
+            [self og_compat_forgetUpcoming];
             _currentItem = nextItem;
-            _currentPath = [realPath copy];
-            [(AVQueuePlayer *)_player removeAllItems];
-            [(AVQueuePlayer *)_player insertItem:nextItem afterItem:nil];
-            _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:nextItem];
-            replaced = true;
+            _activePath = [resolvedPath copy];
+            AVQueuePlayer *replacementPlayer = (AVQueuePlayer *)_player;
+            [replacementPlayer removeAllItems];
+            [replacementPlayer insertItem:nextItem afterItem:nil];
+            _didPlayToEndObserver = [self og_compat_endObserverForItem:nextItem];
+            swapped = true;
         }
 #else
-        if ([_currentPath isEqualToString:realPath])
+        if ([_activePath isEqualToString:resolvedPath])
         {
-            replaced = true;
+            swapped = true;
             return;
         }
 
         NSError *error = nil;
         AVAudioPlayer *nextPlayer = nil;
-        if (_queuedItem != nil && [_queuedPath isEqualToString:realPath])
-            nextPlayer = _queuedItem;
+        if (_upcomingItem != nil && [_upcomingPath isEqualToString:resolvedPath])
+            nextPlayer = _upcomingItem;
         else
-            nextPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
+            nextPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:resolvedPath] error:&error];
         if (nextPlayer != nil && error == nil)
         {
             [_player stop];
@@ -171,66 +190,64 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
             _player = nextPlayer;
             [_player setDelegate:self];
             [_player prepareToPlay];
-            TGNativeAudioPlayerSetLegacyRate(_player, _rate);
-            _currentPath = [realPath copy];
-            _queuedItem = nil;
-            _queuedPath = nil;
-            replaced = true;
+            OGCompatApplyLegacyRate(_player, _rate);
+            _activePath = [resolvedPath copy];
+            [self og_compat_forgetUpcoming];
+            swapped = true;
         }
 #endif
     } synchronous:true];
-    return replaced;
+    return swapped;
 }
 
 - (bool)prepareNextPath:(NSString *)path
 {
-    NSString *realPath = TGNativeAudioPlayerRealPath(path);
-    if (realPath.length == 0 || _player == nil)
+    NSString *resolvedPath = OGCompatPlayablePath(path);
+    if (_player == nil || resolvedPath.length == 0)
         return false;
 
-    __block bool prepared = false;
+    __block bool queued = false;
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
-        if ([_currentPath isEqualToString:realPath] || [_queuedPath isEqualToString:realPath])
+        if ([_activePath isEqualToString:resolvedPath] || [_upcomingPath isEqualToString:resolvedPath])
         {
-            prepared = true;
+            queued = true;
             return;
         }
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         AVQueuePlayer *queuePlayer = (AVQueuePlayer *)_player;
-        if (_queuedItem != nil)
+        if (_upcomingItem != nil)
         {
-            [queuePlayer removeItem:_queuedItem];
-            _queuedDidPlayToEndObserver = nil;
-            _queuedItem = nil;
-            _queuedPath = nil;
+            [queuePlayer removeItem:_upcomingItem];
+            [self og_compat_forgetUpcoming];
         }
 
-        AVPlayerItem *item = [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:realPath]];
+        AVPlayerItem *item = [self og_compat_itemForPath:resolvedPath];
         if (item != nil && [queuePlayer canInsertItem:item afterItem:_currentItem])
         {
-            [queuePlayer insertItem:item afterItem:_currentItem];
-            _queuedItem = item;
-            _queuedPath = [realPath copy];
-            _queuedDidPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:item];
-            prepared = true;
+            AVPlayerItem *anchorItem = _currentItem;
+            [queuePlayer insertItem:item afterItem:anchorItem];
+            _upcomingItem = item;
+            _upcomingPath = [resolvedPath copy];
+            _upcomingEndObserver = [self og_compat_endObserverForItem:item];
+            queued = true;
         }
 #else
         NSError *error = nil;
-        AVAudioPlayer *item = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
+        AVAudioPlayer *item = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:resolvedPath] error:&error];
         if (item != nil && error == nil)
         {
             [item setDelegate:self];
             [item prepareToPlay];
-            TGNativeAudioPlayerSetLegacyRate(item, _rate);
-            _queuedItem = item;
-            _queuedPath = [realPath copy];
-            prepared = true;
+            OGCompatApplyLegacyRate(item, _rate);
+            _upcomingItem = item;
+            _upcomingPath = [resolvedPath copy];
+            queued = true;
         }
 #endif
     } synchronous:true];
-    return prepared;
+    return queued;
 }
 
 - (void)dealloc
@@ -250,9 +267,8 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
 #else
     AVAudioPlayer *player = _player;
     [player setDelegate:nil];
-    [_queuedItem setDelegate:nil];
-    _queuedItem = nil;
-    _queuedPath = nil;
+    [_upcomingItem setDelegate:nil];
+    [self og_compat_forgetUpcoming];
 #endif
     _player = nil;
     
@@ -286,7 +302,7 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
         [_player play];
         _player.rate = (float)_rate;
 #else
-        TGNativeAudioPlayerSetLegacyRate(_player, _rate);
+        OGCompatApplyLegacyRate(_player, _rate);
         [_player play];
 #endif
     }];
@@ -321,8 +337,8 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [_player setRate:(float)rate];
 #else
-        TGNativeAudioPlayerSetLegacyRate(_player, rate);
-        TGNativeAudioPlayerSetLegacyRate(_queuedItem, rate);
+        OGCompatApplyLegacyRate(_player, rate);
+        OGCompatApplyLegacyRate(_upcomingItem, rate);
 #endif
     }];
 }
@@ -364,15 +380,14 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
     {
         if (player != _player)
             return;
-        if (_queuedItem != nil)
+        if (_upcomingItem != nil)
         {
             [_player setDelegate:nil];
-            _player = _queuedItem;
-            _currentPath = _queuedPath;
-            _queuedItem = nil;
-            _queuedPath = nil;
+            _player = _upcomingItem;
+            _activePath = _upcomingPath;
+            [self og_compat_forgetUpcoming];
             [_player setDelegate:self];
-            TGNativeAudioPlayerSetLegacyRate(_player, _rate);
+            OGCompatApplyLegacyRate(_player, _rate);
             [_player play];
         }
         else
@@ -385,7 +400,7 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)playerItemDidPlayToEndTime:(NSNotification *)__unused notification
 {
-    if (_queuedItem == nil)
+    if (_upcomingItem == nil)
     {
         [_player pause];
         [self _endAudioSession];

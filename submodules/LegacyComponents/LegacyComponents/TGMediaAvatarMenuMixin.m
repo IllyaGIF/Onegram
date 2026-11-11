@@ -16,6 +16,14 @@
 #import "TGImagePickerController.h"
 #import "TGMediaAssetsController.h"
 
+static UIPopoverController *OGCompatPresentCameraPopover(UIViewController *content, UIView *anchor)
+{
+    UIPopoverController *popover = [[UIPopoverController alloc] initWithContentViewController:content];
+    CGRect area = anchor.bounds;
+    [popover presentPopoverFromRect:CGRectMake(CGRectGetMidX(area), CGRectGetMidY(area), 1.0f, 1.0f) inView:anchor permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
+    return popover;
+}
+
 @interface TGMediaAvatarMenuMixin () <TGLegacyCameraControllerDelegate>
 {
     TGViewController *_parentController;
@@ -25,7 +33,7 @@
     id<LegacyComponentsContext> _context;
     bool _saveCapturedMedia;
     bool _saveEditedPhotos;
-    UIPopoverController *_legacyCameraPopoverController;
+    UIPopoverController *_cameraPopover;
 }
 @end
 
@@ -331,31 +339,23 @@
     legacyCameraController.avatarMode = true;
     legacyCameraController.completionDelegate = self;
     
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
-    {
-        _legacyCameraPopoverController = [[UIPopoverController alloc] initWithContentViewController:legacyCameraController];
-        UIView *sourceView = _parentController.view;
-        CGRect bounds = sourceView.bounds;
-        CGRect sourceRect = CGRectMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds), 1.0f, 1.0f);
-        [_legacyCameraPopoverController presentPopoverFromRect:sourceRect inView:sourceView permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
-    }
-    else
+    if ([[UIDevice currentDevice] userInterfaceIdiom] != UIUserInterfaceIdiomPad)
     {
         [_parentController presentViewController:legacyCameraController animated:true completion:nil];
+        return;
     }
+    
+    _cameraPopover = OGCompatPresentCameraPopover(legacyCameraController, _parentController.view);
 }
 
-- (void)_dismissLegacyCamera
+- (void)_og_compat_dismissCamera
 {
-    if (_legacyCameraPopoverController != nil)
-    {
-        [_legacyCameraPopoverController dismissPopoverAnimated:true];
-        _legacyCameraPopoverController = nil;
-    }
-    else
-    {
+    UIPopoverController *popover = _cameraPopover;
+    _cameraPopover = nil;
+    if (popover == nil)
         [_parentController dismissViewControllerAnimated:true completion:nil];
-    }
+    else
+        [popover dismissPopoverAnimated:true];
 }
 
 - (void)_displayMediaPicker
@@ -496,12 +496,12 @@
     if (self.didFinishWithImage != nil)
         self.didFinishWithImage(resultImage);
     
-    [self _dismissLegacyCamera];
+    [self _og_compat_dismissCamera];
 }
 
 - (void)legacyCameraControllerCompletedWithNoResult
 {
-    [self _dismissLegacyCamera];
+    [self _og_compat_dismissCamera];
     
     if (self.didDismiss != nil)
         self.didDismiss();

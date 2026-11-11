@@ -13,6 +13,7 @@
 @property (nonatomic) bool processStatusBarHiddenRequests;
 
 @property (nonatomic, strong) NSMutableDictionary *gameShareDict;
+@property (nonatomic, copy) void (^touchTracker)(UITouch *touch);
 
 - (BOOL)openURL:(NSURL *)url forceNative:(BOOL)forceNative;
 - (BOOL)openURL:(NSURL *)url forceNative:(BOOL)forceNative keepStack:(bool)keepStack;

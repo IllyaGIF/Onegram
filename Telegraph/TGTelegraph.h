@@ -221,12 +221,13 @@ extern NSString *const TGAuthorizationReadyNotification;
 - (NSObject *)doDeleteContacts:(NSArray *)uids actor:(id<TGContactDeleteActorProtocol>)actor;
 
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
-- (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
-- (NSObject *)ios6RequestPinnedDialogsForFolderId:(int32_t)folderId completion:(void (^)(TLmessages_PeerDialogs *))completion failure:(void (^)(NSError *))failure;
 - (NSObject *)requestDialogsPageWithOffset:(TGDialogListRemoteOffset *)offset inputPeer:(TLInputPeer *)inputPeer limit:(int)limit folderId:(int32_t)folderId completion:(void (^)(TLmessages_Dialogs *, TGDialogListRemoteOffset *, TLInputPeer *, bool))completion failure:(void (^)(NSError *))failure;
 - (NSObject *)doRequestCompleteDialogsListWithLimit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
+- (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
+
+- (void)refreshArchivePeerIds;
+- (NSObject *)ios6RequestPinnedDialogsForFolderId:(int32_t)folderId completion:(void (^)(TLmessages_PeerDialogs *))completion failure:(void (^)(NSError *))failure;
 - (NSObject *)doSetConversationArchived:(int64_t)conversationId accessHash:(int64_t)accessHash archived:(bool)archived completion:(void (^)(bool success))completion;
-- (void)ios6RefreshArchivePeerIds;
 
 - (NSObject *)doRequestConversationHistory:(int64_t)conversationId accessHash:(int64_t)accessHash maxMid:(int)maxMid orOffset:(int)offset limit:(int)limit actor:(TGConversationHistoryAsyncRequestActor *)actor;
 - (NSObject *)doRequestConversationMediaHistory:(int64_t)conversationId accessHash:(int64_t)accessHash maxMid:(int)maxMid maxDate:(int)maxDate limit:(int)limit actor:(TGUpdateMediaHistoryActor *)actor;

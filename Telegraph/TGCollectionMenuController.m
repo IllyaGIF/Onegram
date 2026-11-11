@@ -14,27 +14,20 @@
 #import "TGCollectionMenuView.h"
 #import "TGCollectionMenuLayout.h"
 
-static UIColor *TGCollectionMenuClassicIOS6BackgroundColor(void)
+static UIColor *TGCollectionMenuClassicBackgroundColor(void)
 {
-    static UIColor *color = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-                  {
-                      NSString *resourceName = [UIScreen mainScreen].scale > 1.5f ? @"SettingsBackground@2x" : @"SettingsBackground";
-                      NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
-                      UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
-                      
-                      if (image != nil && [UIScreen mainScreen].scale > 1.5f && image.CGImage != NULL)
-                      {
-                          image = [UIImage imageWithCGImage:image.CGImage
-                                                      scale:2.0f
-                                                orientation:UIImageOrientationUp];
-                      }
-                      
-                      color = image == nil ? UIColorRGB(0xc9d4dd) : [UIColor colorWithPatternImage:image];
-                  });
-    
-    return color;
+    static UIColor *backgroundColor = nil;
+    static dispatch_once_t backgroundOnce;
+    dispatch_once(&backgroundOnce, ^
+    {
+        bool retina = [UIScreen mainScreen].scale > 1.5f;
+        NSString *path = [[NSBundle mainBundle] pathForResource:retina ? @"SettingsBackground@2x" : @"SettingsBackground" ofType:@"png" inDirectory:@"ClassicIOS6"];
+        UIImage *pattern = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+        if (retina && pattern.CGImage != NULL)
+            pattern = [UIImage imageWithCGImage:pattern.CGImage scale:2.0f orientation:UIImageOrientationUp];
+        backgroundColor = pattern != nil ? [UIColor colorWithPatternImage:pattern] : UIColorRGB(0xc9d4dd);
+    });
+    return backgroundColor;
 }
 
 @interface TGCollectionMenuSection ()
@@ -105,7 +98,7 @@ TGCollectionMenuLayoutDelegateFlowLayout
         return [UIColor clearColor];
     if ([TGPresentation brandedIOS6Style])
         return [OGSettingsCell legacyCollectionBackgroundColorWithTheme:[OGTheme brandedTheme]];
-    return [TGPresentation classicIOS6Style] && !_presentation.pallete.isDark ? TGCollectionMenuClassicIOS6BackgroundColor() : _presentation.pallete.collectionMenuBackgroundColor;
+    return [TGPresentation classicThemeStyle] && !_presentation.pallete.isDark ? TGCollectionMenuClassicBackgroundColor() : _presentation.pallete.collectionMenuBackgroundColor;
 }
 
 - (TGNavigationBarBackgroundVariant)navigationBarBackgroundVariant

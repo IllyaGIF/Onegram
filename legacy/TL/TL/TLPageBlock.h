@@ -71,6 +71,7 @@
 
 @interface TLPageBlock$pageBlockBlockquote : TLPageBlock
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) TLRichText *text;
 @property (nonatomic, retain) TLRichText *caption;
 

@@ -1,3 +1,6 @@
+#ifndef OG_COMPAT_PHOTOS_H
+#define OG_COMPAT_PHOTOS_H
+
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
@@ -25,16 +28,16 @@
 typedef NSInteger PHAssetMediaType;
 typedef NSUInteger PHAssetMediaSubtype;
 typedef NSUInteger PHAssetMediaSubtypes;
-typedef NSInteger PHImageRequestID;
+typedef NSInteger PHAssetCollectionType;
+typedef NSInteger PHAssetCollectionSubtype;
+typedef NSInteger PHAssetResourceType;
+typedef NSInteger PHAuthorizationStatus;
 typedef NSInteger PHContentEditingInputRequestID;
 typedef NSInteger PHImageContentMode;
+typedef NSInteger PHImageRequestID;
 typedef NSInteger PHImageRequestOptionsDeliveryMode;
 typedef NSInteger PHImageRequestOptionsResizeMode;
 typedef NSInteger PHVideoRequestOptionsDeliveryMode;
-typedef NSInteger PHAuthorizationStatus;
-typedef NSInteger PHAssetCollectionSubtype;
-typedef NSInteger PHAssetCollectionType;
-typedef NSInteger PHAssetResourceType;
 
 #define PHAssetMediaTypeUnknown 0
 #define PHAssetMediaTypeImage 1
@@ -66,6 +69,12 @@ typedef NSInteger PHAssetResourceType;
 #define PHAssetCollectionSubtypeSmartAlbumScreenshots 211
 #define PHAssetCollectionSubtypeSmartAlbumSelfPortraits 212
 
+#define PHAssetResourceTypePairedVideo 9
+
+#define PHAuthorizationStatusRestricted 1
+#define PHAuthorizationStatusDenied 2
+#define PHAuthorizationStatusAuthorized 3
+
 #define PHImageContentModeAspectFit 0
 #define PHImageContentModeAspectFill 1
 #define PHImageContentModeDefault 0
@@ -77,11 +86,6 @@ typedef NSInteger PHAssetResourceType;
 #define PHImageRequestOptionsResizeModeExact 2
 #define PHVideoRequestOptionsDeliveryModeHighQualityFormat 1
 
-#define PHAuthorizationStatusRestricted 1
-#define PHAuthorizationStatusDenied 2
-#define PHAuthorizationStatusAuthorized 3
-
-#define PHAssetResourceTypePairedVideo 9
 #define PHInvalidImageRequestID 0
 #define PHImageManagerMaximumSize CGSizeMake(-1.0f, -1.0f)
 
@@ -90,17 +94,19 @@ typedef NSInteger PHAssetResourceType;
 #define PHImageResultIsInCloudKey @"PHImageResultIsInCloudKey"
 #define PHImageFileURLKey @"PHImageFileURLKey"
 
+@class PHAsset;
 @class PHAssetCollection;
+@class PHAssetResource;
+@class PHCachingImageManager;
+@class PHChange;
 @class PHFetchResult;
+@class PHFetchResultChangeDetails;
 @class PHImageRequestOptions;
+@class PHLivePhoto;
 @class PHLivePhotoRequestOptions;
 @class PHVideoRequestOptions;
-@class PHCachingImageManager;
-@class PHAsset;
-@class PHChange;
-@class PHFetchResultChangeDetails;
-@class PHAssetResource;
-@class PHLivePhoto;
+
+#define OG_COMPAT_PH_REQUEST_OPTIONS_PROGRESS_HANDLER @property (nonatomic, copy) void (^progressHandler)(double progress, NSError *error, BOOL *stop, NSDictionary *info);
 
 @protocol PHPhotoLibraryChangeObserver <NSObject>
 - (void)photoLibraryDidChange:(PHChange *)change;
@@ -115,6 +121,14 @@ typedef NSInteger PHAssetResourceType;
 @property (nonatomic, retain) NSPredicate *predicate;
 @end
 
+@interface PHFetchResult : NSObject <NSFastEnumeration>
+@property (nonatomic, readonly) NSUInteger count;
+@property (nonatomic, readonly) id firstObject;
+- (id)objectAtIndex:(NSUInteger)index;
+- (NSUInteger)indexOfObject:(id)object;
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, NSUInteger idx, BOOL *stop))block;
+@end
+
 @interface PHAsset : PHObject
 @property (nonatomic, readonly) PHAssetMediaType mediaType;
 @property (nonatomic, readonly) PHAssetMediaSubtypes mediaSubtypes;
@@ -124,12 +138,12 @@ typedef NSInteger PHAssetResourceType;
 @property (nonatomic, readonly) NSDate *creationDate;
 @property (nonatomic, readonly) NSTimeInterval duration;
 @property (nonatomic, readonly) BOOL representsBurst;
-- (void)requestContentEditingInputWithOptions:(id)options completionHandler:(void (^)(id contentEditingInput, NSDictionary *info))completionHandler;
-- (void)cancelContentEditingInputRequest:(PHContentEditingInputRequestID)requestID;
 + (PHFetchResult *)fetchAssetsInAssetCollection:(PHAssetCollection *)assetCollection options:(PHFetchOptions *)options;
 + (PHFetchResult *)fetchAssetsWithOptions:(PHFetchOptions *)options;
 + (PHFetchResult *)fetchAssetsWithMediaType:(PHAssetMediaType)mediaType options:(PHFetchOptions *)options;
 + (PHFetchResult *)fetchAssetsWithLocalIdentifiers:(NSArray *)identifiers options:(PHFetchOptions *)options;
+- (void)requestContentEditingInputWithOptions:(id)options completionHandler:(void (^)(id contentEditingInput, NSDictionary *info))completionHandler;
+- (void)cancelContentEditingInputRequest:(PHContentEditingInputRequestID)requestID;
 @end
 
 @interface PHAssetCollection : PHObject
@@ -142,14 +156,6 @@ typedef NSInteger PHAssetResourceType;
 @property (nonatomic, readonly) CLLocation *approximateLocation;
 @property (nonatomic, readonly) NSArray *localizedLocationNames;
 + (PHFetchResult *)fetchAssetCollectionsWithType:(PHAssetCollectionType)type subtype:(PHAssetCollectionSubtype)subtype options:(PHFetchOptions *)options;
-@end
-
-@interface PHFetchResult : NSObject <NSFastEnumeration>
-@property (nonatomic, readonly) NSUInteger count;
-@property (nonatomic, readonly) id firstObject;
-- (id)objectAtIndex:(NSUInteger)index;
-- (NSUInteger)indexOfObject:(id)object;
-- (void)enumerateObjectsUsingBlock:(void (^)(id obj, NSUInteger idx, BOOL *stop))block;
 @end
 
 @interface PHFetchResultChangeDetails : NSObject
@@ -171,19 +177,24 @@ typedef NSInteger PHAssetResourceType;
 @property (nonatomic) BOOL networkAccessAllowed;
 @property (nonatomic) PHImageRequestOptionsDeliveryMode deliveryMode;
 @property (nonatomic) PHImageRequestOptionsResizeMode resizeMode;
-@property (nonatomic, copy) void (^progressHandler)(double progress, NSError *error, BOOL *stop, NSDictionary *info);
+OG_COMPAT_PH_REQUEST_OPTIONS_PROGRESS_HANDLER
 @end
 
 @interface PHLivePhotoRequestOptions : NSObject
 @property (nonatomic) BOOL networkAccessAllowed;
 @property (nonatomic) PHImageRequestOptionsDeliveryMode deliveryMode;
-@property (nonatomic, copy) void (^progressHandler)(double progress, NSError *error, BOOL *stop, NSDictionary *info);
+OG_COMPAT_PH_REQUEST_OPTIONS_PROGRESS_HANDLER
 @end
 
 @interface PHVideoRequestOptions : NSObject
 @property (nonatomic) BOOL networkAccessAllowed;
 @property (nonatomic) PHVideoRequestOptionsDeliveryMode deliveryMode;
-@property (nonatomic, copy) void (^progressHandler)(double progress, NSError *error, BOOL *stop, NSDictionary *info);
+OG_COMPAT_PH_REQUEST_OPTIONS_PROGRESS_HANDLER
+@end
+
+#undef OG_COMPAT_PH_REQUEST_OPTIONS_PROGRESS_HANDLER
+
+@interface PHLivePhoto : NSObject
 @end
 
 @interface PHImageManager : NSObject
@@ -218,9 +229,6 @@ typedef NSInteger PHAssetResourceType;
 + (instancetype)creationRequestForAssetFromVideoAtFileURL:(NSURL *)fileURL;
 @end
 
-@interface PHLivePhoto : NSObject
-@end
-
 @interface PHAssetResource : NSObject
 @property (nonatomic, readonly) PHAssetResourceType type;
 + (NSArray *)assetResourcesForLivePhoto:(PHLivePhoto *)livePhoto;
@@ -230,5 +238,7 @@ typedef NSInteger PHAssetResourceType;
 + (PHAssetResourceManager *)defaultManager;
 - (void)writeDataForAssetResource:(PHAssetResource *)resource toFile:(NSURL *)fileURL options:(id)options completionHandler:(void (^)(NSError *error))completionHandler;
 @end
+
+#endif
 
 #endif

@@ -19,30 +19,39 @@
 const NSTimeInterval typingIntervalFirst = 0.16;
 const NSTimeInterval typingIntervalSecond = 0.14;
 
-static UIColor *TGClassicAwareNavigationTitleColor(TGPresentation *presentation)
+static inline CGSize OGCompatTitleShadowOffset()
+{
+    return CGSizeMake(0.0f, -1.0f);
+}
+
+static UIColor *OGCompatNavTitleColor(TGPresentation *presentation)
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6ConversationAppearance].titleColor;
-    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationTitleColor;
+    if ([TGPresentation classicThemeStyle])
+        return [UIColor whiteColor];
+    return presentation.pallete.navigationTitleColor;
 }
 
-static UIColor *TGClassicAwareNavigationSubtitleColor(TGPresentation *presentation)
+static UIColor *OGCompatNavSubtitleColor(TGPresentation *presentation)
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6ConversationAppearance].subtitleColor;
-    if (![TGPresentation classicIOS6Style])
+    if (![TGPresentation classicThemeStyle])
         return presentation.pallete.navigationSubtitleColor;
     return presentation.pallete.isDark ? presentation.pallete.navigationSubtitleColor : UIColorRGB(0xdbe6ee);
 }
 
-static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *presentation)
+static UIColor *OGCompatNavActiveSubtitleColor(TGPresentation *presentation)
 {
-    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationActiveSubtitleColor;
+    if ([TGPresentation classicThemeStyle])
+        return [UIColor whiteColor];
+    return presentation.pallete.navigationActiveSubtitleColor;
 }
 
 static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation, CGFloat alpha)
 {
-    if (![TGPresentation classicIOS6Style])
+    if (![TGPresentation classicThemeStyle])
         return [UIColor clearColor];
     return presentation.pallete.isDark ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
 }
@@ -105,7 +114,6 @@ static CGSize TGConversationStatusShadowOffset(void)
     bool _showStatus;
     
     UIImageView *_arrowView;
-    UIImageView *_markedUserBadgeView;
 #if OG_PLUGINS_AVAILABLE
     UIColor *_pluginNameColor;
     NSArray *_pluginNameGradient;
@@ -135,25 +143,25 @@ static CGSize TGConversationStatusShadowOffset(void)
 {
     _presentation = presentation;
     
-    _titleLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
+    _titleLabel.textColor = OGCompatNavTitleColor(presentation);
 #if OG_PLUGINS_AVAILABLE
     if (_pluginNameColor != nil || _pluginNameGradient.count != 0)
         _titleLabel.textColor = _pluginNameGradient.count != 0 ? [UIColor clearColor] : _pluginNameColor;
 #endif
     _titleLabel.shadowColor = TGConversationTitleShadowColor(presentation);
-    _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+    _titleLabel.shadowOffset = OGCompatTitleShadowOffset();
     _statusLabel.shadowColor = TGConversationStatusShadowColor(presentation);
     _statusLabel.shadowOffset = TGConversationStatusShadowOffset();
-    _activityIndicator.color = TGClassicAwareNavigationActiveSubtitleColor(presentation);
+    _activityIndicator.color = OGCompatNavActiveSubtitleColor(presentation);
     _titleModalProgressIndicator.color = presentation.pallete.navigationSpinnerColor;
-    _titleModalProgressLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
+    _titleModalProgressLabel.textColor = OGCompatNavTitleColor(presentation);
     
     if (_typingStatus == nil)
-        _statusLabel.textColor = _statusHasAccentColor ? TGClassicAwareNavigationActiveSubtitleColor(presentation) : TGClassicAwareNavigationSubtitleColor(presentation);
+        _statusLabel.textColor = _statusHasAccentColor ? OGCompatNavActiveSubtitleColor(presentation) : OGCompatNavSubtitleColor(presentation);
     else
-        _statusLabel.textColor = TGClassicAwareNavigationActiveSubtitleColor(presentation);
+        _statusLabel.textColor = OGCompatNavActiveSubtitleColor(presentation);
     
-    _toggleLabel.textColor = TGClassicAwareNavigationSubtitleColor(presentation);
+    _toggleLabel.textColor = OGCompatNavSubtitleColor(presentation);
     
     if (_unreadBackground != nil)
     {
@@ -182,7 +190,7 @@ static CGSize TGConversationStatusShadowOffset(void)
     }
     
     if (_arrowView != nil)
-        _arrowView.image = TGTintedImage(TGImageNamed(@"TooltipArrow.png"), TGClassicAwareNavigationTitleColor(self.presentation));
+        _arrowView.image = TGTintedImage(TGImageNamed(@"TooltipArrow.png"), OGCompatNavTitleColor(self.presentation));
 }
 
 - (void)_updateLabelsForCurrentOrientation
@@ -208,9 +216,9 @@ static CGSize TGConversationStatusShadowOffset(void)
     {
         _titleLabel = [[TGReusableLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
-        _titleLabel.textColor = TGClassicAwareNavigationTitleColor(_presentation);
+        _titleLabel.textColor = OGCompatNavTitleColor(_presentation);
         _titleLabel.shadowColor = TGConversationTitleShadowColor(_presentation);
-        _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+        _titleLabel.shadowOffset = OGCompatTitleShadowOffset();
         _titleLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6NavigationTitleFont] : TGBoldSystemFontOfSize(17.0f);
         _titleLabel.numberOfLines = 1;
         [self addSubview:_titleLabel];
@@ -227,10 +235,10 @@ static CGSize TGConversationStatusShadowOffset(void)
         
         _statusLabel = [[UILabel alloc] init];
         _statusLabel.backgroundColor = [UIColor clearColor];
-        _statusLabel.textColor = TGClassicAwareNavigationSubtitleColor(_presentation);
+        _statusLabel.textColor = OGCompatNavSubtitleColor(_presentation);
         _statusLabel.shadowColor = TGConversationStatusShadowColor(_presentation);
         _statusLabel.shadowOffset = TGConversationStatusShadowOffset();
-        _statusLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].subtitleFont : TGSystemFontOfSize([TGPresentation classicIOS6Style] ? 12.0f : 13.0f);
+        _statusLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].subtitleFont : TGSystemFontOfSize([TGPresentation classicThemeStyle] ? 12.0f : 13.0f);
         [self addSubview:_statusLabel];
     }
     
@@ -241,7 +249,7 @@ static CGSize TGConversationStatusShadowOffset(void)
     if (_toggleLabel == nil) {
         _toggleLabel = [[UILabel alloc] init];
         _toggleLabel.backgroundColor = [UIColor clearColor];
-        _toggleLabel.textColor = TGClassicAwareNavigationSubtitleColor(_presentation);
+        _toggleLabel.textColor = OGCompatNavSubtitleColor(_presentation);
         _toggleLabel.font = TGSystemFontOfSize(13.0f);
         [self addSubview:_toggleLabel];
     }
@@ -280,19 +288,6 @@ static CGSize TGConversationStatusShadowOffset(void)
     }
 }
 
-- (void)setMarkedUserBadgeVisible:(bool)visible
-{
-    if (visible && _markedUserBadgeView == nil)
-    {
-        _markedUserBadgeView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"ZikfolvStatusBadge"]];
-        _markedUserBadgeView.contentMode = UIViewContentModeScaleAspectFit;
-        [self addSubview:_markedUserBadgeView];
-    }
-
-    _markedUserBadgeView.hidden = !visible;
-    [self setNeedsLayout];
-}
-
 #if OG_PLUGINS_AVAILABLE
 - (void)setPluginNameDecorationColor:(UIColor *)color gradient:(NSArray *)gradient emojiView:(UIView *)emojiView
 {
@@ -327,7 +322,7 @@ static CGSize TGConversationStatusShadowOffset(void)
         _pluginNameLayer = nil;
         _pluginNameMask = nil;
     }
-    [self titleLabel].textColor = _pluginNameLayer != nil ? [UIColor clearColor] : (_pluginNameColor ?: TGClassicAwareNavigationTitleColor(_presentation));
+    [self titleLabel].textColor = _pluginNameLayer != nil ? [UIColor clearColor] : (_pluginNameColor ?: OGCompatNavTitleColor(_presentation));
     [self setNeedsLayout];
 }
 #endif
@@ -352,7 +347,7 @@ static CGSize TGConversationStatusShadowOffset(void)
     _statusLabel.hidden = !showStatus;
     if (!_showStatus && showArrow) {
         if (_arrowView == nil) {
-            _arrowView = [[UIImageView alloc] initWithImage:TGTintedImage(TGImageNamed(@"TooltipArrow.png"), TGClassicAwareNavigationTitleColor(self.presentation))];
+            _arrowView = [[UIImageView alloc] initWithImage:TGTintedImage(TGImageNamed(@"TooltipArrow.png"), OGCompatNavTitleColor(self.presentation))];
             [self addSubview:_arrowView];
         }
     }
@@ -386,7 +381,7 @@ static CGSize TGConversationStatusShadowOffset(void)
         _statusHasAccentColor = statusHasAccentColor;
         
         if (_typingStatus == nil)
-            _statusLabel.textColor = _statusHasAccentColor ? TGClassicAwareNavigationActiveSubtitleColor(_presentation) : TGClassicAwareNavigationSubtitleColor(_presentation);
+            _statusLabel.textColor = _statusHasAccentColor ? OGCompatNavActiveSubtitleColor(_presentation) : OGCompatNavSubtitleColor(_presentation);
     }
 }
 
@@ -443,12 +438,12 @@ static CGSize TGConversationStatusShadowOffset(void)
         if (typingStatus == nil)
         {
             [self statusLabel].attributedText = [[NSAttributedString alloc] initWithString:_status];
-            _statusLabel.textColor = _statusHasAccentColor ? TGClassicAwareNavigationActiveSubtitleColor(_presentation) : TGClassicAwareNavigationSubtitleColor(_presentation);
+            _statusLabel.textColor = _statusHasAccentColor ? OGCompatNavActiveSubtitleColor(_presentation) : OGCompatNavSubtitleColor(_presentation);
         }
         else
         {
             [self statusLabel].attributedText = [[NSAttributedString alloc] initWithString:typingStatus];
-            _statusLabel.textColor = TGClassicAwareNavigationActiveSubtitleColor(_presentation);
+            _statusLabel.textColor = OGCompatNavActiveSubtitleColor(_presentation);
         }
         
         if (typingStatus == nil)
@@ -480,7 +475,7 @@ static CGSize TGConversationStatusShadowOffset(void)
                 _activityIndicator = [[TGModernConversationTitleActivityIndicator alloc] init];
                 _activityIndicator.alpha = 0.0f;
             }
-            _activityIndicator.color = TGClassicAwareNavigationActiveSubtitleColor(self.presentation);
+            _activityIndicator.color = OGCompatNavActiveSubtitleColor(self.presentation);
             if (_activityIndicator.superview != self)
                 [self addSubview:_activityIndicator];
             
@@ -567,7 +562,7 @@ static CGSize TGConversationStatusShadowOffset(void)
             _titleModalProgressLabel = [[UILabel alloc] init];
             _titleModalProgressLabel.clipsToBounds = false;
             _titleModalProgressLabel.backgroundColor = [UIColor clearColor];
-            _titleModalProgressLabel.textColor = TGClassicAwareNavigationTitleColor(self.presentation);
+            _titleModalProgressLabel.textColor = OGCompatNavTitleColor(self.presentation);
             _titleModalProgressLabel.font = TGBoldSystemFontOfSize(16.0f);
             
             _titleModalProgressIndicator = [[TGActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
@@ -1041,14 +1036,11 @@ static UIView *findNavigationBar(UIView *view)
             _titleLabel.frame = CGRectMake(titleOrigin.x + titleHorizontalOffset, titleOrigin.y, titleLabelSize.width, titleLabelSize.height);
             _statusLabel.frame = CGRectMake(statusHorizontalAdjustment + (_typingStatus == nil ? 0.0f : 10.0f) + CGFloor((bounds.size.width - statusLabelSize.width) / 2.0f), 2.0f + statusPortraitOffset, statusLabelSize.width, statusLabelSize.height);
 
-            if (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden)
-                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
-            
             if (_arrowView != nil) {
                 CGSize arrowSize = _arrowView.image.size;
                 arrowSize.width *= 0.6f;
                 arrowSize.height *= 0.6f;
-                CGFloat arrowX = (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden) ? CGRectGetMaxX(_markedUserBadgeView.frame) + 3.0f : CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 3.0f;
+                CGFloat arrowX = CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 3.0f;
                 _arrowView.frame = CGRectMake(arrowX, CGRectGetMinY(_titleLabel.frame) + 8.0f, arrowSize.width, arrowSize.height);
             }
             
@@ -1101,9 +1093,6 @@ static UIView *findNavigationBar(UIView *view)
             _titleLabel.frame = CGRectMake(titleOrigin.x + titleHorizontalOffset, titleOrigin.y, titleLabelSize.width, titleLabelSize.height);
             _statusLabel.frame = CGRectMake(CGFloor((bounds.size.width - commonWidth) / 2.0f) + totalTitleWidth + spacing, -9.0f + TGRetinaPixel + statusLandscapeOffset, statusLabelSize.width, statusLabelSize.height);
 
-            if (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden)
-                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
-            
             if (_toggleIcon != nil) {
                 _toggleIcon.frame = CGRectOffset(_toggleIcon.bounds, CGFloor((bounds.size.width - commonWidth) / 2.0f) + totalTitleWidth + spacing, -9.0f + TGRetinaPixel + statusLandscapeOffset + 3.0f);
                 _toggleLabel.frame = CGRectOffset(_toggleLabel.bounds, CGRectGetMaxX(_toggleIcon.frame) + 5.0f, -9.0f + TGRetinaPixel + statusLandscapeOffset);

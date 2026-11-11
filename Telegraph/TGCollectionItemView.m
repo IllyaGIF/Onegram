@@ -11,7 +11,7 @@
 
 @interface TGCollectionItemView ()
 {
-    UIImageView *_classicIOS6BackgroundImageView;
+    UIImageView *_classicBackgroundImageView;
     UIImageView *_classicIOS6SelectedBackgroundImageView;
 }
 
@@ -74,9 +74,9 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
         _classicIOS6HorizontalInset = 9.0f;
         
         self.backgroundView = [[UIView alloc] init];
-        _classicIOS6BackgroundImageView = [[UIImageView alloc] init];
-        _classicIOS6BackgroundImageView.userInteractionEnabled = false;
-        [self.backgroundView addSubview:_classicIOS6BackgroundImageView];
+        _classicBackgroundImageView = [[UIImageView alloc] init];
+        _classicBackgroundImageView.userInteractionEnabled = false;
+        [self.backgroundView addSubview:_classicBackgroundImageView];
         
         self.selectedBackgroundView = [[UIView alloc] init];
         _classicIOS6SelectedBackgroundImageView = [[UIImageView alloc] init];
@@ -161,7 +161,7 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
 - (CGRect)classicIOS6GroupedFrame
 {
     CGSize viewSize = self.bounds.size;
-    if (![TGPresentation classicIOS6Style] || _itemPosition == 0)
+    if (![TGPresentation classicThemeStyle] || _itemPosition == 0)
         return CGRectMake(0.0f, 0.0f, viewSize.width, viewSize.height);
     CGFloat defaultHorizontalInset = [TGPresentation brandedIOS6Style] ? [self effectiveBrandedGroupedAppearance].groupedHorizontalInset : 9.0f;
     CGFloat horizontalInset = _classicIOS6HorizontalInset > FLT_EPSILON ? _classicIOS6HorizontalInset : defaultHorizontalInset;
@@ -183,14 +183,14 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
 
 - (void)_updateStripes
 {
-    bool classicIOS6Style = [TGPresentation classicIOS6Style] && _itemPosition != 0;
-    if (classicIOS6Style)
+    bool classicThemeStyle = [TGPresentation classicThemeStyle] && _itemPosition != 0;
+    if (classicThemeStyle)
     {
         bool brandedGroupedSurface = [self usesBrandedGroupedSurface];
-        _classicIOS6BackgroundImageView.image = brandedGroupedSurface ? nil : TGCollectionItemViewClassicIOS6Image(_itemPosition, false, _presentation);
+        _classicBackgroundImageView.image = brandedGroupedSurface ? nil : TGCollectionItemViewClassicIOS6Image(_itemPosition, false, _presentation);
         _classicIOS6SelectedBackgroundImageView.image = self.highlightDisabled || brandedGroupedSurface ? nil : TGCollectionItemViewClassicIOS6Image(_itemPosition, true, _presentation);
         [self setNeedsLayout];
-        _classicIOS6BackgroundImageView.hidden = false;
+        _classicBackgroundImageView.hidden = false;
         _classicIOS6SelectedBackgroundImageView.hidden = self.highlightDisabled;
         _topStripeView.alpha = 0.0f;
         _bottomStripeView.alpha = 0.0f;
@@ -199,9 +199,9 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
     }
     else
     {
-        _classicIOS6BackgroundImageView.image = nil;
+        _classicBackgroundImageView.image = nil;
         _classicIOS6SelectedBackgroundImageView.image = nil;
-        _classicIOS6BackgroundImageView.hidden = true;
+        _classicBackgroundImageView.hidden = true;
         _classicIOS6SelectedBackgroundImageView.hidden = true;
         _topStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionFirstInBlock | TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionMiddleInBlock)) == 0 ? 0.0f : 1.0f;
         _bottomStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionIncludeNextSeparator)) == 0 ? 0.0f : 1.0f;
@@ -313,7 +313,7 @@ static void adjustSelectedBackgroundViewFrame(CGSize viewSize, int positionMask,
         stripeHeight = TGScreenPixel;
     });
     
-    if ([TGPresentation classicIOS6Style] && _itemPosition != 0)
+    if ([TGPresentation classicThemeStyle] && _itemPosition != 0)
     {
         CGRect groupedFrame = [self classicIOS6GroupedFrame];
         CGFloat leftInset = groupedFrame.origin.x;
@@ -324,14 +324,14 @@ static void adjustSelectedBackgroundViewFrame(CGSize viewSize, int positionMask,
             OGSettingsAppearance *appearance = [self effectiveBrandedGroupedAppearance];
             OGGroupedCellPosition position = TGCollectionItemViewGroupedPosition(_itemPosition);
             UIEdgeInsets outsets = UIEdgeInsetsZero;
-            _classicIOS6BackgroundImageView.image = [OGSettingsCell legacyGroupedSurfaceImageForPosition:position selected:false size:CGSizeMake(width, viewSize.height) appearance:appearance theme:theme outsets:&outsets];
-            _classicIOS6BackgroundImageView.frame = CGRectMake(leftInset - outsets.left, -outsets.top, width + outsets.left + outsets.right, viewSize.height + outsets.top + outsets.bottom);
+            _classicBackgroundImageView.image = [OGSettingsCell legacyGroupedSurfaceImageForPosition:position selected:false size:CGSizeMake(width, viewSize.height) appearance:appearance theme:theme outsets:&outsets];
+            _classicBackgroundImageView.frame = CGRectMake(leftInset - outsets.left, -outsets.top, width + outsets.left + outsets.right, viewSize.height + outsets.top + outsets.bottom);
             CGFloat selectedHeight = self.selectedBackgroundView.bounds.size.height;
             _classicIOS6SelectedBackgroundImageView.image = self.highlightDisabled ? nil : [OGSettingsCell legacyGroupedSurfaceImageForPosition:position selected:true size:CGSizeMake(width, selectedHeight) appearance:appearance theme:theme outsets:&outsets];
             _classicIOS6SelectedBackgroundImageView.frame = CGRectMake(leftInset - outsets.left, -outsets.top, width + outsets.left + outsets.right, selectedHeight + outsets.top + outsets.bottom);
             return;
         }
-        _classicIOS6BackgroundImageView.frame = CGRectMake(leftInset, 0.0f, width, viewSize.height);
+        _classicBackgroundImageView.frame = CGRectMake(leftInset, 0.0f, width, viewSize.height);
         _classicIOS6SelectedBackgroundImageView.frame = CGRectMake(leftInset, 0.0f, width, self.selectedBackgroundView.bounds.size.height);
         return;
     }

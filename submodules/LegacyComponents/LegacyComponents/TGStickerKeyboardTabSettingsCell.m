@@ -32,6 +32,75 @@ static void setViewFrame(UIView *view, CGRect frame)
 
 @end
 
+static UIImage *TGStickerKeyboardTabCustomEmojiIcon(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        CGFloat side = 24.0f;
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        UIColor *color = UIColorRGB(0x8a8e93);
+        CGContextSetStrokeColorWithColor(context, color.CGColor);
+        CGContextSetFillColorWithColor(context, color.CGColor);
+        CGContextSetLineWidth(context, 1.6f);
+        CGContextStrokeEllipseInRect(context, CGRectMake(2.5f, 2.5f, side - 5.0f, side - 5.0f));
+        CGContextFillEllipseInRect(context, CGRectMake(8.0f, 8.5f, 2.4f, 3.0f));
+        CGContextFillEllipseInRect(context, CGRectMake(13.6f, 8.5f, 2.4f, 3.0f));
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextAddArc(context, side / 2.0f, 12.5f, 5.0f, (CGFloat)(M_PI * 0.15), (CGFloat)(M_PI * 0.85), 0);
+        CGContextStrokePath(context);
+        image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    });
+    return image;
+}
+
+UIImage *TGStickerKeyboardCreateStickerIcon(UIColor *color)
+{
+    CGFloat side = 24.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, 1.6f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextMoveToPoint(context, 15.0f, 3.0f);
+    CGContextAddLineToPoint(context, 7.0f, 3.0f);
+    CGContextAddArcToPoint(context, 3.0f, 3.0f, 3.0f, 7.0f, 4.0f);
+    CGContextAddLineToPoint(context, 3.0f, 17.0f);
+    CGContextAddArcToPoint(context, 3.0f, 21.0f, 7.0f, 21.0f, 4.0f);
+    CGContextAddLineToPoint(context, 13.0f, 21.0f);
+    CGContextAddLineToPoint(context, 21.0f, 13.0f);
+    CGContextAddLineToPoint(context, 21.0f, 11.0f);
+    CGContextStrokePath(context);
+    CGContextMoveToPoint(context, 13.0f, 21.0f);
+    CGContextAddLineToPoint(context, 13.0f, 15.0f);
+    CGContextAddArcToPoint(context, 13.0f, 13.0f, 15.0f, 13.0f, 2.0f);
+    CGContextAddLineToPoint(context, 21.0f, 13.0f);
+    CGContextStrokePath(context);
+    CGContextMoveToPoint(context, 18.5f, 2.5f);
+    CGContextAddLineToPoint(context, 18.5f, 8.5f);
+    CGContextMoveToPoint(context, 15.5f, 5.5f);
+    CGContextAddLineToPoint(context, 21.5f, 5.5f);
+    CGContextStrokePath(context);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static UIImage *TGStickerKeyboardTabCreateStickerIcon(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        image = TGStickerKeyboardCreateStickerIcon(UIColorRGB(0x8a8e93));
+    });
+    return image;
+}
+
 @implementation TGStickerKeyboardTabSettingsCell
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -77,10 +146,14 @@ static void setViewFrame(UIView *view, CGRect frame)
         _imageView.image = _pallete != nil ? _pallete.settingsIcon : TGComponentsImageNamed(@"StickerKeyboardSettingsIcon.png");
     } else if (mode == TGStickerKeyboardTabSettingsCellGifs) {
         _imageView.image = _pallete != nil ? _pallete.gifIcon : TGComponentsImageNamed(@"StickerKeyboardGifIcon.png");
+    } else if (mode == TGStickerKeyboardTabSettingsCellCustomEmoji) {
+        _imageView.image = _pallete.customEmojiIcon ?: TGStickerKeyboardTabCustomEmojiIcon();
+    } else if (mode == TGStickerKeyboardTabSettingsCellCreateSticker) {
+        _imageView.image = _pallete.createStickerIcon ?: TGStickerKeyboardTabCreateStickerIcon();
     } else {
         _imageView.image = _pallete != nil ? _pallete.trendingIcon : TGComponentsImageNamed(@"StickerKeyboardTrendingIcon.png");
     }
-    _button.hidden = mode != TGStickerKeyboardTabSettingsCellSettings;
+    _button.hidden = mode != TGStickerKeyboardTabSettingsCellSettings && mode != TGStickerKeyboardTabSettingsCellCreateSticker;
 }
 
 - (void)setInnerAlpha:(CGFloat)innerAlpha

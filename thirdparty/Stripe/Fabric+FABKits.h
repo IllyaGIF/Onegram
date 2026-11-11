@@ -20,6 +20,6 @@
  *
  *  @return A dictionary containing kit specific configuration information or nil if none exists.
  */
-+ (NSDictionary *)configurationDictionaryForKitClass:(Class)kitClass;
++ (NSDictionary *_Nonnull)configurationDictionaryForKitClass:(Class _Nonnull)kitClass;
 
 @end

@@ -8,11 +8,16 @@ NSString *const TGDropboxProtocol = @"dbapi-3";
 NSString *const TGDropboxApiVersion = @"1";
 NSString *const TGDropboxAppKey = @"";
 
+static bool OGCompatDropboxConfigured(void)
+{
+    return [TGDropboxAppKey length] != 0;
+}
+
 @implementation TGDropboxHelper
 
 + (void)openExternalPicker
 {
-    if (TGDropboxAppKey.length == 0)
+    if (!OGCompatDropboxConfigured())
         return;
 
     NSString *baseURL = [NSString stringWithFormat:@"%@://%@/chooser", TGDropboxProtocol, TGDropboxApiVersion];
@@ -68,14 +73,12 @@ NSString *const TGDropboxAppKey = @"";
 
 + (NSString *)dropboxURLScheme
 {
-    if (TGDropboxAppKey.length == 0)
-        return @"";
-    return [NSString stringWithFormat:@"db-%@", TGDropboxAppKey];
+    return OGCompatDropboxConfigured() ? [NSString stringWithFormat:@"db-%@", TGDropboxAppKey] : @"";
 }
 
 + (bool)isDropboxInstalled
 {
-    return TGDropboxAppKey.length != 0 && [[UIApplication sharedApplication] canOpenURL:[NSURL URLWithString:[NSString stringWithFormat:@"%@://", TGDropboxProtocol]]];
+    return OGCompatDropboxConfigured() && [[UIApplication sharedApplication] canOpenURL:[NSURL URLWithString:[NSString stringWithFormat:@"%@://", TGDropboxProtocol]]];
 }
 
 @end

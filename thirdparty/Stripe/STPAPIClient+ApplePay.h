@@ -6,7 +6,8 @@
 //
 
 #import <Foundation/Foundation.h>
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import "OGStripeCompat.h"
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 #import <PassKit/PassKit.h>
 
 #import "STPAPIClient.h"
@@ -25,8 +26,8 @@ FAUXPAS_IGNORED_IN_FILE(APIAvailability)
  *  @param payment     The user's encrypted payment information as returned from a PKPaymentAuthorizationViewController. Cannot be nil.
  *  @param completion  The callback to run with the returned Stripe token (and any errors that may have occurred).
  */
-- (void)createTokenWithPayment:(PKPayment *)payment
-                    completion:(STPTokenCompletionBlock)completion;
+- (void)createTokenWithPayment:(PKPayment *_Nonnull)payment
+                    completion:(STPTokenCompletionBlock _Nonnull)completion NS_AVAILABLE_IOS(8_0);
 
 @end
 

@@ -38,7 +38,7 @@ CGFloat TGCollectionItemDescriptionTextHeight(NSString *text, CGFloat width)
 
 CGFloat TGCollectionItemDescriptionHorizontalInset(void)
 {
-    return [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    return [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
 }
 
 CGFloat TGCollectionItemSwitchDescriptionWidth(CGFloat containerWidth)

@@ -10,12 +10,11 @@
 #import <QuartzCore/QuartzCore.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-#define TG_AVSAMPLEBUFFERDISPLAYLAYER_IOS6_COMPAT 1
 #define AVSampleBufferDisplayLayer CALayer
-@interface CALayer (TGAVSampleBufferDisplayLayerCompatibility)
-@property (nonatomic, copy) NSString *videoGravity;
-- (void)flushAndRemoveImage;
+@interface CALayer (OGCompatDisplayLayer)
 - (void)enqueueSampleBuffer:(CMSampleBufferRef)sampleBuffer;
+- (void)flushAndRemoveImage;
+@property (nonatomic, copy) NSString *videoGravity;
 @end
 #endif
 

@@ -7,6 +7,7 @@
 //
 
 #import "STPPaymentMethodsViewController.h"
+#import "OGStripeCompat.h"
 #import "STPAPIClient.h"
 #import "STPToken.h"
 #import "STPCard.h"
@@ -34,8 +35,8 @@
 @property(nonatomic)STPTheme *theme;
 @property(nonatomic)id<STPBackendAPIAdapter> apiAdapter;
 @property(nonatomic)STPAPIClient *apiClient;
-@property(nonatomic)STPPromise *loadingPromise;
-@property(nonatomic)NSArray *paymentMethods;
+@property(nonatomic)OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *loadingPromise;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *paymentMethods;
 @property(nonatomic)id<STPPaymentMethod> selectedPaymentMethod;
 @property(nonatomic, unsafe_unretained)STPPaymentActivityIndicatorView *activityIndicator;
 @property(nonatomic, unsafe_unretained)UIViewController *internalViewController;
@@ -59,14 +60,14 @@
                                 theme:(STPTheme *)theme
                            apiAdapter:(id<STPBackendAPIAdapter>)apiAdapter
                              delegate:(id<STPPaymentMethodsViewControllerDelegate>)delegate {
-    STPPromise *promise = [STPPromise new];
-    [apiAdapter retrieveCustomer:^(STPCustomer * customer, NSError * error) {
+    OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *promise = [STPPromise new];
+    [apiAdapter retrieveCustomer:^(STPCustomer * _Nullable customer, NSError * _Nullable error) {
         stpDispatchToMainThreadIfNecessary(^{
             if (error) {
                 [promise fail:error];
             } else {
                 STPCard *selectedCard;
-                NSMutableArray *cards = [NSMutableArray array];
+                OG_COMPAT_GENERIC(NSMutableArray, STPCard *) *cards = [NSMutableArray array];
                 for (id<STPSource> source in customer.sources) {
                     if ([source isKindOfClass:[STPCard class]]) {
                         STPCard *card = (STPCard *)source;
@@ -190,7 +191,7 @@
 }
 
 - (void)internalViewControllerDidCreateToken:(STPToken *)token completion:(STPErrorBlock)completion {
-    [self.apiAdapter attachSourceToCustomer:token completion:^(NSError * error) {
+    [self.apiAdapter attachSourceToCustomer:token completion:^(NSError * _Nullable error) {
         stpDispatchToMainThreadIfNecessary(^{
             completion(error);
             if (!error) {
@@ -216,7 +217,7 @@
 
 - (instancetype)initWithConfiguration:(STPPaymentConfiguration *)configuration
                            apiAdapter:(id<STPBackendAPIAdapter>)apiAdapter
-                       loadingPromise:(STPPromise *)loadingPromise
+                       loadingPromise:(OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *)loadingPromise
                                 theme:(STPTheme *)theme
                              delegate:(id<STPPaymentMethodsViewControllerDelegate>)delegate {
     self = [super initWithNibName:nil bundle:nil];
@@ -233,7 +234,7 @@
             self.paymentMethods = tuple.paymentMethods;
             self.selectedPaymentMethod = tuple.selectedPaymentMethod;
         }];
-        [[[self.stp_didAppearPromise voidFlatMap:^STPPromise *{
+        [[[self.stp_didAppearPromise voidFlatMap:^STPPromise * _Nonnull{
             return loadingPromise;
         }] onSuccess:^(STPPaymentMethodTuple *tuple) {
             STRONG(self);

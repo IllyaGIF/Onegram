@@ -140,8 +140,7 @@ struct EncryptionKey {
 	std::shared_ptr<const std::array<uint8_t, kSize>> value;
 	bool isOutgoing = false;
 
-	EncryptionKey()
-	: value(std::make_shared<std::array<uint8_t, kSize>>()), isOutgoing(false) {
+	EncryptionKey() : value(std::make_shared<std::array<uint8_t, kSize>>()) {
 	}
 
     EncryptionKey(

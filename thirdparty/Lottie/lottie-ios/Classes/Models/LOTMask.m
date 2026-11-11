@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTMask.m
 //  LottieAnimator
@@ -21,13 +21,13 @@
 }
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
-  NSNumber *closed = [jsonDictionary objectForKey:@2];
+  NSNumber *closed = jsonDictionary[@"cl"];
   _closed = closed.boolValue;
   
-  NSNumber *inverted = [jsonDictionary objectForKey:@2];
+  NSNumber *inverted = jsonDictionary[@"inv"];
   _inverted = inverted.boolValue;
   
-  NSString *mode = [jsonDictionary objectForKey:@2];
+  NSString *mode = jsonDictionary[@"mode"];
   if ([mode isEqualToString:@"a"]) {
     _maskMode = LOTMaskModeAdd;
   } else if ([mode isEqualToString:@"s"]) {
@@ -38,12 +38,12 @@
     _maskMode = LOTMaskModeUnknown;
   }
   
-  NSDictionary *maskshape = [jsonDictionary objectForKey:@2];
+  NSDictionary *maskshape = jsonDictionary[@"pt"];
   if (maskshape) {
     _maskPath = [[LOTKeyframeGroup alloc] initWithData:maskshape];
   }
   
-  NSDictionary *opacity = [jsonDictionary objectForKey:@2];
+  NSDictionary *opacity = jsonDictionary[@"o"];
   if (opacity) {
     _opacity = [[LOTKeyframeGroup alloc] initWithData:opacity];
     [_opacity remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -51,7 +51,7 @@
     }];
   }
   
-  NSDictionary *expansion = [jsonDictionary objectForKey:@2];
+  NSDictionary *expansion = jsonDictionary[@"x"];
   if (expansion) {
     _expansion = [[LOTKeyframeGroup alloc] initWithData:expansion];
   }

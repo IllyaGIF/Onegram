@@ -156,7 +156,18 @@ static OGMemoryCache *TGComponentsImageCache(void) {
     return cache;
 }
 
-static UIImage *TGComponentsLoadImageNamed(NSString *name);
+static UIImage *TGComponentsLoadImageNamed(NSString *name) {
+    UIImage *image = nil;
+    if ([name pathExtension].length != 0) {
+        NSString *file = [frameworkBundle() pathForResource:[name stringByDeletingPathExtension] ofType:[name pathExtension]];
+        if (file.length != 0)
+            image = [UIImage imageWithContentsOfFile:file];
+    }
+    
+    if (image == nil)
+        image = [UIImage imageNamed:[@"LegacyComponentsResources.bundle/" stringByAppendingString:name]];
+    return image != nil ? image : [UIImage imageNamed:name];
+}
 
 UIImage *TGComponentsImageNamed(NSString *name) {
     if (name.length == 0)
@@ -173,23 +184,6 @@ UIImage *TGComponentsImageNamed(NSString *name) {
     } else {
         [cache setObject:[NSNull null] forKey:name cost:64];
     }
-    return image;
-}
-
-static UIImage *TGComponentsLoadImageNamed(NSString *name) {
-    NSString *resourceName = [name stringByDeletingPathExtension];
-    NSString *resourceType = [name pathExtension];
-    NSString *path = nil;
-    
-    if (resourceType.length != 0)
-        path = [frameworkBundle() pathForResource:resourceName ofType:resourceType];
-    
-    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
-    if (image == nil)
-        image = [UIImage imageNamed:[NSString stringWithFormat:@"LegacyComponentsResources.bundle/%@", name]];
-    if (image == nil)
-        image = [UIImage imageNamed:name];
-    
     return image;
 }
 

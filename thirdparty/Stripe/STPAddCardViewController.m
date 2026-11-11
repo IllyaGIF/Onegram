@@ -7,6 +7,7 @@
 //
 
 #import "STPAddCardViewController.h"
+#import "OGStripeCompat.h"
 #import "STPPaymentCardTextField.h"
 #import "STPToken.h"
 #import "STPImageLibrary.h"
@@ -201,12 +202,8 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
         self.tableView.indicatorStyle = UIScrollViewIndicatorStyleWhite;
     }
     
-    if ([self.cardImageView respondsToSelector:@selector(setTintColor:)]) {
-        [(id)self.cardImageView setTintColor:self.theme.accentColor];
-    }
-    if ([self.activityIndicator respondsToSelector:@selector(setTintColor:)]) {
-        [(id)self.activityIndicator setTintColor:self.theme.accentColor];
-    }
+    OGCompatApplyTint(self.cardImageView, self.theme.accentColor);
+    OGCompatApplyTint(self.activityIndicator, self.theme.accentColor);
     self.emailCell.theme = self.theme;
     
     self.paymentCell.theme = self.theme;
@@ -218,9 +215,7 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
     self.rememberMePhoneCell.theme = self.theme;
     self.rememberMeTermsView.theme = self.theme;
     [self reloadRememberMeSectionForFooterSizeChangeIfNecessary];
-    if ([self respondsToSelector:@selector(setNeedsStatusBarAppearanceUpdate)]) {
-        [self setNeedsStatusBarAppearanceUpdate];
-    }
+    OGCompatRefreshStatusBar(self);
 }
 
 - (UIStatusBarStyle)preferredStatusBarStyle {
@@ -330,7 +325,7 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
         WEAK(self);
         [[[self.checkoutAPIClient createTokenWithAccount:self.checkoutAccount] onSuccess:^(STPToken *token) {
             STRONG(self);
-            [self.delegate addCardViewController:self didCreateToken:token completion:^(NSError * error) {
+            [self.delegate addCardViewController:self didCreateToken:token completion:^(NSError * _Nullable error) {
                 stpDispatchToMainThreadIfNecessary(^{
                     if (error) {
                         [self handleCheckoutTokenError:error];
@@ -356,7 +351,7 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
                 if (rememberMeSelected) {
                     [self.checkoutAPIClient createAccountWithCardParams:cardParams email:email phone:phone];
                 }
-                [self.delegate addCardViewController:self didCreateToken:token completion:^(NSError * error) {
+                [self.delegate addCardViewController:self didCreateToken:token completion:^(NSError * _Nullable error) {
                     stpDispatchToMainThreadIfNecessary(^{
                         if (error) {
                             [self handleCardTokenError:error];
@@ -374,21 +369,15 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
 - (void)handleCheckoutTokenError:(__unused NSError *)error {
     self.loading = NO;
     [self.paymentCell clear];
-    [[[UIAlertView alloc] initWithTitle:STPLocalizedString(@"There was an error submitting your autofilled card details.", nil)
-                                message:nil
-                               delegate:nil
-                      cancelButtonTitle:STPLocalizedString(@"Enter card details manually", nil)
-                      otherButtonTitles:nil] show];
+    OGCompatShowAlert(STPLocalizedString(@"There was an error submitting your autofilled card details.", nil),
+                      nil,
+                      STPLocalizedString(@"Enter card details manually", nil));
 }
 
 - (void)handleCardTokenError:(NSError *)error {
     self.loading = NO;
     [[self firstEmptyField] becomeFirstResponder];
-    [[[UIAlertView alloc] initWithTitle:error.localizedDescription
-                                message:error.localizedFailureReason
-                               delegate:nil
-                      cancelButtonTitle:STPLocalizedString(@"OK", nil)
-                      otherButtonTitles:nil] show];
+    OGCompatShowAlert(error.localizedDescription, error.localizedFailureReason, STPLocalizedString(@"OK", nil));
 }
 
 - (void)setCheckoutAccountCard:(STPCard *)checkoutAccountCard {
@@ -485,10 +474,10 @@ static NSInteger STPPaymentCardRememberMeSection = 3;
     WEAK(self);
     if ([STPEmailAddressValidator stringIsValidEmailAddress:email]) {
         [self.emailCell.activityIndicator setAnimating:YES animated:YES];
-        [[[[self.stp_didAppearPromise voidFlatMap:^STPPromise *{
+        [[[[self.stp_didAppearPromise voidFlatMap:^STPPromise * _Nonnull{
             STRONG(self);
             return [self.checkoutAPIClient lookupEmail:email];
-        }] flatMap:^STPPromise *(STPCheckoutAccountLookup *lookup) {
+        }] flatMap:^STPPromise * _Nonnull(STPCheckoutAccountLookup *lookup) {
             STRONG(self);
             self.lookupSucceeded = YES;
             self.checkoutLookup = lookup;

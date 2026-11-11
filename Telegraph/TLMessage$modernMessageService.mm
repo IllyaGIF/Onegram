@@ -9,134 +9,168 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 
-static id<TLObject> TGModernServiceReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline bool OGServiceFailed(__autoreleasing NSError **error)
 {
-    int32_t signature = [is readInt32];
+    return error != nil && *error != nil;
+}
+
+static inline id<TLObject> OGServiceConstruct(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
     return TLMetaClassStore::constructObject(is, signature, environment, nil, error);
 }
 
-static NSArray *TGModernServiceReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline void OGServiceDiscardInt32(NSInputStream *is)
 {
-    int32_t vectorSignature = [is readInt32];
-    if (vectorSignature != (int32_t)0x1cb5c415)
+    (void)[is readInt32];
+}
+
+static inline void OGServiceDiscardString(NSInputStream *is)
+{
+    (void)[is readString];
+}
+
+static inline void OGServiceDiscardBytes(NSInputStream *is)
+{
+    (void)[is readBytes];
+}
+
+static id<TLObject> OGServiceReadBoxed(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t boxedSignature = [is readInt32];
+    return OGServiceConstruct(is, boxedSignature, environment, error);
+}
+
+static NSArray *OGServiceReadBoxedVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t marker = [is readInt32];
+    if (marker != (int32_t)0x1cb5c415)
     {
         if (error != nil)
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [[NSString alloc] initWithFormat:@"Expected vector, got 0x%08x", vectorSignature]}];
+        {
+            NSString *text = [[NSString alloc] initWithFormat:@"Expected vector, got 0x%08x", marker];
+            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: text}];
+        }
         return nil;
     }
     
-    int32_t count = [is readInt32];
-    NSMutableArray *objects = [[NSMutableArray alloc] init];
-    for (int32_t i = 0; i < count; i++)
+    NSMutableArray *collected = [NSMutableArray arrayWithCapacity:0];
+    for (int32_t remaining = [is readInt32]; remaining > 0; remaining--)
     {
-        id object = TGModernServiceReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        id element = OGServiceReadBoxed(is, environment, error);
+        if (OGServiceFailed(error))
             return nil;
-        if (object != nil)
-            [objects addObject:object];
+        if (element == nil)
+            continue;
+        [collected addObject:element];
     }
-    return objects;
+    return collected;
 }
 
-static int64_t TGModernServicePeerLegacyId(TLPeer *peer)
+static int64_t OGServicePeerKey(TLPeer *peer)
 {
-    if ([peer isKindOfClass:[TLPeer$peerUser class]])
-        return ((TLPeer$peerUser *)peer).user_id;
-    if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    int64_t key = 0;
     if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
-    return 0;
+        key = TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
+    else if ([peer isKindOfClass:[TLPeer$peerChat class]])
+        key = TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    else if ([peer isKindOfClass:[TLPeer$peerUser class]])
+        key = ((TLPeer$peerUser *)peer).user_id;
+    return key;
 }
 
-static TLPeer *TGModernServiceReadPeerCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static TLPeer *OGServiceMakePeer(Class peerClass, int64_t identifier)
+{
+    if (peerClass == [TLPeer$peerUser class])
+    {
+        TLPeer$peerUser *user = [[TLPeer$peerUser alloc] init];
+        user.user_id = identifier;
+        return user;
+    }
+    if (peerClass == [TLPeer$peerChat class])
+    {
+        TLPeer$peerChat *chat = [[TLPeer$peerChat alloc] init];
+        chat.chat_id = identifier;
+        return chat;
+    }
+    TLPeer$peerChannel *channel = [[TLPeer$peerChannel alloc] init];
+    channel.channel_id = identifier;
+    return channel;
+}
+
+static TLPeer *OGServiceReadPeer(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t signature = [is readInt32];
-    if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102 || signature == (int32_t)0x36c6019a || signature == (int32_t)0xa2a5371e)
+    switch ((uint32_t)signature)
     {
-        int64_t modernPeerId = [is readInt64];
-        if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102)
-        {
-            TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-            peer.user_id = modernPeerId;
-            return peer;
-        }
-        else if (signature == (int32_t)0x36c6019a)
-        {
-            TLPeer$peerChat *peer = [[TLPeer$peerChat alloc] init];
-            peer.chat_id = modernPeerId;
-            return peer;
-        }
-        else
-        {
-            TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-            peer.channel_id = modernPeerId;
-            return peer;
-        }
-    }
-    else if (signature == (int32_t)0x9db1bc6d || signature == (int32_t)0xbad0e5bb || signature == (int32_t)0xbddde532)
-    {
-        return (TLPeer *)TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+        case 0x59511722:
+        case 0x15752102:
+            return OGServiceMakePeer([TLPeer$peerUser class], [is readInt64]);
+        case 0x36c6019a:
+            return OGServiceMakePeer([TLPeer$peerChat class], [is readInt64]);
+        case 0xa2a5371e:
+            return OGServiceMakePeer([TLPeer$peerChannel class], [is readInt64]);
+        case 0x9db1bc6d:
+        case 0xbad0e5bb:
+        case 0xbddde532:
+            return (TLPeer *)OGServiceConstruct(is, signature, environment, error);
+        default:
+            break;
     }
     
-    int32_t highPeerId = [is readInt32];
-    int64_t rawPeerId = (((int64_t)highPeerId) << 32) | ((uint32_t)signature);
-    if (rawPeerId < 0)
-    {
-        TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-        peer.channel_id = -rawPeerId;
-        return peer;
-    }
-    else
-    {
-        TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-        peer.user_id = rawPeerId;
-        return peer;
-    }
+    int32_t highWord = [is readInt32];
+    int64_t rawPeerId = (((int64_t)highWord) << 32) | ((uint32_t)signature);
+    Class peerClass = rawPeerId < 0 ? [TLPeer$peerChannel class] : [TLPeer$peerUser class];
+    return OGServiceMakePeer(peerClass, rawPeerId < 0 ? -rawPeerId : rawPeerId);
 }
 
-static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static int32_t OGServiceReadReplyHeader(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t signature = [is readInt32];
-    if (signature == (int32_t)0xafbc09db || signature == (int32_t)0x1b97dd66)
+    switch ((uint32_t)signature)
     {
-        int32_t flags = [is readInt32];
-        int32_t replyToMessageId = 0;
-        if (flags & (1 << 4))
-            replyToMessageId = [is readInt32];
-        if (flags & (1 << 0))
-            TGModernServiceReadObject(is, environment, error);
-        if (flags & (1 << 5))
-            TGModernServiceReadObject(is, environment, error);
-        if (flags & (1 << 8))
-            TGModernServiceReadObject(is, environment, error);
-        if (flags & (1 << 1))
-            [is readInt32];
-        if (flags & (1 << 6))
-            [is readString];
-        if (flags & (1 << 7))
-            TGModernServiceReadObjectVector(is, environment, error);
-        if (flags & (1 << 10))
-            [is readInt32];
-        if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 11)))
-            [is readInt32];
-        if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 12)))
-            [is readBytes];
-        return replyToMessageId;
+        case 0xafbc09db:
+        case 0x1b97dd66:
+        case 0xddb5ab75:
+        {
+            const bool hasQuoteFields = signature != (int32_t)0xafbc09db;
+            int32_t flags = [is readInt32];
+            int32_t replyToMessageId = (flags & (1 << 4)) ? [is readInt32] : 0;
+            if (flags & (1 << 0))
+                OGServiceReadBoxed(is, environment, error);
+            if (flags & (1 << 5))
+                OGServiceReadBoxed(is, environment, error);
+            if (flags & (1 << 8))
+                OGServiceReadBoxed(is, environment, error);
+            if (flags & (1 << 1))
+                OGServiceDiscardInt32(is);
+            if (flags & (1 << 6))
+                OGServiceDiscardString(is);
+            if (flags & (1 << 7))
+                OGServiceReadBoxedVector(is, environment, error);
+            if (flags & (1 << 10))
+                OGServiceDiscardInt32(is);
+            if (hasQuoteFields && (flags & (1 << 11)))
+                OGServiceDiscardInt32(is);
+            if (hasQuoteFields && (flags & (1 << 12)))
+                OGServiceDiscardBytes(is);
+            if (signature == (int32_t)0xddb5ab75 && (flags & (1 << 14)))
+                OGServiceReadBoxedVector(is, environment, error);
+            return replyToMessageId;
+        }
+        case 0x0e5af939:
+            OGServiceReadBoxed(is, environment, error);
+            OGServiceDiscardInt32(is);
+            return 0;
+        default:
+            break;
     }
-    else if (signature == (int32_t)0x0e5af939)
+    
+    if (signature <= 0 || signature >= 10000000)
     {
-        TGModernServiceReadObject(is, environment, error);
-        [is readInt32];
+        OGServiceConstruct(is, signature, environment, error);
         return 0;
     }
-    else if (signature > 0 && signature < 10000000)
-    {
-        return signature;
-    }
-    
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    return 0;
+    return signature;
 }
 
 @implementation TGStarGiftTLMessageAction
@@ -155,98 +189,106 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     TLMessage$modernMessageService *result = [[TLMessage$modernMessageService alloc] init];
     
     int32_t flags = [is readInt32];
-    bool isLayer181MessageService = signature == (int32_t)0x2b085862;
-    bool isModernMessageService = isLayer181MessageService || signature == (int32_t)0x7a800e0a || signature == (int32_t)0x6a3ac8ea;
+    const bool baseLayout = signature == (int32_t)0x2b085862;
+    const bool modern = baseLayout || signature == (int32_t)0x7a800e0a || signature == (int32_t)0x6a3ac8ea;
+    const bool extended = modern && !baseLayout;
     
     result.flags = flags;
     result.n_id = [is readInt32];
     
     if (flags & (1 << 8))
     {
-        if (isModernMessageService)
+        if (modern)
         {
-            TLPeer *fromPeer = TGModernServiceReadPeerCompat(is, environment, error);
-            if (error != nil && *error != nil)
+            TLPeer *fromPeer = OGServiceReadPeer(is, environment, error);
+            if (OGServiceFailed(error))
                 return nil;
-            result.senderPeerId = TGModernServicePeerLegacyId(fromPeer);
+            result.senderPeerId = OGServicePeerKey(fromPeer);
             result.from_id = TGPeerIdIsUser(result.senderPeerId) ? result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
     }
     
-    result.to_id = TGModernServiceReadPeerCompat(is, environment, error);
-    if (error != nil && *error != nil) {
+    result.to_id = OGServiceReadPeer(is, environment, error);
+    if (OGServiceFailed(error))
         return nil;
-    }
     
-    if (isModernMessageService && !isLayer181MessageService && (flags & (1 << 28)))
+    if (extended && (flags & (1 << 28)))
     {
-        TLPeer *savedPeer = TGModernServiceReadPeerCompat(is, environment, error);
-        if (error != nil && *error != nil)
+        TLPeer *savedPeer = OGServiceReadPeer(is, environment, error);
+        if (OGServiceFailed(error))
             return nil;
-        result.saved_peer_id = TGModernServicePeerLegacyId(savedPeer);
+        result.saved_peer_id = OGServicePeerKey(savedPeer);
     }
     
-    if (flags & (1 << 3)) {
-        result.reply_to_msg_id = isModernMessageService ? TGModernServiceReadReplyHeader(is, environment, error) : [is readInt32];
-        if (error != nil && *error != nil)
+    if (flags & (1 << 3))
+    {
+        result.reply_to_msg_id = modern ? OGServiceReadReplyHeader(is, environment, error) : [is readInt32];
+        if (OGServiceFailed(error))
             return nil;
     }
     
     result.date = [is readInt32];
     
     int32_t actionSignature = [is readInt32];
-    if (actionSignature == (int32_t)0xea2c31d3 || actionSignature == (int32_t)0xe6c31522 ||
-        actionSignature == (int32_t)0x774278d4 || actionSignature == (int32_t)0x73ada76b)
+    switch ((uint32_t)actionSignature)
     {
-        TGTLDynamicObject *giftAction = [TGTLDynamicObject parseObjectFromStream:is signature:actionSignature error:error];
-        if (giftAction == nil)
-            return nil;
-        TGStarGiftTLMessageAction *action = [[TGStarGiftTLMessageAction alloc] init];
-        action.giftAction = giftAction;
-        result.action = action;
-    }
-    else if (isModernMessageService && actionSignature == (int32_t)0x80e11a7f)
-    {
-        TLMessageAction$messageActionPhoneCall *phoneAction =
-            [[TLMessageAction$messageActionPhoneCall alloc] init];
-
-        result.action = [phoneAction
-            TLdeserialize:is
-            signature:actionSignature
-            environment:environment
-            context:nil
-            error:error];
-
-        if (error != nil && *error != nil)
-            return nil;
-    }
-    else if (isModernMessageService && actionSignature == (int32_t)0xcc02aa6d)
-    {
-        [is readInt32];
-        result.action = [[TLMessageAction$messageActionEmpty alloc] init];
-    }
-    else
-    {
-        result.action = TLMetaClassStore::constructObject(is, actionSignature, environment, nil, error);
-        if (error != nil && *error != nil) {
-            return nil;
+        case 0xea2c31d3:
+        case 0xe6c31522:
+        case 0x7e1c1187:
+        case 0x774278d4:
+        case 0x73ada76b:
+        {
+            TGTLDynamicObject *giftAction = [TGTLDynamicObject parseObjectFromStream:is signature:actionSignature error:error];
+            if (giftAction == nil)
+                return nil;
+            TGStarGiftTLMessageAction *action = [[TGStarGiftTLMessageAction alloc] init];
+            action.giftAction = giftAction;
+            result.action = action;
+            break;
         }
+        case 0x80e11a7f:
+        case 0xcc02aa6d:
+        {
+            if (!modern)
+            {
+                result.action = OGServiceConstruct(is, actionSignature, environment, error);
+                if (OGServiceFailed(error))
+                    return nil;
+            }
+            else if (actionSignature == (int32_t)0x80e11a7f)
+            {
+                TLMessageAction$messageActionPhoneCall *phoneAction = [[TLMessageAction$messageActionPhoneCall alloc] init];
+                result.action = [phoneAction TLdeserialize:is signature:actionSignature environment:environment context:nil error:error];
+                if (OGServiceFailed(error))
+                    return nil;
+            }
+            else
+            {
+                OGServiceDiscardInt32(is);
+                result.action = [[TLMessageAction$messageActionEmpty alloc] init];
+            }
+            break;
+        }
+        default:
+            result.action = OGServiceConstruct(is, actionSignature, environment, error);
+            if (OGServiceFailed(error))
+                return nil;
+            break;
     }
     
-    if (isModernMessageService && !isLayer181MessageService && (flags & (1 << 20)))
+    if (extended && (flags & (1 << 20)))
     {
-        TGModernServiceReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGServiceReadBoxed(is, environment, error);
+        if (OGServiceFailed(error))
             return nil;
     }
     
-    if (isModernMessageService && (flags & (1 << 25)))
-        [is readInt32];
+    if (modern && (flags & (1 << 25)))
+        OGServiceDiscardInt32(is);
     
     return result;
 }
-
 
 @end

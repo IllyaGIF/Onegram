@@ -99,8 +99,8 @@
     
     SMetaDisposable *_searchDisposable;
     
-    NSArray *_searchResultUsers;
-    NSDictionary *_searchResultsMemberDatas;
+    NSArray *_foundUserSections;
+    NSDictionary *_foundMemberDatas;
     
     NSString *_searchString;
     
@@ -1631,8 +1631,8 @@
     _searchString = searchQuery;
     if (_searchString.length == 0) {
         [_searchBar setShowActivity:false];
-        _searchResultUsers = @[];
-        _searchResultsMemberDatas = @{};
+        _foundUserSections = @[];
+        _foundMemberDatas = @{};
         [_searchDisposable setDisposable:nil];
         [searchMixin reloadSearchResults];
         [searchMixin setSearchResultsTableViewHidden:true];
@@ -1720,8 +1720,8 @@
                     }
                 }
                 
-                strongSelf->_searchResultUsers = @[members, contacts, global];
-                strongSelf->_searchResultsMemberDatas = memberData[@"memberDatas"];
+                strongSelf->_foundUserSections = @[members, contacts, global];
+                strongSelf->_foundMemberDatas = memberData[@"memberDatas"];
                 [searchMixin reloadSearchResults];
                 [searchMixin setSearchResultsTableViewHidden:false];
                 [strongSelf->_searchBar setShowActivity:false];
@@ -1757,14 +1757,14 @@
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     TGUser *user = nil;
-    user = _searchResultUsers[indexPath.section][indexPath.row];
+    user = _foundUserSections[indexPath.section][indexPath.row];
     
     static NSString *cellIdentifier = @"TGGroupInfoUserCell";
     TGGroupInfoUserCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
     if (cell == nil)
         cell = [[TGGroupInfoUserCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellIdentifier];
     cell.presentation = self.presentation;
-    TGGroupInfoUserCollectionItem *item = [self makeItem:user member:_searchResultsMemberDatas[@(user.uid)]];
+    TGGroupInfoUserCollectionItem *item = [self makeItem:user member:_foundMemberDatas[@(user.uid)]];
     item.presentation = self.presentation;
     [cell setItem:item];
     
@@ -1772,11 +1772,11 @@
 }
 
 -(NSInteger)numberOfSectionsInTableView:(UITableView *)__unused tableView {
-    return _searchResultUsers.count;
+    return _foundUserSections.count;
 }
 
 - (NSInteger)tableView:(UITableView *)__unused tableView numberOfRowsInSection:(NSInteger)section {
-    NSArray *sectionUsers = _searchResultUsers[section];
+    NSArray *sectionUsers = _foundUserSections[section];
     return sectionUsers.count;
 }
 
@@ -1797,9 +1797,9 @@
 }
 
 - (void)removeParticipantFromList:(int64_t)uid {
-    if (_searchResultUsers != nil) {
-        NSMutableArray *updatedSearchResultUsers = [[NSMutableArray alloc] initWithArray:_searchResultUsers];
-        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_searchResultsMemberDatas];
+    if (_foundUserSections != nil) {
+        NSMutableArray *updatedSearchResultUsers = [[NSMutableArray alloc] initWithArray:_foundUserSections];
+        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_foundMemberDatas];
         
         NSIndexPath *indexPath = nil;
         NSUInteger sectionIndex = 0;
@@ -1825,8 +1825,8 @@
         
         [updatedSearchResultMemberDatas removeObjectForKey:@(uid)];
         
-        _searchResultUsers = updatedSearchResultUsers;
-        _searchResultsMemberDatas = updatedSearchResultMemberDatas;
+        _foundUserSections = updatedSearchResultUsers;
+        _foundMemberDatas = updatedSearchResultMemberDatas;
         
         if (indexPath != nil) {
             [_searchMixin.searchResultsTableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationFade];
@@ -1836,7 +1836,7 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:true];
-    TGUser *user = _searchResultUsers[indexPath.section][indexPath.row];
+    TGUser *user = _foundUserSections[indexPath.section][indexPath.row];
     [self actionStageActionRequested:@"openUser" options:@{@"uid": @(user.uid), @"force": @true}];
 }
 

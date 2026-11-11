@@ -352,6 +352,26 @@ typedef enum {
     _contentProperties = dict;
 }
 
+- (int64_t)storyReplyPeerId {
+    TGMessageStoryReplyContentProperty *property = _contentProperties[@"storyReply"];
+    return [property isKindOfClass:[TGMessageStoryReplyContentProperty class]] ? property.peerId : 0;
+}
+
+- (int32_t)storyReplyStoryId {
+    TGMessageStoryReplyContentProperty *property = _contentProperties[@"storyReply"];
+    return [property isKindOfClass:[TGMessageStoryReplyContentProperty class]] ? property.storyId : 0;
+}
+
+- (void)setStoryReplyPeerId:(int64_t)peerId storyId:(int32_t)storyId {
+    NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:_contentProperties];
+    if (peerId != 0 && storyId != 0) {
+        dict[@"storyReply"] = [[TGMessageStoryReplyContentProperty alloc] initWithPeerId:peerId storyId:storyId];
+    } else {
+        [dict removeObjectForKey:@"storyReply"];
+    }
+    _contentProperties = dict;
+}
+
 - (NSTimeInterval)editDate {
     TGMessageEditDateContentProperty *property = _contentProperties[@"editDate"];
     return property.editDate;
@@ -1353,6 +1373,8 @@ static bool TGMessageTextMayContainPhone(NSString *text)
             }
         }
     }
+    if (_contentProperties[@"storyReply"] != nil)
+        [self setStoryReplyPeerId:0 storyId:0];
 }
 
 - (void)filterOutExpiredMedia {

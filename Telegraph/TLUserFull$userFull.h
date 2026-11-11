@@ -20,5 +20,7 @@
 @property (nonatomic) int32_t pinned_msg_id;
 @property (nonatomic) int32_t common_chats_count;
 @property (nonatomic, strong) TLDocument *saved_music;
+@property (nonatomic) int64_t send_paid_messages_stars;
+@property (nonatomic, strong) id wallet_card;
 
 @end

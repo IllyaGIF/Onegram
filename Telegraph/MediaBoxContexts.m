@@ -2,7 +2,7 @@
 
 @implementation MediaResourceStatus
 
-- ( instancetype)initWithStatus:(MediaResourceStatusType)status progress:(float)progress {
+- (instancetype)initWithStatus:(MediaResourceStatusType)status progress:(float)progress {
     self = [super init];
     if (self != nil) {
         _status = status;
@@ -31,7 +31,7 @@
 
 @implementation ResourceData
 
-- ( instancetype)initWithPath:(NSString * )path size:(int32_t)size complete:(bool)complete {
+- (instancetype)initWithPath:(NSString *)path size:(int32_t)size complete:(bool)complete {
     self = [super init];
     if (self != nil) {
         _path = path;
@@ -45,7 +45,7 @@
 
 @implementation ResourceDataContext
 
-- ( instancetype)initWithData:(ResourceData * )data {
+- (instancetype)initWithData:(ResourceData *)data {
     self = [super init];
     if (self != nil) {
         _data = data;
@@ -59,7 +59,7 @@
 
 @implementation ResourceStorePaths
 
-- ( instancetype)initWithPartial:(NSString * )partial complete:(NSString * )complete {
+- (instancetype)initWithPartial:(NSString *)partial complete:(NSString *)complete {
     self = [super init];
     if (self != nil) {
         _partial = partial;
@@ -72,7 +72,7 @@
 
 @implementation MediaResourceDataFetchResult
 
-- ( instancetype)initWithData:(NSData * )data complete:(bool)complete {
+- (instancetype)initWithData:(NSData *)data complete:(bool)complete {
     self = [super init];
     if (self != nil) {
         _data = data;

@@ -16,11 +16,11 @@
 
 #import "TGNotificationPrivacyAccountSetting.h"
 
-static NSString *modernPeerPhotoUrl(int32_t dcId, int32_t peerType, int64_t peerId, int64_t accessHash, int64_t photoId, bool big)
+static NSString *OGCompatPeerPhotoUrl(int32_t dcId, int32_t peerType, int64_t peerId, int64_t accessHash, int64_t photoId, bool big)
 {
     if (dcId == 0 || peerId == 0 || photoId == 0)
         return nil;
-    return [[NSString alloc] initWithFormat:@"peerphoto:%d:%d:%lld:%lld:%lld:%d", dcId, peerType, peerId, accessHash, photoId, big ? 1 : 0];
+    return [NSString stringWithFormat:@"peerphoto:%d:%d:%lld:%lld:%lld:%d", dcId, peerType, peerId, accessHash, photoId, big ? 1 : 0];
 }
 
 static NSString *OnegramTelegramSupportAvatarUri(void)
@@ -53,9 +53,9 @@ void extractUserPhoto(TLUserProfilePhoto *photo, TGUser *target)
         TLUserProfilePhoto$userProfilePhoto *profilePhoto = (TLUserProfilePhoto$userProfilePhoto *)photo;
         if (profilePhoto.photo_id != 0 && profilePhoto.dc_id != 0)
         {
-            target.photoUrlSmall = modernPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, false);
+            target.photoUrlSmall = OGCompatPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, false);
             target.photoUrlMedium = nil;
-            target.photoUrlBig = modernPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, true);
+            target.photoUrlBig = OGCompatPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, true);
             OnegramCacheStrippedAvatar(profilePhoto, target.photoUrlSmall);
             return;
         }

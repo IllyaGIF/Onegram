@@ -31,44 +31,68 @@
 #import "TGCommunitySignals.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
 
-static const int32_t TGIOS6DialogListCacheVersion = 14;
+static const int32_t OGCompatDialogListCacheRevision = 14;
 
-static void TGIOS6PrepareDialogListCacheVersion()
+static int32_t OGCompatReadInt32Property(NSString *name)
 {
-    NSData *data = [TGDatabaseInstance() customProperty:@"ios6DialogListCacheVersion"];
-    int32_t storedVersion = 0;
-    if (data.length == 4)
-        [data getBytes:&storedVersion length:4];
-
-    if (storedVersion == TGIOS6DialogListCacheVersion)
-        return;
-
-    NSData *pendingData = [TGDatabaseInstance() customProperty:@"ios6DialogListCachePendingVersion"];
-    int32_t pendingVersion = 0;
-    if (pendingData.length == 4)
-        [pendingData getBytes:&pendingVersion length:4];
-
-    if (pendingVersion != TGIOS6DialogListCacheVersion)
-    {
-        [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
-        [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
-        [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
-        [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:nil];
-        [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:nil];
-        [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCachePendingVersion" value:[NSData dataWithBytes:&TGIOS6DialogListCacheVersion length:4]];
-        uint8_t needsRemoteRefresh = 1;
-        [TGDatabaseInstance() setCustomProperty:@"ios6DialogListNeedsRemoteRefresh" value:[NSData dataWithBytes:&needsRemoteRefresh length:1]];
-        [TGDatabaseInstance() removeLegacyContactRegisteredMessages];
-    }
+    NSData *data = [TGDatabaseInstance() customProperty:name];
+    int32_t value = 0;
+    if (data.length == sizeof(value))
+        [data getBytes:&value length:sizeof(value)];
+    return value;
 }
 
-static void TGIOS6CommitDialogListCacheVersion()
+static void OGCompatWriteInt32Property(NSString *name, int32_t value)
 {
-    [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:[NSData dataWithBytes:&TGIOS6DialogListCacheVersion length:4]];
+    [TGDatabaseInstance() setCustomProperty:name value:[NSData dataWithBytes:&value length:sizeof(value)]];
+}
+
+static void OGCompatClearProperty(NSString *name)
+{
+    [TGDatabaseInstance() setCustomProperty:name value:nil];
+}
+
+static void OGCompatSetEmptyProperty(NSString *name)
+{
+    [TGDatabaseInstance() setCustomProperty:name value:[NSData data]];
+}
+
+static void OGCompatLoadDialogListHead(void (^completion)(NSArray *))
+{
+    [TGDatabaseInstance() loadConversationListFromDate:INT_MAX limit:50 excludeConversationIds:@[] folderId:0 completion:^(NSArray *result, __unused bool loadedAllRegular)
+    {
+        completion(result);
+    }];
+}
+
+static void OGCompatSetFlagProperty(NSString *name)
+{
+    uint8_t flag = 1;
+    [TGDatabaseInstance() setCustomProperty:name value:[NSData dataWithBytes:&flag length:1]];
+}
+
+static void OGCompatPrepareDialogListCache()
+{
+    if (OGCompatReadInt32Property(@"ios6DialogListCacheVersion") == OGCompatDialogListCacheRevision)
+        return;
+
+    if (OGCompatReadInt32Property(@"ios6DialogListCachePendingVersion") == OGCompatDialogListCacheRevision)
+        return;
+
+    for (NSString *name in @[@"dialogListLoaded", @"dialogListRemoteOffset", @"dialogListHash", @"ios6ArchivePeerIds", @"ios6ArchivePeerIdsComplete"])
+        [TGDatabaseInstance() setCustomProperty:name value:nil];
+    OGCompatWriteInt32Property(@"ios6DialogListCachePendingVersion", OGCompatDialogListCacheRevision);
+    OGCompatSetFlagProperty(@"ios6DialogListNeedsRemoteRefresh");
+    [TGDatabaseInstance() removeLegacyContactRegisteredMessages];
+}
+
+static void OGCompatCommitDialogListCache()
+{
+    OGCompatWriteInt32Property(@"ios6DialogListCacheVersion", OGCompatDialogListCacheRevision);
     [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCachePendingVersion" value:nil];
 }
 
-static void TGIOS6StoreHydratedDialogMessages(NSArray *messages, NSSet *pendingHydrationMessageKeys)
+static void OGCompatStoreHydratedDialogMessages(NSArray *messages, NSSet *pendingHydrationMessageKeys)
 {
     NSMutableArray *regularMessages = [[NSMutableArray alloc] init];
     NSMutableDictionary *channelMessages = [[NSMutableDictionary alloc] init];
@@ -143,14 +167,53 @@ static void TGIOS6StoreHydratedDialogMessages(NSArray *messages, NSSet *pendingH
     }];
 }
 
+static void OGCompatStoreNotifySettings(int64_t peerId, TLPeerNotifySettings *settings)
+{
+    if (![settings isKindOfClass:[TLPeerNotifySettings$peerNotifySettings class]])
+        return;
+
+    TLPeerNotifySettings$peerNotifySettings *concreteSettings = (TLPeerNotifySettings$peerNotifySettings *)settings;
+    NSNumber *peerSoundId = nil;
+    NSNumber *peerMuteUntil = nil;
+    NSNumber *peerPreviewText = nil;
+    NSNumber *messagesMuted = nil;
+
+    if (concreteSettings.flags & (1 << 0))
+        peerPreviewText = @(concreteSettings.showPreviews);
+    if (concreteSettings.flags & (1 << 1))
+        messagesMuted = @(concreteSettings.silent);
+    if (concreteSettings.flags & (1 << 2))
+        peerMuteUntil = concreteSettings.mute_until > OGRemoteClockTime() ? @(concreteSettings.mute_until) : @0;
+    if (concreteSettings.flags & (1 << 3))
+    {
+        NSString *sound = concreteSettings.sound;
+        if (sound.length == 0)
+            peerSoundId = @(0);
+        else if ([sound isEqualToString:@"default"])
+            peerSoundId = @(1);
+        else
+            peerSoundId = @([sound intValue]);
+    }
+
+    [TGDatabaseInstance() storePeerNotificationSettings:peerId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
+}
+
+static NSArray *OGCompatMessagesByAscendingSortKey(NSArray *messages)
+{
+    return [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
+        int result = TGMessageTransparentSortKeyCompare(lhs.transparentSortKey, rhs.transparentSortKey);
+        return result > 0 ? NSOrderedAscending : (result < 0 ? NSOrderedDescending : NSOrderedSame);
+    }];
+}
+
 static const int TGDialogListSynchronizationPageLimit = 50;
 
 @interface TGDialogListRequestBuilder ()
 {
     std::set<int64_t> _ignoreConversationIds;
     NSArray *_cutoffConversations;
-    int _lastRequestedLimit;
-    int32_t _folderId;
+    int _remotePageLimit;
+    int32_t _dialogFolderId;
     bool _fullSync;
     bool _streaming;
     bool _synchronizationFinished;
@@ -195,7 +258,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     bool transient = [error.domain isEqualToString:@"TGDialogListRPC"] && (error.code < 0 || error.code == 420 || error.code >= 500);
     if (!transient || _synchronizationRetryCount >= 5)
     {
-        TGLog(@"DIALOGS synchronization failed folder=%d code=%ld reason=%@", _folderId, (long)error.code, error.localizedDescription);
+        TGLog(@"DIALOGS synchronization failed folder=%d code=%ld reason=%@", _dialogFolderId, (long)error.code, error.localizedDescription);
         [self dialogListRequestFailed];
         return;
     }
@@ -212,7 +275,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             [strongSelf requestNextSynchronizationPage];
         }
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
-    OGPlatformDiagnosticLog(@"DIALOGS page retry folder=%d pinned=%d attempt=%u delay=%.0f code=%ld", _folderId, _synchronizationRequestPinnedPage ? 1 : 0, (unsigned int)_synchronizationRetryCount, delay, (long)error.code);
+    OGPlatformDiagnosticLog(@"DIALOGS page retry folder=%d pinned=%d attempt=%u delay=%.0f code=%ld", _dialogFolderId, _synchronizationRequestPinnedPage ? 1 : 0, (unsigned int)_synchronizationRetryCount, delay, (long)error.code);
     [_synchronizationRetryTimer start];
 }
 
@@ -226,7 +289,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     };
     if (_synchronizationRequestPinnedPage)
     {
-        self.cancelToken = [TGTelegraphInstance ios6RequestPinnedDialogsForFolderId:_folderId completion:^(TLmessages_PeerDialogs *pinnedDialogs)
+        self.cancelToken = [TGTelegraphInstance ios6RequestPinnedDialogsForFolderId:_dialogFolderId completion:^(TLmessages_PeerDialogs *pinnedDialogs)
         {
             [ActionStageInstance() dispatchOnStageQueue:^
             {
@@ -245,7 +308,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         } failure:failure];
         return;
     }
-    self.cancelToken = [TGTelegraphInstance requestDialogsPageWithOffset:_synchronizationOffset inputPeer:_synchronizationInputPeer limit:_lastRequestedLimit folderId:_folderId completion:^(TLmessages_Dialogs *dialogs, TGDialogListRemoteOffset *nextOffset, TLInputPeer *nextPeer, bool hasMore)
+    self.cancelToken = [TGTelegraphInstance requestDialogsPageWithOffset:_synchronizationOffset inputPeer:_synchronizationInputPeer limit:_remotePageLimit folderId:_dialogFolderId completion:^(TLmessages_Dialogs *dialogs, TGDialogListRemoteOffset *nextOffset, TLInputPeer *nextPeer, bool hasMore)
     {
         [ActionStageInstance() dispatchOnStageQueue:^
         {
@@ -256,7 +319,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             _synchronizationInputPeer = nextPeer;
             if (hasMore)
             {
-                _lastRequestedLimit = MAX(_lastRequestedLimit, TGDialogListSynchronizationPageLimit);
+                _remotePageLimit = MAX(_remotePageLimit, TGDialogListSynchronizationPageLimit);
                 [self requestNextSynchronizationPage];
             }
             [self processSynchronizationPage:dialogs complete:!hasMore pinned:false];
@@ -285,7 +348,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             if (![self synchronizationIsActive])
                 return;
             [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
-            TGLog(@"DIALOGS page committed folder=%d items=%d complete=%d", _folderId, (int)node.items.count, complete ? 1 : 0);
+            TGLog(@"DIALOGS page committed folder=%d items=%d complete=%d", _dialogFolderId, (int)node.items.count, complete ? 1 : 0);
             if (complete)
             {
                 _synchronizationFinished = true;
@@ -311,8 +374,8 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     _synchronizationPinnedPage = true;
     _synchronizationRequestPinnedPage = true;
     _replaceList = false;
-    _folderId = folderId;
-    _lastRequestedLimit = MAX(1, limit);
+    _dialogFolderId = folderId;
+    _remotePageLimit = MAX(1, limit);
     _synchronizationUserId = TGTelegraphInstance.clientUserId;
     _synchronizationStartDate = (int32_t)OGRemoteClockTime();
     _synchronizationPeerIds = [[NSMutableSet alloc] init];
@@ -324,12 +387,11 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             return;
         if (folderId == 0)
         {
-            [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
-            uint8_t needsRefresh = 1;
-            [TGDatabaseInstance() setCustomProperty:@"ios6DialogListNeedsRemoteRefresh" value:[NSData dataWithBytes:&needsRefresh length:1]];
+            OGCompatClearProperty(@"dialogListLoaded");
+            OGCompatSetFlagProperty(@"ios6DialogListNeedsRemoteRefresh");
         }
         else
-            [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:nil];
+            OGCompatClearProperty(@"ios6ArchivePeerIdsComplete");
         [ActionStageInstance() dispatchOnStageQueue:^
         {
             if (![self synchronizationIsActive])
@@ -365,71 +427,83 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     }
 }
 
+static int OGCompatDialogLimit(NSNumber *limitOption, int fallback)
+{
+    return limitOption == nil ? fallback : MAX(1, [limitOption intValue]);
+}
+
+- (void)_requestRemotePageFromOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit
+{
+    _remotePageLimit = limit;
+    self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:offset limit:_remotePageLimit folderId:_dialogFolderId requestArchive:(_dialogFolderId == 0) requestBuilder:self];
+}
+
+- (void)_restartFromListHead
+{
+    _replaceList = true;
+    [self _requestRemotePageFromOffset:nil limit:50];
+}
+
+- (TGDialogListRemoteOffset *)_storedRemoteOffset
+{
+    NSData *data = [TGDatabaseInstance() customProperty:@"dialogListRemoteOffset"];
+    TGDialogListRemoteOffset *remoteOffset = data.length == 0 ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:data];
+    if (remoteOffset == nil)
+        remoteOffset = [[TGDialogListRemoteOffset alloc] initWithDate:[TGDatabaseInstance() loadConversationListRemoteOffsetDate] peerId:0 accessHash:0 messageId:0];
+    return remoteOffset;
+}
+
 - (void)execute:(NSDictionary *)__unused options
 {
     NSNumber *date = [options objectForKey:@"date"];
-    NSNumber *limitOption = [options objectForKey:@"limit"];
     NSNumber *force = [options objectForKey:@"force"];
-    NSNumber *folderIdOption = [options objectForKey:@"folderId"];
-    _folderId = folderIdOption == nil ? 0 : [folderIdOption intValue];
-    TGLog(@"DIALOGS execute path=%@ folder=%d date=%@ limit=%@ force=%d fullSync=%d", self.path, _folderId, date, limitOption, [force boolValue], [[options objectForKey:@"fullSync"] boolValue]);
+    NSNumber *limitOption = [options objectForKey:@"limit"];
+    _dialogFolderId = [[options objectForKey:@"folderId"] intValue];
+    TGLog(@"DIALOGS execute path=%@ folder=%d date=%@ limit=%@ force=%d fullSync=%d", self.path, _dialogFolderId, date, limitOption, [force boolValue], [[options objectForKey:@"fullSync"] boolValue]);
     if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
     {
-        int localLimit = limitOption == nil ? 50 : MAX(1, [limitOption intValue]);
+        int localLimit = OGCompatDialogLimit(limitOption, 50);
         NSArray *excludeConversationIds = options[@"excludeConversationIds"];
         if (excludeConversationIds == nil)
             excludeConversationIds = @[];
-        [TGDatabaseInstance() loadConversationListFromDate:INT_MAX limit:localLimit excludeConversationIds:excludeConversationIds folderId:_folderId completion:^(NSArray *result, __unused bool loadedAllRegular)
+        [TGDatabaseInstance() loadConversationListFromDate:INT_MAX limit:localLimit excludeConversationIds:excludeConversationIds folderId:_dialogFolderId completion:^(NSArray *result, __unused bool loadedAllRegular)
         {
             [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:result ?: @[]]];
         }];
         return;
     }
-    if (_folderId == 0)
-        TGIOS6PrepareDialogListCacheVersion();
+    if (_dialogFolderId == 0)
+        OGCompatPrepareDialogListCache();
     bool fullSyncRequested = [[options objectForKey:@"fullSync"] boolValue];
-    _fullSync = _folderId == 0 && fullSyncRequested;
+    _fullSync = _dialogFolderId == 0 && fullSyncRequested;
 
     if (_fullSync)
     {
         _replaceList = true;
-        _lastRequestedLimit = MAX(1, limitOption == nil ? 100 : [limitOption intValue]);
-        self.cancelToken = [TGTelegraphInstance doRequestCompleteDialogsListWithLimit:_lastRequestedLimit folderId:0 requestArchive:true requestBuilder:self];
+        _remotePageLimit = OGCompatDialogLimit(limitOption, 100);
+        self.cancelToken = [TGTelegraphInstance doRequestCompleteDialogsListWithLimit:_remotePageLimit folderId:0 requestArchive:true requestBuilder:self];
     }
     else if (date == nil)
     {
         _replaceList = true;
-
-        int limit = limitOption == nil ? 50 : MAX(1, [limitOption intValue]);
-        _lastRequestedLimit = limit;
-
-        self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:0 limit:limit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
+        [self _requestRemotePageFromOffset:nil limit:OGCompatDialogLimit(limitOption, 50)];
     }
     else if (force != nil)
     {
-        NSData *data = [TGDatabaseInstance() customProperty:@"dialogListRemoteOffset"];
-        TGDialogListRemoteOffset *remoteOffset = nil;
-        if (data.length != 0) {
-            remoteOffset = [NSKeyedUnarchiver unarchiveObjectWithData:data];
-        }
-        
-        if (remoteOffset == nil) {
-            remoteOffset = [[TGDialogListRemoteOffset alloc] initWithDate:[TGDatabaseInstance() loadConversationListRemoteOffsetDate] peerId:0 accessHash:0 messageId:0];
-        }
+        TGDialogListRemoteOffset *remoteOffset = [self _storedRemoteOffset];
         
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            _lastRequestedLimit = 50;
-            self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:remoteOffset limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
+            [self _requestRemotePageFromOffset:remoteOffset limit:50];
         }];
     }
     else
     {        
-        int localLimit = limitOption == nil ? 50 : MAX(1, [limitOption intValue]);
-        [TGDatabaseInstance() loadConversationListFromDate:[date intValue] limit:localLimit excludeConversationIds:options[@"excludeConversationIds"] folderId:_folderId background:[options[@"background"] boolValue] completion:^(NSArray *result, bool loadedAllRegular)
+        int localLimit = OGCompatDialogLimit(limitOption, 50);
+        [TGDatabaseInstance() loadConversationListFromDate:[date intValue] limit:localLimit excludeConversationIds:options[@"excludeConversationIds"] folderId:_dialogFolderId background:[options[@"background"] boolValue] completion:^(NSArray *result, bool loadedAllRegular)
         {
             bool dialogListLoaded = [TGDatabaseInstance() customProperty:@"dialogListLoaded"].length != 0;
-            bool needsRemoteRefresh = _folderId == 0 && [TGDatabaseInstance() customProperty:@"ios6DialogListNeedsRemoteRefresh"].length != 0;
+            bool needsRemoteRefresh = _dialogFolderId == 0 && [TGDatabaseInstance() customProperty:@"ios6DialogListNeedsRemoteRefresh"].length != 0;
             TGLog(@"DIALOGS local path=%@ count=%d loadedAll=%d listLoaded=%d needsRefresh=%d", self.path, (int)result.count, loadedAllRegular ? 1 : 0, dialogListLoaded ? 1 : 0, needsRemoteRefresh ? 1 : 0);
             
             NSMutableArray *filteredResult = [[NSMutableArray alloc] initWithArray:result];
@@ -449,21 +523,20 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             
             _cutoffConversations = nil;
             
-            if (filteredResult.count != 0 && (![force boolValue] || dialogListLoaded)) {
+            const bool forced = [force boolValue];
+            if (filteredResult.count != 0 && (!forced || dialogListLoaded)) {
                 [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:filteredResult]];
                 
-                int32_t dateValue = [date intValue];
+                int32_t dateValue = date != nil ? [date intValue] : 0;
                 if ((dateValue <= 0 || dateValue == INT_MAX) && (dialogListLoaded || needsRemoteRefresh))
                 {
                     [ActionStageInstance() dispatchOnStageQueue:^
                     {
-                        _replaceList = true;
-                        _lastRequestedLimit = 50;
-                        self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:0 limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
+                        [self _restartFromListHead];
                     }];
                 }
             } else {
-                if (_folderId == 0 && dialogListLoaded && loadedAllRegular)
+                if (_dialogFolderId == 0 && dialogListLoaded && loadedAllRegular)
                 {
                     [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:@[]]];
                     int32_t dateValue = [date intValue];
@@ -471,22 +544,12 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                     {
                         [ActionStageInstance() dispatchOnStageQueue:^
                         {
-                            _replaceList = true;
-                            _lastRequestedLimit = 50;
-                            self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:0 limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
+                            [self _restartFromListHead];
                         }];
                     }
                     return;
                 }
-                NSData *data = [TGDatabaseInstance() customProperty:@"dialogListRemoteOffset"];
-                TGDialogListRemoteOffset *remoteOffset = nil;
-                if (data.length != 0) {
-                    remoteOffset = [NSKeyedUnarchiver unarchiveObjectWithData:data];
-                }
-                
-                if (remoteOffset == nil) {
-                    remoteOffset = [[TGDialogListRemoteOffset alloc] initWithDate:[TGDatabaseInstance() loadConversationListRemoteOffsetDate] peerId:0 accessHash:0 messageId:0];
-                }
+                TGDialogListRemoteOffset *remoteOffset = [self _storedRemoteOffset];
                 
                 [ActionStageInstance() dispatchOnStageQueue:^
                 {
@@ -495,8 +558,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                         _ignoreConversationIds.insert([nConversationId longLongValue]);
                     }
                     
-                    _lastRequestedLimit = localLimit;
-                    self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:remoteOffset limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
+                    [self _requestRemotePageFromOffset:remoteOffset limit:localLimit];
                 }];
             }
         }];
@@ -512,31 +574,12 @@ static const int TGDialogListSynchronizationPageLimit = 50;
 
     NSMutableDictionary *chatItems = [[NSMutableDictionary alloc] init];
     NSMutableDictionary *channelItems = [[NSMutableDictionary alloc] init];
-    int rawChatIndex = 0;
     
     for (TLChat *chatDesc in dialogs.chats)
     {
         TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
         if (TGPeerIdIsChannel(conversation.conversationId) || TGPeerIdIsGroup(conversation.conversationId))
             [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6InvalidPeer") value:nil];
-        if ([conversation.chatTitle rangeOfString:@"Arbeit" options:NSCaseInsensitiveSearch].location != NSNotFound || [conversation.chatTitle rangeOfString:@"WSG" options:NSCaseInsensitiveSearch].location != NSNotFound)
-        {
-            int64_t migratedChannelId = 0;
-            int64_t migratedAccessHash = 0;
-            int32_t rawFlags = 0;
-            if ([chatDesc isKindOfClass:[TLChat$chat class]])
-            {
-                TLChat$chat *chat = (TLChat$chat *)chatDesc;
-                rawFlags = chat.flags;
-                if ([chat.migrated_to isKindOfClass:[TLInputChannel$inputChannel class]])
-                {
-                    TLInputChannel$inputChannel *inputChannel = (TLInputChannel$inputChannel *)chat.migrated_to;
-                    migratedChannelId = inputChannel.channel_id;
-                    migratedAccessHash = inputChannel.access_hash;
-                }
-            }
-        }
-        rawChatIndex++;
         if (conversation.conversationId != 0) {
             if (conversation.isChannel) {
                 channelItems[@(conversation.conversationId)] = conversation;
@@ -563,8 +606,8 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     void (^processDialogs)(NSArray *) = ^(NSArray *completeMessages)
     {
         NSMutableDictionary *multipleMessagesByConversation = [[NSMutableDictionary alloc] init];
-        NSMutableDictionary *updatePeerDrafts = [[NSMutableDictionary alloc] init];
         NSMutableDictionary *resetPeerUnseenMentionsStates = [[NSMutableDictionary alloc] init];
+        NSMutableDictionary *updatePeerDrafts = [[NSMutableDictionary alloc] init];
         
         for (TGMessage *message in completeMessages)
         {
@@ -586,13 +629,6 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         
         NSMutableArray *pinnedPeerIds = [[NSMutableArray alloc] init];
         
-        int dialogIndex = 0;
-        int userDialogs = 0;
-        int chatDialogs = 0;
-        int channelDialogs = 0;
-        int feedDialogs = 0;
-        int archivedDialogs = 0;
-        int skippedDialogs = 0;
 
         NSMutableSet *preloadPeerIds = [[NSMutableSet alloc] init];
         for (TLDialog *baseDialog in dialogs.dialogs)
@@ -620,7 +656,6 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                 int64_t peerId = 0;
                 if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
                 {
-                    userDialogs++;
                     if (_ignoreConversationIds.find(((TLPeer$peerUser *)dialog.peer).user_id) == _ignoreConversationIds.end())
                     {
                         TGConversation *conversation = [[TGConversation alloc] initWithConversationId:((TLPeer$peerUser *)dialog.peer).user_id unreadCount:dialog.unread_count serviceUnreadCount:0];
@@ -630,9 +665,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                         conversation.maxReadMessageId = dialog.read_inbox_max_id;
                         conversation.maxOutgoingReadMessageId = dialog.read_outbox_max_id;
                         conversation.maxKnownMessageId = dialog.top_message;
-                        conversation.isArchived = _folderId == 1 || dialog.folder_id == 1;
-                        if (conversation.isArchived)
-                            archivedDialogs++;
+                        conversation.isArchived = _dialogFolderId == 1 || dialog.folder_id == 1;
                         
                         TGMessage *message = [messagesDict objectForKey:[NSNumber numberWithInt:dialog.top_message]];
                         if (message != nil)
@@ -653,63 +686,24 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                             }
                         }
                         
-                        if ([dialog.notify_settings isKindOfClass:[TLPeerNotifySettings$peerNotifySettings class]])
-                        {
-                            TLPeerNotifySettings$peerNotifySettings *concreteSettings = (TLPeerNotifySettings$peerNotifySettings *)dialog.notify_settings;
-                            
-                            NSNumber *peerSoundId = nil;
-                            NSNumber *peerMuteUntil = nil;
-                            NSNumber *peerPreviewText = nil;
-                            NSNumber *messagesMuted = nil;
-                            
-                            if (concreteSettings.flags & (1 << 0)) {
-                                peerPreviewText = @(concreteSettings.showPreviews);
-                            }
-                            if (concreteSettings.flags & (1 << 1)) {
-                                messagesMuted = @(concreteSettings.silent);
-                            }
-                            if (concreteSettings.flags & (1 << 2)) {
-                                if (concreteSettings.mute_until > OGRemoteClockTime())
-                                    peerMuteUntil = @(concreteSettings.mute_until);
-                                else
-                                    peerMuteUntil = @0;
-                            }
-                            if (concreteSettings.flags & (1 << 3)) {
-                                if (concreteSettings.sound.length == 0)
-                                    peerSoundId = @(0);
-                                else if ([concreteSettings.sound isEqualToString:@"default"])
-                                    peerSoundId = @(1);
-                                else
-                                    peerSoundId = @([concreteSettings.sound intValue]);
-                            }
-                            
-                            [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
-                        }
+                        OGCompatStoreNotifySettings(conversation.conversationId, dialog.notify_settings);
                         
                     }
                 }
                 else if ([dialog.peer isKindOfClass:[TLPeer$peerChat class]])
                 {
-                    chatDialogs++;
-                    TGConversation *traceConversation = [chatItems objectForKey:[[NSNumber alloc] initWithLongLong:-((TLPeer$peerChat *)dialog.peer).chat_id]];
                     if (_ignoreConversationIds.find(-((TLPeer$peerChat *)dialog.peer).chat_id) == _ignoreConversationIds.end())
                     {
                         TGConversation *conversation = [chatItems objectForKey:[[NSNumber alloc] initWithLongLong:-((TLPeer$peerChat *)dialog.peer).chat_id]];
                         if (conversation == nil)
-                        {
-                            skippedDialogs++;
-                            dialogIndex++;
                             continue;
-                        }
                         peerId = conversation.conversationId;
                         conversation.unreadMark = dialog.flags & (1 << 3);
                         conversation.unreadCount = dialog.unread_count;
                         conversation.maxReadMessageId = dialog.read_inbox_max_id;
                         conversation.maxOutgoingReadMessageId = dialog.read_outbox_max_id;
                         conversation.maxKnownMessageId = dialog.top_message;
-                        conversation.isArchived = _folderId == 1 || dialog.folder_id == 1;
-                        if (conversation.isArchived)
-                            archivedDialogs++;
+                        conversation.isArchived = _dialogFolderId == 1 || dialog.folder_id == 1;
                         
                         TGMessage *message = [messagesDict objectForKey:[NSNumber numberWithInt:dialog.top_message]];
                         if (message != nil)
@@ -730,44 +724,11 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                             }
                         }
                         
-                        if ([dialog.notify_settings isKindOfClass:[TLPeerNotifySettings$peerNotifySettings class]])
-                        {
-                            TLPeerNotifySettings$peerNotifySettings *concreteSettings = (TLPeerNotifySettings$peerNotifySettings *)dialog.notify_settings;
-                            
-                            NSNumber *peerSoundId = nil;
-                            NSNumber *peerMuteUntil = nil;
-                            NSNumber *peerPreviewText = nil;
-                            NSNumber *messagesMuted = nil;
-                            
-                            if (concreteSettings.flags & (1 << 0)) {
-                                peerPreviewText = @(concreteSettings.showPreviews);
-                            }
-                            if (concreteSettings.flags & (1 << 1)) {
-                                messagesMuted = @(concreteSettings.silent);
-                            }
-                            if (concreteSettings.flags & (1 << 2)) {
-                                if (concreteSettings.mute_until > OGRemoteClockTime())
-                                    peerMuteUntil = @(concreteSettings.mute_until);
-                                else
-                                    peerMuteUntil = @0;
-                            }
-                            if (concreteSettings.flags & (1 << 3)) {
-                                if (concreteSettings.sound.length == 0)
-                                    peerSoundId = @(0);
-                                else if ([concreteSettings.sound isEqualToString:@"default"])
-                                    peerSoundId = @(1);
-                                else
-                                    peerSoundId = @([concreteSettings.sound intValue]);
-                            }
-                            
-                            [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
-                        }
+                        OGCompatStoreNotifySettings(conversation.conversationId, dialog.notify_settings);
                         
                     }
                 }
                 else if ([dialog.peer isKindOfClass:[TLPeer$peerChannel class]]) {
-                    channelDialogs++;
-                    TGConversation *traceConversation = channelItems[@(TGPeerIdFromChannelId(((TLPeer$peerChannel *)dialog.peer).channel_id))];
                     TGConversation *conversation = channelItems[@(TGPeerIdFromChannelId(((TLPeer$peerChannel *)dialog.peer).channel_id))];
                     if (conversation != nil) {
                         peerId = conversation.conversationId;
@@ -778,23 +739,12 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                         conversation.maxReadMessageId = dialog.read_inbox_max_id;
                         conversation.maxOutgoingReadMessageId = dialog.read_outbox_max_id;
                         conversation.maxKnownMessageId = dialog.top_message;
-                        conversation.isArchived = _folderId == 1 || dialog.folder_id == 1;
-                        if (conversation.isArchived)
-                            archivedDialogs++;
+                        conversation.isArchived = _dialogFolderId == 1 || dialog.folder_id == 1;
                         
                         NSArray *messages = multipleMessagesByConversation[@(peerId)];
                         TGMessage *message = nil;
                         if (messages.count != 0) {
-                            NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
-                                int result = TGMessageTransparentSortKeyCompare(lhs.transparentSortKey, rhs.transparentSortKey);
-                                if (result > 0) {
-                                    return NSOrderedAscending;
-                                } else if (result < 0) {
-                                    return NSOrderedDescending;
-                                } else {
-                                    return NSOrderedSame;
-                                }
-                            }];
+                            NSArray *sortedMessages = OGCompatMessagesByAscendingSortKey(messages);
                             message = sortedMessages.lastObject;
                         }
                         if (message != nil)
@@ -802,48 +752,12 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                         
                         [channels addObject:conversation];
                         
-                        if ([dialog.notify_settings isKindOfClass:[TLPeerNotifySettings$peerNotifySettings class]])
-                        {
-                            TLPeerNotifySettings$peerNotifySettings *concreteSettings = (TLPeerNotifySettings$peerNotifySettings *)dialog.notify_settings;
-                            
-                            NSNumber *peerSoundId = nil;
-                            NSNumber *peerMuteUntil = nil;
-                            NSNumber *peerPreviewText = nil;
-                            NSNumber *messagesMuted = nil;
-                            
-                            if (concreteSettings.flags & (1 << 0)) {
-                                peerPreviewText = @(concreteSettings.showPreviews);
-                            }
-                            if (concreteSettings.flags & (1 << 1)) {
-                                messagesMuted = @(concreteSettings.silent);
-                            }
-                            if (concreteSettings.flags & (1 << 2)) {
-                                if (concreteSettings.mute_until > OGRemoteClockTime())
-                                    peerMuteUntil = @(concreteSettings.mute_until);
-                                else
-                                    peerMuteUntil = @0;
-                            }
-                            if (concreteSettings.flags & (1 << 3)) {
-                                if (concreteSettings.sound.length == 0)
-                                    peerSoundId = @(0);
-                                else if ([concreteSettings.sound isEqualToString:@"default"])
-                                    peerSoundId = @(1);
-                                else
-                                    peerSoundId = @([concreteSettings.sound intValue]);
-                            }
-                            
-                            [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
-                        }
+                        OGCompatStoreNotifySettings(conversation.conversationId, dialog.notify_settings);
                         
-                    }
-                    else
-                    {
-                        skippedDialogs++;
                     }
                 }
                 else
                 {
-                    skippedDialogs++;
                     TGLog(@"DIALOGS unknown dialog peer class=%@ top=%d flags=%d", NSStringFromClass([dialog.peer class]), dialog.top_message, dialog.flags);
                 }
                 
@@ -867,7 +781,6 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                     }
                 }
             } else if ([baseDialog isKindOfClass:[TLDialog$dialogFeedMeta class]]) {
-                feedDialogs++;
                 TLDialog$dialogFeedMeta *dialog = (TLDialog$dialogFeedMeta *)baseDialog;
                 
                 NSMutableArray *chatIds = [[NSMutableArray alloc] init];
@@ -906,10 +819,8 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             }
             else
             {
-                skippedDialogs++;
                 TGLog(@"DIALOGS unknown base dialog class=%@", NSStringFromClass([baseDialog class]));
             }
-            dialogIndex++;
         }
         if (_streaming)
         {
@@ -925,8 +836,8 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             }
         }
         bool reachedFolderEnd = !_streaming && [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogs class]];
-        [TGDatabaseInstance() storeConversationList:conversations replace:(_replaceList && reachedFolderEnd) folderId:_folderId];
-        [TGDatabaseInstance() storeSynchronizedChannels:channels replace:(_replaceList && reachedFolderEnd) folderId:_folderId];
+        [TGDatabaseInstance() storeConversationList:conversations replace:(_replaceList && reachedFolderEnd) folderId:_dialogFolderId];
+        [TGDatabaseInstance() storeSynchronizedChannels:channels replace:(_replaceList && reachedFolderEnd) folderId:_dialogFolderId];
         [TGDatabaseInstance() updateFeeds:feeds replace:false];
         
         TGDialogListRemoteOffset *remoteOffset = nil;
@@ -960,16 +871,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
                     }
                     NSArray *messages = multipleMessagesByConversation[@(peerId)];
                     if (messages != nil) {
-                        NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
-                            int result = TGMessageTransparentSortKeyCompare(lhs.transparentSortKey, rhs.transparentSortKey);
-                            if (result > 0) {
-                                return NSOrderedAscending;
-                            } else if (result < 0) {
-                                return NSOrderedDescending;
-                            } else {
-                                return NSOrderedSame;
-                            }
-                        }];
+                        NSArray *sortedMessages = OGCompatMessagesByAscendingSortKey(messages);
                         
                         message = sortedMessages.lastObject;
                     }
@@ -995,7 +897,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         }
         
         if (remoteOffset != nil) {
-            if (_folderId == 0)
+            if (_dialogFolderId == 0)
                 [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:[NSKeyedArchiver archivedDataWithRootObject:remoteOffset]];
         }
         
@@ -1007,16 +909,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             if (TGPeerIdIsFeed(conversationId)) {
                 NSMutableArray *addedHoles = [[NSMutableArray alloc] init];
                 
-                NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
-                    int result = TGMessageTransparentSortKeyCompare(lhs.transparentSortKey, rhs.transparentSortKey);
-                    if (result > 0) {
-                        return NSOrderedAscending;
-                    } else if (result < 0) {
-                        return NSOrderedDescending;
-                    } else {
-                        return NSOrderedSame;
-                    }
-                }];
+                NSArray *sortedMessages = OGCompatMessagesByAscendingSortKey(messages);
                 
                 for (NSUInteger i = 0; i < sortedMessages.count; i++) {
                     TGMessage *message = sortedMessages[i];
@@ -1033,16 +926,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             else if (TGPeerIdIsChannel(conversationId)) {
                 NSMutableArray *addedHoles = [[NSMutableArray alloc] init];
                 
-                NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
-                    int result = TGMessageTransparentSortKeyCompare(lhs.transparentSortKey, rhs.transparentSortKey);
-                    if (result > 0) {
-                        return NSOrderedAscending;
-                    } else if (result < 0) {
-                        return NSOrderedDescending;
-                    } else {
-                        return NSOrderedSame;
-                    }
-                }];
+                NSArray *sortedMessages = OGCompatMessagesByAscendingSortKey(messages);
                 
                 for (NSUInteger i = 0; i < sortedMessages.count; i++) {
                     TGMessage *message = sortedMessages[i];
@@ -1072,11 +956,11 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         
         NSSet *removedPeerIds = nil;
         if (_streaming && _synchronizationFinalPage)
-            removedPeerIds = [TGDatabaseInstance() reconcileDialogListForFolder:_folderId initialPeerIds:_synchronizationInitialPeerIds receivedPeerIds:_synchronizationPeerIds beforeDate:_synchronizationStartDate];
+            removedPeerIds = [TGDatabaseInstance() reconcileDialogListForFolder:_dialogFolderId initialPeerIds:_synchronizationInitialPeerIds receivedPeerIds:_synchronizationPeerIds beforeDate:_synchronizationStartDate];
         if (!_streaming || _synchronizationFinalPage)
             [TGDatabaseInstance() transactionCalculateUnreadChats];
         
-        [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:updatePeerDrafts removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:resetPeerUnseenMentionsStates clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:(_folderId == 0 && _streaming && _synchronizationPinnedPage) ? _synchronizationPinnedPeerIds : ((!_streaming && _replaceList && _folderId == 0) ? pinnedPeerIds : nil) synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+        [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:updatePeerDrafts removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:resetPeerUnseenMentionsStates clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:(_dialogFolderId == 0 && _streaming && _synchronizationPinnedPage) ? _synchronizationPinnedPeerIds : ((!_streaming && _replaceList && _dialogFolderId == 0) ? pinnedPeerIds : nil) synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
         
         [TGDatabaseInstance() endStorageBatch];
         
@@ -1084,19 +968,18 @@ static const int TGDialogListSynchronizationPageLimit = 50;
             [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
         
         bool remoteListFullyLoaded = _streaming ? _synchronizationFinalPage : ([dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogs class]] || dialogs.dialogs.count == 0);
-        if (_folderId == 0)
+        if (_dialogFolderId == 0)
         {
             if ((_replaceList && !_streaming) || (_streaming && _synchronizationFinalPage))
-                [TGDatabaseInstance() setCustomProperty:@"ios6DialogListNeedsRemoteRefresh" value:nil];
+                OGCompatClearProperty(@"ios6DialogListNeedsRemoteRefresh");
             if (remoteListFullyLoaded)
             {
-                uint8_t loaded = 1;
-                [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:[[NSData alloc] initWithBytes:&loaded length:1]];
-                TGIOS6CommitDialogListCacheVersion();
+                OGCompatSetFlagProperty(@"dialogListLoaded");
+                OGCompatCommitDialogListCache();
             }
             else if (_replaceList)
             {
-                [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:[NSData data]];
+                OGCompatSetEmptyProperty(@"dialogListLoaded");
             }
         }
         
@@ -1109,14 +992,13 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         if (_streaming)
         {
             TGDialogListSynchronizationNode *pageNode = [[TGDialogListSynchronizationNode alloc] initWithItems:dialogListItems];
-            pageNode.folderId = _folderId;
+            pageNode.folderId = _dialogFolderId;
             pageNode.complete = _synchronizationFinalPage;
             pageNode.removedPeerIds = removedPeerIds;
             _synchronizationPageNode = pageNode;
-            if (_folderId == 1 && _synchronizationFinalPage)
+            if (_dialogFolderId == 1 && _synchronizationFinalPage)
             {
-                uint8_t loaded = 1;
-                [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&loaded length:1]];
+                OGCompatSetFlagProperty(@"ios6ArchivePeerIdsComplete");
             }
         }
         else
@@ -1144,7 +1026,7 @@ static const int TGDialogListSynchronizationPageLimit = 50;
     }];
     [[[replyHydrationSignal timeout:15.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal complete]] take:1] startWithNext:^(NSArray *completeMessages)
     {
-        TGIOS6StoreHydratedDialogMessages(completeMessages, pendingHydrationMessageKeys);
+        OGCompatStoreHydratedDialogMessages(completeMessages, pendingHydrationMessageKeys);
         [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
     }];
 }
@@ -1152,12 +1034,12 @@ static const int TGDialogListSynchronizationPageLimit = 50;
 - (void)dialogListRequestNotModified:(int32_t)count
 {
     
-    [TGDatabaseInstance() loadConversationListFromDate:INT_MAX limit:50 excludeConversationIds:@[] folderId:0 completion:^(NSArray *result, __unused bool loadedAllRegular)
+    OGCompatLoadDialogListHead(^(NSArray *result)
     {
         if (result.count != 0)
             [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:result]];
         [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
-    }];
+    });
 }
 
 - (void)dialogListRequestFailed
@@ -1172,26 +1054,26 @@ static const int TGDialogListSynchronizationPageLimit = 50;
         [ActionStageInstance() nodeRetrieveFailed:self.path];
         return;
     }
-    if (_folderId != 0)
+    if (_dialogFolderId != 0)
     {
         TGLog(@"ARCHIVE archive builder failed path=%@", self.path);
         [ActionStageInstance() nodeRetrieveFailed:self.path];
         return;
     }
     
-    [TGDatabaseInstance() loadConversationListFromDate:INT_MAX limit:50 excludeConversationIds:@[] folderId:0 completion:^(NSArray *result, __unused bool loadedAllRegular)
+    OGCompatLoadDialogListHead(^(NSArray *result)
     {
         if (result.count != 0 || _replaceList)
         {
-            if (_folderId == 0)
-                [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:[NSData data]];
+            if (_dialogFolderId == 0)
+                OGCompatSetEmptyProperty(@"dialogListLoaded");
             [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:result]];
         }
         else
         {
             [ActionStageInstance() nodeRetrieveFailed:self.path];
         }
-    }];
+    });
 }
 
 + (SSignal *)signalForCompleteMessages:(NSArray *)completeMessages channels:(NSDictionary *)channels

@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTCompositionContainer.h
 //  Lottie
@@ -12,36 +12,36 @@
 
 @interface LOTCompositionContainer : LOTLayerContainer
 
-- (instancetype )initWithModel:(LOTLayer * )layer
-                          inLayerGroup:(LOTLayerGroup * )layerGroup
-                        withLayerGroup:(LOTLayerGroup * )childLayerGroup
-                       withAssestGroup:(LOTAssetGroup * )assetGroup;
+- (instancetype _Nonnull)initWithModel:(LOTLayer * _Nullable)layer
+                          inLayerGroup:(LOTLayerGroup * _Nullable)layerGroup
+                        withLayerGroup:(LOTLayerGroup * _Nullable)childLayerGroup
+                       withAssestGroup:(LOTAssetGroup * _Nullable)assetGroup;
 
-- ( NSArray *)keysForKeyPath:( LOTKeypath *)keypath;
-
-- (CGPoint)convertPoint:(CGPoint)point
-         toKeypathLayer:( LOTKeypath *)keypath
-        withParentLayer:(CALayer *)parent;
-
-- (CGRect)convertRect:(CGRect)rect
-       toKeypathLayer:( LOTKeypath *)keypath
-      withParentLayer:(CALayer *)parent;
+- (NSArray *_Nullable)keysForKeyPath:(LOTKeypath *_Nonnull)keypath;
 
 - (CGPoint)convertPoint:(CGPoint)point
-       fromKeypathLayer:( LOTKeypath *)keypath
-        withParentLayer:(CALayer *)parent;
+         toKeypathLayer:(LOTKeypath *_Nonnull)keypath
+        withParentLayer:(CALayer *_Nonnull)parent;
 
 - (CGRect)convertRect:(CGRect)rect
-     fromKeypathLayer:( LOTKeypath *)keypath
-      withParentLayer:(CALayer *)parent;
+       toKeypathLayer:(LOTKeypath *_Nonnull)keypath
+      withParentLayer:(CALayer *_Nonnull)parent;
 
-- (void)addSublayer:( CALayer *)subLayer
-    toKeypathLayer:( LOTKeypath *)keypath;
+- (CGPoint)convertPoint:(CGPoint)point
+       fromKeypathLayer:(LOTKeypath *_Nonnull)keypath
+        withParentLayer:(CALayer *_Nonnull)parent;
 
-- (void)maskSublayer:( CALayer *)subLayer
-     toKeypathLayer:( LOTKeypath *)keypath;
+- (CGRect)convertRect:(CGRect)rect
+     fromKeypathLayer:(LOTKeypath *_Nonnull)keypath
+      withParentLayer:(CALayer *_Nonnull)parent;
 
-@property (nonatomic, readonly) NSArray *childLayers;
-@property (nonatomic, readonly)  NSDictionary *childMap;
+- (void)addSublayer:(CALayer *_Nonnull)subLayer
+    toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
+
+- (void)maskSublayer:(CALayer *_Nonnull)subLayer
+     toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
+
+@property (nonatomic, readonly) OG_COMPAT_GENERIC(NSArray, LOTLayerContainer *) *_Nonnull childLayers;
+@property (nonatomic, readonly)  NSDictionary *_Nonnull childMap;
 
 @end

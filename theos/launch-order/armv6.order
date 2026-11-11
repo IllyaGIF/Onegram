@@ -523,7 +523,7 @@ _OGPlatformInstallUIKitGuards
 _OGPlatformInstallCollectionViewDataGuard
 -[TGAppDelegate updateBackgroundFetchAvailability:]
 _OGPlatformSupportsBackgroundVoipTransport
-_TGIOS6BackgroundNotificationsEnabled
+_OGBackgroundNotificationsEnabled
 _OGPlatformSetBackgroundFetchEnabled
 _OGRuntimeDispatch
 _OGRuntimeSharedState
@@ -1322,7 +1322,7 @@ _TGPresentationPalleteForInterfaceStyle
 +[TGPresentation brandedIOS6Style]
 +[TGPresentation interfaceStyle]
 +[TGPresentation uncachedInterfaceStyle]
-+[TGPresentation classicIOS6StyleAvailable]
++[TGPresentation classicThemeStyleAvailable]
 _TGCurrentInterfaceStyle
 _OGPlatformCachedIntegerDefault
 _OGPlatformCachedDefault
@@ -3228,7 +3228,7 @@ ___52-[TGPresentationImages segmentedControlDividerImage]_block_invoke
 +[TGPresentationAssets segmentedControlDividerImage:]
 +[TGSearchBarPallete palleteWithDark:backgroundColor:highContrastBackgroundColor:textColor:placeholderColor:clearIcon:barBackgroundColor:barSeparatorColor:plainBackgroundColor:accentColor:accentContrastColor:menuBackgroundColor:segmentedControlBackgroundImage:segmentedControlSelectedImage:segmentedControlHighlightedImage:segmentedControlDividerImage:]
 -[TGDialogListController presentation]
-+[TGPresentation classicIOS6Style]
++[TGPresentation classicThemeStyle]
 __ZL33TGDialogListNavigationShadowColorP14TGPresentationf
 __ZL32TGDialogListNavigationTitleColorP14TGPresentation
 __ZL35TGDialogListNavigationSubtitleColorP14TGPresentation
@@ -7443,7 +7443,7 @@ ___copy_helper_block_5614
 ___38-[TGDatabase loadLiveLocationSessions]_block_invoke
 -[ASActor setCancelToken:]
 -[TGImageDownloadActor setDownloadCompletionBlock:]
-_IOS6ModernInputLocationFromImageUrl
+_OGInputLocationFromImageUrl
 -[TGFileDownloadActor initWithPath:]
 -[TGFileDownloadActor prepare:]
 -[TGFileDownloadActor execute:]
@@ -9381,17 +9381,17 @@ __ZNSt8_Rb_treeIiSt4pairIKiiESt10_Select1stIS2_ESt4lessIiESaIS2_EE12_M_rightmost
 -[TLUpdate$updateChannel setChannel_id:]
 -[TLCodexUpdateMessageReactionsParser TLdeserialize:signature:environment:context:error:]
 -[TLCodexModernPeerChannelParser TLdeserialize:signature:environment:context:error:]
--[TLUpdate$updateMessageReactionsCodex setPeer:]
--[TLUpdate$updateMessageReactionsCodex setMsg_id:]
+-[TLUpdate$updateMessageReactionsSummary setPeer:]
+-[TLUpdate$updateMessageReactionsSummary setMsg_id:]
 __ZL26TLCodexReadReactionSummaryP13NSInputStreamP11objc_objectPU15__autoreleasingP8NSStringPU15__autoreleasingP7NSError
 -[TLCodexModernPeerUserParser TLdeserialize:signature:environment:context:error:]
 __ZN17TLMetaConstructor13getResultTypeEv
 __ZNKSt3tr112__shared_ptrI10TLMetaTypeLN9__gnu_cxx12_Lock_policyE1EEcvMS4_PS1_Ev
--[TLUpdate$updateMessageReactionsCodex setReactionSummary:]
--[TLUpdate$updateMessageReactionsCodex setChosenReaction:]
--[TLUpdate$updateMessageReactionsCodex msg_id]
--[TLUpdate$updateMessageReactionsCodex peer]
--[TLUpdate$updateMessageReactionsCodex reactionSummary]
+-[TLUpdate$updateMessageReactionsSummary setReactionSummary:]
+-[TLUpdate$updateMessageReactionsSummary setChosenReaction:]
+-[TLUpdate$updateMessageReactionsSummary msg_id]
+-[TLUpdate$updateMessageReactionsSummary peer]
+-[TLUpdate$updateMessageReactionsSummary reactionSummary]
 -[TLCodexUpdateGroupCallParser TLdeserialize:signature:environment:context:error:]
 __ZL44TLMetaConstructorShouldReportUnsupportedNamei
 -[TLCodexModernUpdateDraftMessageParser TLdeserialize:signature:environment:context:error:]
@@ -10117,7 +10117,7 @@ ___45+[TGDownloadMessagesSignal downloadMessages:]_block_invoke
 _TGIOS6DownloadChannelIdFromPeerId
 -[TLRPCchannels_getMessages setChannel:]
 -[TGDownloadMessage messageId]
-_TGIOS6ModernInputMessageIdsFromMessageIds
+_OGInputMessageIdsFromMessageIds
 -[TGIOS6InputMessageID setMessageId:]
 -[TLRPCchannels_getMessages setN_id:]
 _OGChannelStatePreparationQueue
@@ -10297,7 +10297,7 @@ __ZNSt8_Rb_treeIxSt4pairIKxxESt10_Select1stIS2_ESt4lessIxESaIS2_EE13_Rb_tree_imp
 ___destroy_helper_block_1713
 -[TLupdates_Difference$updates_differenceSlice .cxx_destruct]
 -[TLUpdate$updateDeleteMessages .cxx_destruct]
--[TLUpdate$updateMessageReactionsCodex .cxx_destruct]
+-[TLUpdate$updateMessageReactionsSummary .cxx_destruct]
 -[TLUpdate$updateDraftMessage .cxx_destruct]
 -[TLChat$channel .cxx_destruct]
 -[TLChatPhoto$chatPhoto .cxx_destruct]
@@ -11366,7 +11366,7 @@ __ZNSt8_Rb_treeIiSt4pairIKiU8__strongP6TLUserESt10_Select1stIS5_ESt4lessIiESaIS5
 -[TGApplyUpdatesActor .cxx_destruct]
 -[TGTelegramNetworking performDeferredServiceTasks]
 -[TGPushActionsRequestBuilder execute:]
-_TGIOS6APNsNotificationsEnabled
+_OGAPNsNotificationsEnabled
 ___39-[TGPushActionsRequestBuilder execute:]_block_invoke
 -[TGAppDelegate ios6RegisterLocalNotificationSettings]
 -[TGAppDelegate ios6UserNotificationCategories]
@@ -12538,7 +12538,7 @@ ___copy_helper_block_2634
 -[OGConversationAppearance actionShareIconAssetName]
 +[TGPresentation brandedIOS6ResourceImage:]
 ___43+[TGPresentation brandedIOS6ResourceImage:]_block_invoke
--[TGAudioMediaAttachment(TG) setIos6OriginInfo:]
+-[TGAudioMediaAttachment(TG) setDownloadOriginInfo:]
 -[TGModernConversationController contentAreaHeight]
 -[TGModernConversationActionInputPanel adjustForSize:keyboardHeight:duration:animationCurve:contentAreaHeight:safeAreaInset:]
 -[TGModernConversationActionInputPanel _adjustForSize:keyboardHeight:duration:animationCurve:contentAreaHeight:safeAreaInset:]
@@ -17934,8 +17934,8 @@ _OBJC_CLASS_$_TLCodexUpdateMessageReactionsParser
 _OBJC_METACLASS_$_TLCodexUpdateMessageReactionsParser
 _OBJC_CLASS_$_TLCodexModernPeerChannelParser
 _OBJC_METACLASS_$_TLCodexModernPeerChannelParser
-_OBJC_CLASS_$_TLUpdate$updateMessageReactionsCodex
-_OBJC_METACLASS_$_TLUpdate$updateMessageReactionsCodex
+_OBJC_CLASS_$_TLUpdate$updateMessageReactionsSummary
+_OBJC_METACLASS_$_TLUpdate$updateMessageReactionsSummary
 _OBJC_CLASS_$_TLCodexModernPeerUserParser
 _OBJC_METACLASS_$_TLCodexModernPeerUserParser
 _OBJC_CLASS_$_TLCodexUpdateGroupCallParser

@@ -28,12 +28,19 @@
 #import "TGDatabase.h"
 #import "TGTelegraph.h"
 #import "TGTLDynamic.h"
+#import "TGSendMessageSignals.h"
+#import "TGStoryViewersController.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 
 static const NSTimeInterval TGStoryPhotoDuration = 6.0;
 static const NSTimeInterval TGStoryTimerInterval = 1.0 / 30.0;
 static const NSTimeInterval TGStoryPartialImageGrace = 2.5;
+static const CGFloat TGStoryReplyPanelHeight = 52.0f;
+static const CGFloat TGStoryReplyFieldHeight = 36.0f;
+static const CGFloat TGStoryReactionButtonSide = 44.0f;
+static NSString *const TGStoryDefaultReaction = @"\u2764\uFE0F";
 
 @interface TGStoryImageView : TGImageView
 
@@ -189,6 +196,91 @@ static UIImage *TGStoryMoreImage(void)
     return image;
 }
 
+static UIImage *TGStoryHeartImage(bool filled)
+{
+    CGFloat side = 28.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGPathMoveToPoint(path, NULL, 14.0f, 23.5f);
+    CGPathAddCurveToPoint(path, NULL, 6.0f, 18.0f, 3.0f, 13.5f, 3.0f, 9.8f);
+    CGPathAddCurveToPoint(path, NULL, 3.0f, 6.6f, 5.5f, 4.5f, 8.4f, 4.5f);
+    CGPathAddCurveToPoint(path, NULL, 10.8f, 4.5f, 12.8f, 5.9f, 14.0f, 8.0f);
+    CGPathAddCurveToPoint(path, NULL, 15.2f, 5.9f, 17.2f, 4.5f, 19.6f, 4.5f);
+    CGPathAddCurveToPoint(path, NULL, 22.5f, 4.5f, 25.0f, 6.6f, 25.0f, 9.8f);
+    CGPathAddCurveToPoint(path, NULL, 25.0f, 13.5f, 22.0f, 18.0f, 14.0f, 23.5f);
+    CGPathCloseSubpath(path);
+    CGContextAddPath(context, path);
+    if (filled)
+    {
+        CGContextSetFillColorWithColor(context, UIColorRGB(0xff3b30).CGColor);
+        CGContextFillPath(context);
+    }
+    else
+    {
+        CGContextSetStrokeColorWithColor(context, [UIColor whiteColor].CGColor);
+        CGContextSetLineWidth(context, 2.0f);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        CGContextStrokePath(context);
+    }
+    CGPathRelease(path);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static UIImage *TGStorySendImage(void)
+{
+    CGFloat side = 32.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, UIColorRGB(0x2481cc).CGColor);
+    CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, side, side));
+    CGContextSetStrokeColorWithColor(context, [UIColor whiteColor].CGColor);
+    CGContextSetLineWidth(context, 2.2f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextMoveToPoint(context, 16.0f, 23.0f);
+    CGContextAddLineToPoint(context, 16.0f, 9.5f);
+    CGContextMoveToPoint(context, 10.5f, 15.0f);
+    CGContextAddLineToPoint(context, 16.0f, 9.5f);
+    CGContextAddLineToPoint(context, 21.5f, 15.0f);
+    CGContextStrokePath(context);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static UIImage *TGStoryRoundedImage(UIColor *fillColor, UIColor *strokeColor, CGFloat radius)
+{
+    CGFloat side = radius * 2.0f + 2.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect rect = CGRectMake(0.5f, 0.5f, side - 1.0f, side - 1.0f);
+    CGFloat cornerRadius = MIN(radius, rect.size.width / 2.0f);
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGPathMoveToPoint(path, NULL, CGRectGetMinX(rect) + cornerRadius, CGRectGetMinY(rect));
+    CGPathAddArcToPoint(path, NULL, CGRectGetMaxX(rect), CGRectGetMinY(rect), CGRectGetMaxX(rect), CGRectGetMaxY(rect), cornerRadius);
+    CGPathAddArcToPoint(path, NULL, CGRectGetMaxX(rect), CGRectGetMaxY(rect), CGRectGetMinX(rect), CGRectGetMaxY(rect), cornerRadius);
+    CGPathAddArcToPoint(path, NULL, CGRectGetMinX(rect), CGRectGetMaxY(rect), CGRectGetMinX(rect), CGRectGetMinY(rect), cornerRadius);
+    CGPathAddArcToPoint(path, NULL, CGRectGetMinX(rect), CGRectGetMinY(rect), CGRectGetMaxX(rect), CGRectGetMinY(rect), cornerRadius);
+    CGPathCloseSubpath(path);
+    CGContextAddPath(context, path);
+    CGContextSetFillColorWithColor(context, fillColor.CGColor);
+    CGContextFillPath(context);
+    if (strokeColor != nil)
+    {
+        CGContextAddPath(context, path);
+        CGContextSetStrokeColorWithColor(context, strokeColor.CGColor);
+        CGContextSetLineWidth(context, 1.0f);
+        CGContextStrokePath(context);
+    }
+    CGPathRelease(path);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:(NSInteger)(radius + 1.0f) topCapHeight:(NSInteger)(radius + 1.0f)];
+}
+
 static NSString *TGStoryRelativeTime(int32_t date)
 {
     int32_t delta = (int32_t)OGRemoteClockTime() - date;
@@ -201,7 +293,7 @@ static NSString *TGStoryRelativeTime(int32_t date)
     return [TGDateUtils stringForMessageListDate:date];
 }
 
-@interface TGStoryViewerController () <ASWatcher>
+@interface TGStoryViewerController () <ASWatcher, UITextFieldDelegate>
 {
     NSMutableArray *_peerStoriesList;
     NSUInteger _peerIndex;
@@ -222,6 +314,23 @@ static NSString *TGStoryRelativeTime(int32_t date)
     UILabel *_captionLabel;
     UILabel *_viewsLabel;
     UIActivityIndicatorView *_activityIndicator;
+
+    UIView *_replyPanel;
+    UIImageView *_replyFieldBackground;
+    UITextField *_replyField;
+    UIButton *_likeButton;
+    UIButton *_sendButton;
+    UIControl *_replyDimView;
+    UIImageView *_reactionsBackground;
+    UIScrollView *_reactionsView;
+    NSArray *_reactions;
+    UILabel *_toastLabel;
+    CGFloat _keyboardHeight;
+    bool _replyPaused;
+    bool _reactionsVisible;
+    SMetaDisposable *_reactionDisposable;
+    SMetaDisposable *_reactionsListDisposable;
+    SMetaDisposable *_replyDisposable;
 
     NSTimer *_timer;
     NSTimeInterval _elapsed;
@@ -294,6 +403,57 @@ static NSString *TGStoryRelativeTime(int32_t date)
     [controller presentViewController:viewer animated:true completion:nil];
 }
 
++ (void)presentStoryWithPeerId:(int64_t)peerId storyId:(int32_t)storyId fromController:(UIViewController *)controller
+{
+    if (controller == nil || peerId == 0 || storyId == 0)
+        return;
+
+    TGPeerStories *cached = [[TGStoriesStore instance] peerStoriesForPeerId:peerId];
+    for (NSUInteger i = 0; i < cached.stories.count; i++)
+    {
+        TGStoryItem *item = [cached.stories objectAtIndex:i];
+        if (item.storyId == storyId && [item hasMedia])
+        {
+            TGStoryViewerController *viewer = [[TGStoryViewerController alloc] initWithPeerStories:@[cached] peerIndex:0 storyIndex:i];
+            viewer.marksStoriesAsRead = true;
+            [controller presentViewController:viewer animated:true completion:nil];
+            return;
+        }
+    }
+
+    TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
+    [progressWindow showWithDelay:0.2];
+    __weak UIViewController *weakController = controller;
+    [[[TGStoriesSignals storiesWithPeerId:peerId storyIds:@[@(storyId)]] deliverOn:[SQueue mainQueue]] startWithNext:^(TGStoriesPage *page)
+    {
+        [progressWindow dismiss:true];
+        __strong UIViewController *strongController = weakController;
+        if (strongController == nil)
+            return;
+        TGStoryItem *story = nil;
+        for (TGStoryItem *item in page.stories)
+        {
+            if (item.storyId == storyId && item.kind == TGStoryItemKindStory && [item hasMedia])
+            {
+                story = item;
+                break;
+            }
+        }
+        if (story == nil)
+        {
+            [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"StoryReply.Unavailable") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+            return;
+        }
+        TGPeerStories *peerStories = [[TGPeerStories alloc] initWithPeerId:peerId maxReadId:0 stories:@[story]];
+        TGStoryViewerController *viewer = [[TGStoryViewerController alloc] initWithPeerStories:@[peerStories] peerIndex:0 storyIndex:0];
+        [strongController presentViewController:viewer animated:true completion:nil];
+    } error:^(__unused id error)
+    {
+        [progressWindow dismiss:true];
+        [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"StoryReply.Unavailable") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+    } completed:nil];
+}
+
 - (instancetype)initWithPeerStories:(NSArray *)peerStoriesList peerIndex:(NSUInteger)peerIndex storyIndex:(NSUInteger)storyIndex
 {
     self = [super init];
@@ -306,6 +466,9 @@ static NSString *TGStoryRelativeTime(int32_t date)
         _storyFetchDisposable = [[SMetaDisposable alloc] init];
         _audioSessionDisposable = [[SMetaDisposable alloc] init];
         _viewedStoryKeys = [[NSMutableSet alloc] init];
+        _reactionDisposable = [[SMetaDisposable alloc] init];
+        _reactionsListDisposable = [[SMetaDisposable alloc] init];
+        _replyDisposable = [[SMetaDisposable alloc] init];
         self.automaticallyManageScrollViewInsets = false;
     }
     return self;
@@ -318,6 +481,11 @@ static NSString *TGStoryRelativeTime(int32_t date)
     [_timer invalidate];
     [_storyFetchDisposable dispose];
     [_audioSessionDisposable dispose];
+    [_reactionDisposable dispose];
+    [_reactionsListDisposable dispose];
+    [_replyDisposable dispose];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    _replyField.delegate = nil;
     [self stopVideo];
 }
 
@@ -401,7 +569,84 @@ static NSString *TGStoryRelativeTime(int32_t date)
     _viewsLabel.backgroundColor = [UIColor clearColor];
     _viewsLabel.textColor = [UIColor whiteColor];
     _viewsLabel.font = TGSystemFontOfSize(14.0f);
+    _viewsLabel.userInteractionEnabled = true;
+    [_viewsLabel addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(viewsTapped:)]];
     [self.view addSubview:_viewsLabel];
+
+    _replyDimView = [[UIControl alloc] initWithFrame:self.view.bounds];
+    _replyDimView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _replyDimView.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.5f];
+    _replyDimView.alpha = 0.0f;
+    _replyDimView.hidden = true;
+    [_replyDimView addTarget:self action:@selector(replyDimTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_replyDimView];
+
+    _reactionsBackground = [[UIImageView alloc] initWithImage:TGStoryRoundedImage([UIColor colorWithWhite:0.12f alpha:0.92f], nil, 22.0f)];
+    _reactionsBackground.userInteractionEnabled = true;
+    _reactionsBackground.alpha = 0.0f;
+    _reactionsBackground.hidden = true;
+    [self.view addSubview:_reactionsBackground];
+
+    _reactionsView = [[UIScrollView alloc] init];
+    _reactionsView.showsHorizontalScrollIndicator = false;
+    _reactionsView.scrollsToTop = false;
+    [_reactionsBackground addSubview:_reactionsView];
+
+    _replyPanel = [[UIView alloc] init];
+    [self.view addSubview:_replyPanel];
+
+    _replyFieldBackground = [[UIImageView alloc] initWithImage:TGStoryRoundedImage([UIColor colorWithWhite:1.0f alpha:0.12f], [UIColor colorWithWhite:1.0f alpha:0.4f], TGStoryReplyFieldHeight / 2.0f)];
+    _replyFieldBackground.userInteractionEnabled = true;
+    [_replyPanel addSubview:_replyFieldBackground];
+
+    _replyField = [[UITextField alloc] init];
+    _replyField.backgroundColor = [UIColor clearColor];
+    _replyField.textColor = [UIColor whiteColor];
+    _replyField.font = TGSystemFontOfSize(16.0f);
+    _replyField.keyboardAppearance = UIKeyboardAppearanceAlert;
+    _replyField.returnKeyType = UIReturnKeySend;
+    _replyField.enablesReturnKeyAutomatically = true;
+    _replyField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
+    _replyField.delegate = self;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    if ([_replyField respondsToSelector:@selector(setAttributedPlaceholder:)])
+        _replyField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:TGLocalized(@"StoryReply.Placeholder") attributes:@{NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0f alpha:0.6f]}];
+    else
+#endif
+        _replyField.placeholder = TGLocalized(@"StoryReply.Placeholder");
+    [_replyField addTarget:self action:@selector(replyTextChanged) forControlEvents:UIControlEventEditingChanged];
+    [_replyFieldBackground addSubview:_replyField];
+
+    _likeButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _likeButton.frame = CGRectMake(0.0f, 0.0f, TGStoryReactionButtonSide, TGStoryReactionButtonSide);
+    _likeButton.adjustsImageWhenHighlighted = true;
+    [_likeButton addTarget:self action:@selector(likePressed) forControlEvents:UIControlEventTouchUpInside];
+    UILongPressGestureRecognizer *likeHoldRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(likeHoldGesture:)];
+    likeHoldRecognizer.minimumPressDuration = 0.35;
+    [_likeButton addGestureRecognizer:likeHoldRecognizer];
+    [_replyPanel addSubview:_likeButton];
+
+    _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _sendButton.frame = CGRectMake(0.0f, 0.0f, TGStoryReactionButtonSide, TGStoryReactionButtonSide);
+    [_sendButton setImage:TGStorySendImage() forState:UIControlStateNormal];
+    [_sendButton addTarget:self action:@selector(sendReplyPressed) forControlEvents:UIControlEventTouchUpInside];
+    _sendButton.hidden = true;
+    [_replyPanel addSubview:_sendButton];
+
+    _toastLabel = [[UILabel alloc] init];
+    _toastLabel.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.75f];
+    _toastLabel.textColor = [UIColor whiteColor];
+    _toastLabel.font = TGSystemFontOfSize(14.0f);
+    _toastLabel.textAlignment = NSTextAlignmentCenter;
+    _toastLabel.layer.cornerRadius = 10.0f;
+    _toastLabel.clipsToBounds = true;
+    _toastLabel.alpha = 0.0f;
+    _toastLabel.hidden = true;
+    _toastLabel.userInteractionEnabled = false;
+    [self.view addSubview:_toastLabel];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillShowNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillHideNotification object:nil];
 
     _activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
     _activityIndicator.hidesWhenStopped = true;
@@ -488,6 +733,21 @@ static NSString *TGStoryRelativeTime(int32_t date)
     CGFloat captionWidth = bounds.size.width - 32.0f - insets.left - insets.right;
     CGSize captionSize = _captionLabel.text.length == 0 ? CGSizeZero : [_captionLabel sizeThatFits:CGSizeMake(captionWidth, 200.0f)];
     CGFloat bottom = bounds.size.height - insets.bottom - 16.0f;
+    if (!_replyPanel.hidden)
+    {
+        CGFloat panelBottom = _keyboardHeight > FLT_EPSILON ? bounds.size.height - _keyboardHeight : bounds.size.height - insets.bottom;
+        _replyPanel.frame = CGRectMake(insets.left, panelBottom - TGStoryReplyPanelHeight, bounds.size.width - insets.left - insets.right, TGStoryReplyPanelHeight);
+        CGFloat buttonX = _replyPanel.bounds.size.width - TGStoryReactionButtonSide - 6.0f;
+        CGFloat buttonY = CGFloor((TGStoryReplyPanelHeight - TGStoryReactionButtonSide) / 2.0f);
+        _likeButton.frame = CGRectMake(buttonX, buttonY, TGStoryReactionButtonSide, TGStoryReactionButtonSide);
+        _sendButton.frame = _likeButton.frame;
+        CGFloat fieldRight = _likeButton.hidden && _sendButton.hidden ? _replyPanel.bounds.size.width - 12.0f : buttonX - 6.0f;
+        _replyFieldBackground.frame = CGRectMake(12.0f, CGFloor((TGStoryReplyPanelHeight - TGStoryReplyFieldHeight) / 2.0f), MAX(0.0f, fieldRight - 12.0f), TGStoryReplyFieldHeight);
+        _replyField.frame = CGRectMake(14.0f, 0.0f, MAX(0.0f, _replyFieldBackground.bounds.size.width - 28.0f), TGStoryReplyFieldHeight);
+        bottom = CGRectGetMinY(_replyPanel.frame) - 8.0f;
+        [self layoutReactionsAboveY:CGRectGetMinY(_replyPanel.frame) - 6.0f];
+    }
+    _toastLabel.frame = CGRectMake(CGFloor((bounds.size.width - MIN(280.0f, bounds.size.width - 32.0f)) / 2.0f), CGFloor(bounds.size.height / 2.0f) - 20.0f, MIN(280.0f, bounds.size.width - 32.0f), 40.0f);
     CGFloat viewsHeight = _viewsLabel.hidden ? 0.0f : 20.0f;
     _viewsLabel.frame = CGRectMake(16.0f + insets.left, bottom - viewsHeight, captionWidth, viewsHeight);
     CGFloat captionBottom = bottom - viewsHeight - (viewsHeight > 0.0f ? 8.0f : 0.0f);
@@ -574,8 +834,8 @@ static NSString *TGStoryRelativeTime(int32_t date)
     [_progressView setCurrentIndex:_storyIndex progress:0.0f];
     _moreButton.hidden = ![self isOwnPeer];
     _captionLabel.text = _story.caption;
-    _viewsLabel.hidden = !([self isOwnPeer] && _story.hasViewsCount);
-    _viewsLabel.text = _viewsLabel.hidden ? nil : [[NSString alloc] initWithFormat:TGLocalized(@"OnegramStories.ViewsCount"), (int)_story.viewsCount];
+    [self updateViewsLabel];
+    [self updateReplyPanel];
     [self layoutInterface];
 
     [_imageView reset];
@@ -896,7 +1156,7 @@ static NSString *TGStoryRelativeTime(int32_t date)
 
 - (bool)isPaused
 {
-    return _holdPaused || _actionPaused || _dismissing;
+    return _holdPaused || _actionPaused || _replyPaused || _reactionsVisible || _dismissing;
 }
 
 - (void)timerTick
@@ -1023,6 +1283,7 @@ static NSString *TGStoryRelativeTime(int32_t date)
         _moreButton.alpha = alpha;
         _captionLabel.alpha = alpha;
         _viewsLabel.alpha = alpha;
+        _replyPanel.alpha = alpha;
         _topGradientView.alpha = alpha;
         _bottomGradientView.alpha = alpha;
     }];
@@ -1259,6 +1520,403 @@ static NSString *TGStoryRelativeTime(int32_t date)
             _storyIndex = stories.count - 1;
     }
     [self displayCurrentStory];
+}
+
+#pragma mark - Interaction
+
+- (bool)canReplyToCurrentPeer
+{
+    int64_t peerId = [self currentPeerStories].peerId;
+    if (!TGPeerIdIsUser(peerId) || peerId == TGTelegraphInstance.clientUserId)
+        return false;
+    TGUser *user = [TGDatabaseInstance() loadUser:peerId];
+    return user.kind != TGUserKindBot && user.kind != TGUserKindSmartBot;
+}
+
+- (void)updateViewsLabel
+{
+    bool visible = [self isOwnPeer] && _story.hasViewsCount;
+    _viewsLabel.hidden = !visible;
+    if (!visible)
+    {
+        _viewsLabel.text = nil;
+        return;
+    }
+    NSString *text = [[NSString alloc] initWithFormat:TGLocalized(@"OnegramStories.ViewsCount"), (int)_story.viewsCount];
+    if (_story.reactionsCount > 0)
+        text = [[NSString alloc] initWithFormat:@"%@  ❤️ %d", text, (int)_story.reactionsCount];
+    _viewsLabel.text = text;
+}
+
+- (void)viewsTapped:(UITapGestureRecognizer *)recognizer
+{
+    if (recognizer.state == UIGestureRecognizerStateEnded)
+        [self openViewers];
+}
+
+- (void)openViewers
+{
+    if (![self isOwnPeer] || _story == nil || !_story.hasViewsCount)
+        return;
+    _actionPaused = true;
+    [self setVideoPaused:true];
+
+    TGStoryViewersController *viewersController = [[TGStoryViewersController alloc] initWithStory:_story];
+    __weak TGStoryViewerController *weakSelf = self;
+    viewersController.dismissed = ^
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf resumeAfterAction];
+    };
+    TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[viewersController]];
+    if (TGIsPad())
+    {
+        navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
+        navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
+    }
+    [self presentViewController:navigationController animated:true completion:nil];
+}
+
+- (void)updateReplyPanel
+{
+    bool showsPanel = _story != nil && _story.kind == TGStoryItemKindStory && ![self isOwnPeer];
+    bool canReply = showsPanel && [self canReplyToCurrentPeer];
+    _replyPanel.hidden = !showsPanel;
+    _replyFieldBackground.hidden = !canReply;
+    if (!canReply && [_replyField isFirstResponder])
+        [_replyField resignFirstResponder];
+    if (![_replyField isFirstResponder])
+        _replyField.text = @"";
+    [self updateLikeButton];
+    [self updateSendButton];
+    if (!showsPanel)
+        [self setReactionsVisible:false animated:false];
+}
+
+- (void)updateLikeButton
+{
+    UIImage *image = nil;
+    if (_story.hasSentReaction)
+    {
+        NSString *reaction = _story.sentReaction;
+        if (reaction.length == 0 || [reaction isEqualToString:TGStoryDefaultReaction])
+            image = TGStoryHeartImage(true);
+        else
+            image = TGEmojiImageOfSize(reaction, 28.0f);
+    }
+    if (image == nil)
+        image = TGStoryHeartImage(_story.hasSentReaction);
+    [_likeButton setImage:image forState:UIControlStateNormal];
+}
+
+- (void)updateSendButton
+{
+    bool hasText = [_replyField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length != 0;
+    bool showSend = !_replyFieldBackground.hidden && [_replyField isFirstResponder] && hasText;
+    _sendButton.hidden = !showSend;
+    _likeButton.hidden = showSend;
+}
+
+- (void)replaceCurrentStory:(TGStoryItem *)story
+{
+    TGPeerStories *peerStories = [self currentPeerStories];
+    if (story == nil || peerStories == nil)
+        return;
+    NSMutableArray *stories = [[NSMutableArray alloc] initWithArray:peerStories.stories];
+    for (NSUInteger i = 0; i < stories.count; i++)
+    {
+        if (((TGStoryItem *)[stories objectAtIndex:i]).storyId == story.storyId)
+        {
+            [stories replaceObjectAtIndex:i withObject:story];
+            break;
+        }
+    }
+    [_peerStoriesList replaceObjectAtIndex:_peerIndex withObject:[[TGPeerStories alloc] initWithPeerId:peerStories.peerId maxReadId:peerStories.maxReadId stories:stories]];
+    if (_story.storyId == story.storyId)
+        _story = story;
+    [[TGStoriesStore instance] updateStory:story];
+    [self updateLikeButton];
+    [self updateViewsLabel];
+}
+
+- (void)likePressed
+{
+    if (_story == nil)
+        return;
+    [self sendReaction:_story.hasSentReaction ? nil : TGStoryDefaultReaction];
+}
+
+- (void)likeHoldGesture:(UILongPressGestureRecognizer *)recognizer
+{
+    if (recognizer.state == UIGestureRecognizerStateBegan)
+        [self setReactionsVisible:true animated:true];
+}
+
+- (void)sendReaction:(NSString *)reaction
+{
+    TGStoryItem *previousStory = _story;
+    if (previousStory == nil)
+        return;
+    if (!previousStory.hasSentReaction && reaction.length == 0)
+        return;
+
+    TGStoryItem *updatedStory = [previousStory storyItemWithSentReaction:reaction];
+    [self replaceCurrentStory:updatedStory];
+
+    __weak TGStoryViewerController *weakSelf = self;
+    [_reactionDisposable setDisposable:[[[TGStoriesSignals sendReaction:reaction toStory:updatedStory] deliverOn:[SQueue mainQueue]] startWithNext:nil error:^(__unused id error)
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        [strongSelf replaceCurrentStory:previousStory];
+        [strongSelf showToast:TGLocalized(@"StoryReaction.Failed")];
+    } completed:nil]];
+}
+
+- (void)ensureReactions
+{
+    if (_reactions != nil)
+        return;
+    __weak TGStoryViewerController *weakSelf = self;
+    [_reactionsListDisposable setDisposable:[[[TGStoriesSignals availableReactions] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *reactions)
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf setReactions:reactions];
+    } error:^(__unused id error)
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf != nil && strongSelf->_reactionsVisible && ![strongSelf->_replyField isFirstResponder])
+            [strongSelf setReactionsVisible:false animated:true];
+    } completed:nil]];
+}
+
+- (void)setReactions:(NSArray *)reactions
+{
+    _reactions = [reactions copy];
+    for (UIView *view in [_reactionsView.subviews copy])
+        [view removeFromSuperview];
+    NSInteger index = 0;
+    for (NSString *reaction in _reactions)
+    {
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+        button.tag = index++;
+        button.frame = CGRectMake(4.0f + button.tag * TGStoryReactionButtonSide, 0.0f, TGStoryReactionButtonSide, TGStoryReactionButtonSide);
+        UIImage *image = TGEmojiImageOfSize(reaction, 28.0f);
+        if (image != nil)
+        {
+            [button setImage:image forState:UIControlStateNormal];
+            button.imageView.contentMode = UIViewContentModeCenter;
+        }
+        else
+        {
+            button.titleLabel.font = TGEmojiFontOfSize(26.0f);
+            [button setTitle:reaction forState:UIControlStateNormal];
+        }
+        [button addTarget:self action:@selector(reactionButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
+        [_reactionsView addSubview:button];
+    }
+    _reactionsView.contentSize = CGSizeMake(8.0f + _reactions.count * TGStoryReactionButtonSide, TGStoryReactionButtonSide);
+    if (_reactionsVisible)
+        _reactionsBackground.hidden = _reactions.count == 0;
+    [self layoutInterface];
+}
+
+- (void)layoutReactionsAboveY:(CGFloat)y
+{
+    CGFloat maxWidth = self.view.bounds.size.width - 24.0f;
+    CGFloat width = MIN(maxWidth, 8.0f + _reactions.count * TGStoryReactionButtonSide);
+    _reactionsBackground.frame = CGRectMake(CGFloor((self.view.bounds.size.width - width) / 2.0f), y - TGStoryReactionButtonSide, width, TGStoryReactionButtonSide);
+    _reactionsView.frame = _reactionsBackground.bounds;
+}
+
+- (void)setReactionsVisible:(bool)visible animated:(bool)animated
+{
+    if (visible)
+        [self ensureReactions];
+    bool effectiveVisible = visible && !_replyPanel.hidden;
+    if (_reactionsVisible == effectiveVisible)
+        return;
+    _reactionsVisible = effectiveVisible;
+    if (effectiveVisible)
+        [self setVideoPaused:true];
+    else if (![self isPaused])
+        [self setVideoPaused:false];
+
+    bool dimVisible = effectiveVisible || _replyPaused;
+    if (dimVisible)
+        _replyDimView.hidden = false;
+    if (effectiveVisible)
+        _reactionsBackground.hidden = _reactions.count == 0;
+    [self layoutInterface];
+    void (^changes)(void) = ^
+    {
+        _reactionsBackground.alpha = effectiveVisible ? 1.0f : 0.0f;
+        _replyDimView.alpha = dimVisible ? 1.0f : 0.0f;
+    };
+    void (^completion)(BOOL) = ^(__unused BOOL finished)
+    {
+        if (!_reactionsVisible)
+            _reactionsBackground.hidden = true;
+        if (!_reactionsVisible && !_replyPaused)
+            _replyDimView.hidden = true;
+    };
+    if (animated)
+        [UIView animateWithDuration:0.2 animations:changes completion:completion];
+    else
+    {
+        changes();
+        completion(true);
+    }
+}
+
+- (void)reactionButtonPressed:(UIButton *)button
+{
+    if (button.tag < 0 || button.tag >= (NSInteger)_reactions.count)
+        return;
+    NSString *reaction = [_reactions objectAtIndex:(NSUInteger)button.tag];
+    if ([_replyField isFirstResponder])
+        [_replyField resignFirstResponder];
+    [self setReactionsVisible:false animated:true];
+    if (_story.hasSentReaction && [_story.sentReaction isEqualToString:reaction])
+        [self sendReaction:nil];
+    else
+        [self sendReaction:reaction];
+}
+
+- (void)replyDimTapped
+{
+    if ([_replyField isFirstResponder])
+        [_replyField resignFirstResponder];
+    [self setReactionsVisible:false animated:true];
+}
+
+- (void)replyTextChanged
+{
+    [self updateSendButton];
+    [self layoutInterface];
+}
+
+- (BOOL)textFieldShouldBeginEditing:(UITextField *)textField
+{
+    return textField == _replyField && !_replyFieldBackground.hidden && _story != nil;
+}
+
+- (void)textFieldDidBeginEditing:(UITextField *)__unused textField
+{
+    _replyPaused = true;
+    [self setVideoPaused:true];
+    _replyDimView.hidden = false;
+    [UIView animateWithDuration:0.2 animations:^
+    {
+        _replyDimView.alpha = 1.0f;
+    }];
+    [self setReactionsVisible:true animated:true];
+    [self updateSendButton];
+    [self layoutInterface];
+}
+
+- (void)textFieldDidEndEditing:(UITextField *)__unused textField
+{
+    _replyPaused = false;
+    [self setReactionsVisible:false animated:true];
+    if (!_reactionsVisible)
+    {
+        [UIView animateWithDuration:0.2 animations:^
+        {
+            _replyDimView.alpha = 0.0f;
+        } completion:^(__unused BOOL finished)
+        {
+            if (!_replyPaused && !_reactionsVisible)
+                _replyDimView.hidden = true;
+        }];
+    }
+    if (![self isPaused])
+        [self setVideoPaused:false];
+    [self updateSendButton];
+    [self layoutInterface];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)__unused textField
+{
+    [self sendReplyPressed];
+    return false;
+}
+
+- (void)sendReplyPressed
+{
+    NSString *text = [_replyField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    int64_t peerId = [self currentPeerStories].peerId;
+    if (text.length == 0 || _story == nil || ![self canReplyToCurrentPeer])
+        return;
+
+    int32_t storyId = _story.storyId;
+    _replyField.text = @"";
+    [_replyField resignFirstResponder];
+
+    __weak TGStoryViewerController *weakSelf = self;
+    [_replyDisposable setDisposable:[[[[TGSendMessageSignals sendStoryReplyWithPeerId:peerId storyId:storyId text:text entities:nil] filter:^bool(TGMessage *message)
+    {
+        return message.deliveryState != TGMessageDeliveryStatePending;
+    }] deliverOn:[SQueue mainQueue]] startWithNext:^(TGMessage *message)
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf showToast:message.deliveryState == TGMessageDeliveryStateFailed ? TGLocalized(@"StoryReply.Failed") : TGLocalized(@"StoryReply.Sent")];
+    } error:^(__unused id error)
+    {
+        __strong TGStoryViewerController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf showToast:TGLocalized(@"StoryReply.Failed")];
+    } completed:nil]];
+    [self showToast:TGLocalized(@"StoryReply.Sending")];
+}
+
+- (void)keyboardWillChangeFrame:(NSNotification *)notification
+{
+    if (!self.isViewLoaded || self.view.window == nil)
+        return;
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, self.view);
+    CGFloat keyboardHeight = 0.0f;
+    if (!CGRectIsEmpty(keyboardFrame) && [_replyField isFirstResponder])
+        keyboardHeight = MAX(0.0f, self.view.bounds.size.height - CGRectGetMinY(keyboardFrame));
+    if (ABS(keyboardHeight - _keyboardHeight) < FLT_EPSILON)
+        return;
+    _keyboardHeight = keyboardHeight;
+    NSTimeInterval duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [UIView animateWithDuration:duration > DBL_EPSILON ? duration : 0.25 animations:^
+    {
+        [self layoutInterface];
+    }];
+}
+
+- (void)showToast:(NSString *)text
+{
+    if (text.length == 0)
+        return;
+    _toastLabel.text = text;
+    _toastLabel.hidden = false;
+    [self.view bringSubviewToFront:_toastLabel];
+    [UIView animateWithDuration:0.2 animations:^
+    {
+        _toastLabel.alpha = 1.0f;
+    }];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hideToast) object:nil];
+    [self performSelector:@selector(hideToast) withObject:nil afterDelay:1.6];
+}
+
+- (void)hideToast
+{
+    [UIView animateWithDuration:0.25 animations:^
+    {
+        _toastLabel.alpha = 0.0f;
+    } completion:^(BOOL finished)
+    {
+        if (finished)
+            _toastLabel.hidden = true;
+    }];
 }
 
 @end

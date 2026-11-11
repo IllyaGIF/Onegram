@@ -1,6 +1,6 @@
 #import "TGPassportMRZ.h"
 
-@interface NSData (TGPassportMRZBase64)
+@interface NSData (OGCompatBase64Decoding)
 - (instancetype)initWithBase64EncodedString:(NSString *)base64String options:(NSUInteger)options;
 @end
 
@@ -20,12 +20,8 @@ NSString *const TGPassportEmptyCharacter = @"<";
         NSMutableDictionary *fields = [[NSMutableDictionary alloc] init];
         [data enumerateLinesUsingBlock:^(NSString *line, BOOL *stop)
         {
-             if (line.length < 4 || ![line hasPrefix:@"D"])
-                 return;
-            
-            NSString *field = [line substringToIndex:3];
-            NSString *value = [line substringFromIndex:3];
-            [fields setObject:value forKey:field];
+            if (line.length >= 4 && [line hasPrefix:@"D"])
+                [fields setValue:[line substringFromIndex:3] forKey:[line substringToIndex:3]];
         }];
         
         if (fields.count == 0)
@@ -33,56 +29,28 @@ NSString *const TGPassportEmptyCharacter = @"<";
         
         TGPassportMRZ *result = [[TGPassportMRZ alloc] init];
         result->_documentType = @"DL";
+        result->_issuingCountry = [fields valueForKey:@"DCG"];
+        result->_documentNumber = [fields valueForKey:@"DCF"];
+        result->_firstName = [fields valueForKey:@"DAC"] ?: [fields valueForKey:@"DCT"];
+        result->_lastName = [fields valueForKey:@"DCS"] ?: [fields valueForKey:@"DAB"];
+        result->_middleName = [fields valueForKey:@"DAD"];
         
-        NSString *issuingCountry = [fields objectForKey:@"DCG"];
-        result->_issuingCountry = issuingCountry;
-        
-        result->_documentNumber = [fields objectForKey:@"DCF"];
-        
-        NSString *firstName = [fields objectForKey:@"DAC"];
-        if (firstName == nil)
-            firstName = [fields objectForKey:@"DCT"];
-        result->_firstName = firstName;
-        
-        NSString *lastName = [fields objectForKey:@"DCS"];
-        if (lastName == nil)
-            lastName = [fields objectForKey:@"DAB"];
-        result->_lastName = lastName;
-        
-        NSString *middleName = [fields objectForKey:@"DAD"];
-        result->_middleName = middleName;
-        
-        NSString *gender = [fields objectForKey:@"DBC"];
-        if ([gender isEqualToString:@"1"])
+        NSString *genderCode = [fields valueForKey:@"DBC"];
+        if ([genderCode isEqualToString:@"1"])
             result->_gender = @"M";
-        else if ([gender isEqualToString:@"2"])
+        else if ([genderCode isEqualToString:@"2"])
             result->_gender = @"F";
         
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
         [formatter setDateFormat:@"MMddyyyy"];
         
-        NSDateFormatter *fallbackFormatter = [[NSDateFormatter alloc] init];
-        [fallbackFormatter setDateFormat:@"MMddyyyy"];
-    
-        NSString *expiryDate = [fields objectForKey:@"DBA"];
-        if (expiryDate.length > 0)
-        {
-            NSDate *date = [formatter dateFromString:expiryDate];
-            if (date == nil)
-                [fallbackFormatter dateFromString:expiryDate];
-            
-            result->_expiryDate = date;
-        }
+        NSString *expiryText = [fields valueForKey:@"DBA"];
+        if (expiryText.length > 0)
+            result->_expiryDate = [formatter dateFromString:expiryText];
         
-        NSString *birthDate = [fields objectForKey:@"DBB"];
-        if (birthDate.length > 0)
-        {
-            NSDate *date = [formatter dateFromString:birthDate];
-            if (date == nil)
-                [fallbackFormatter dateFromString:birthDate];
-            
-            result->_birthDate = date;
-        }
+        NSString *birthText = [fields valueForKey:@"DBB"];
+        if (birthText.length > 0)
+            result->_birthDate = [formatter dateFromString:birthText];
         
         return result;
     }
@@ -111,28 +79,23 @@ NSString *const TGPassportEmptyCharacter = @"<";
         result->_nationality = @"RUS";
         result->_documentNumber = [components objectAtIndex:0];
         
-        NSString *nativeFirstName = [components objectAtIndex:4];
-        result->_nativeFirstName = nativeFirstName;
-        result->_firstName = [self transliterateRussianName:nativeFirstName];
+        NSString *nativeFirst = [components objectAtIndex:4];
+        NSString *nativeLast = [components objectAtIndex:3];
+        NSString *nativeMiddle = [components objectAtIndex:5];
+        result->_nativeFirstName = nativeFirst;
+        result->_firstName = [self transliterateRussianName:nativeFirst];
+        result->_nativeLastName = nativeLast;
+        result->_lastName = [self transliterateRussianName:nativeLast];
+        result->_nativeMiddleName = nativeMiddle;
+        result->_middleName = [self transliterateRussianName:nativeMiddle];
         
-        NSString *nativeLastName = [components objectAtIndex:3];
-        result->_nativeLastName = nativeLastName;
-        result->_lastName = [self transliterateRussianName:nativeLastName];
-        
-        NSString *nativeMiddleName = [components objectAtIndex:5];
-        result->_nativeMiddleName = nativeMiddleName;
-        result->_middleName = [self transliterateRussianName:nativeMiddleName];
-     
         NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
         [dateFormatter setDateFormat:@"yyyyMMdd"];
         
-        NSString *birthDate = [components objectAtIndex:6];
-        if (birthDate.length > 0)
-            result->_birthDate = [dateFormatter dateFromString:birthDate];
-        
-        NSString *expiryDate = [components objectAtIndex:2];
-        if (expiryDate.length > 0)
-            result->_expiryDate = [dateFormatter dateFromString:expiryDate];
+        if ([[components objectAtIndex:6] length] > 0)
+            result->_birthDate = [dateFormatter dateFromString:[components objectAtIndex:6]];
+        if ([[components objectAtIndex:2] length] > 0)
+            result->_expiryDate = [dateFormatter dateFromString:[components objectAtIndex:2]];
         
         return result;
     }
@@ -140,54 +103,75 @@ NSString *const TGPassportEmptyCharacter = @"<";
     return nil;
 }
 
++ (NSString *)sliceOfLine:(NSString *)line from:(NSUInteger)from length:(NSUInteger)length
+{
+    return [line substringWithRange:NSMakeRange(from, length)];
+}
+
++ (NSInteger)checkValueOfLine:(NSString *)line at:(NSUInteger)column
+{
+    return [[self ensureNumberString:[self sliceOfLine:line from:column length:1]] integerValue];
+}
+
++ (void)fillNamesOf:(TGPassportMRZ *)result fromFullName:(NSString *)fullName
+{
+    NSArray *names = [[fullName stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:TGPassportEmptyCharacter]] componentsSeparatedByString:@"<<"];
+    result->_lastName = [self nameString:[names objectAtIndex:0]];
+    result->_firstName = [self nameString:[names lastObject]];
+}
+
++ (void)fillHeadOf:(TGPassportMRZ *)result fromLine:(NSString *)line
+{
+    result->_documentType = [line substringToIndex:1];
+    result->_documentSubtype = [self cleanString:[self sliceOfLine:line from:1 length:1]];
+    result->_issuingCountry = [self cleanString:[self sliceOfLine:line from:2 length:3]];
+}
+
++ (NSString *)genderOfLine:(NSString *)line at:(NSUInteger)column
+{
+    NSString *value = [self sliceOfLine:line from:column length:1];
+    return [value isEqualToString:TGPassportEmptyCharacter] ? nil : value;
+}
+
 + (instancetype)parseLines:(NSArray *)lines
 {
     if (lines.count == 2)
     {
-        if ([(NSString *)[lines objectAtIndex:0] length] != TGPassportTD23Length || [(NSString *)[lines objectAtIndex:1] length] != TGPassportTD23Length)
+        NSString *upper = [lines objectAtIndex:0];
+        NSString *lower = [lines objectAtIndex:1];
+        if (upper.length != TGPassportTD23Length || lower.length != TGPassportTD23Length)
             return nil;
         
         TGPassportMRZ *result = [[TGPassportMRZ alloc] init];
-        result->_documentType = [[lines objectAtIndex:0] substringToIndex:1];
-        result->_documentSubtype = [self cleanString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(1, 1)]];
-        result->_issuingCountry = [self cleanString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(2, 3)]];
+        [self fillHeadOf:result fromLine:upper];
+        [self fillNamesOf:result fromFullName:[self sliceOfLine:upper from:5 length:39]];
         
-        NSCharacterSet *emptyCharacterSet = [NSCharacterSet characterSetWithCharactersInString:TGPassportEmptyCharacter];
-        NSString *fullName = [[[lines objectAtIndex:0] substringWithRange:NSMakeRange(5, 39)] stringByTrimmingCharactersInSet:emptyCharacterSet];
-        NSArray *names = [fullName componentsSeparatedByString:@"<<"];
-        result->_lastName = [self nameString:[names objectAtIndex:0]];
-        result->_firstName = [self nameString:[names lastObject]];
-        
-        NSString *documentNumber = [self ensureNumberString:[[lines objectAtIndex:1] substringToIndex:9]];
-        NSInteger documentNumberCheck = [[self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(9, 1)]] integerValue];
+        NSString *documentNumber = [self ensureNumberString:[lower substringToIndex:9]];
+        NSInteger documentNumberCheck = [self checkValueOfLine:lower at:9];
         if ([self isDataValid:documentNumber check:documentNumberCheck])
             result->_documentNumber = documentNumber;
         
-        result->_nationality = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(10, 3)];
-        NSString *birthDate = [self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(13, 6)]];
-        NSInteger birthDateCheck = [[self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(19, 1)]] integerValue];
+        result->_nationality = [self sliceOfLine:lower from:10 length:3];
+        NSString *birthDate = [self ensureNumberString:[self sliceOfLine:lower from:13 length:6]];
+        NSInteger birthDateCheck = [self checkValueOfLine:lower at:19];
         if ([self isDataValid:birthDate check:birthDateCheck])
             result->_birthDate = [self dateFromString:birthDate];
         
-        NSString *gender = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(20, 1)];
-        if ([gender isEqualToString:TGPassportEmptyCharacter])
-            gender = nil;
-        result->_gender = gender;
+        result->_gender = [self genderOfLine:lower at:20];
         
-        NSString *expiryDate = [self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(21, 6)]];
-        NSInteger expiryDateCheck = [[self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(27, 1)]] integerValue];
+        NSString *expiryDate = [self ensureNumberString:[self sliceOfLine:lower from:21 length:6]];
+        NSInteger expiryDateCheck = [self checkValueOfLine:lower at:27];
         if ([self isDataValid:expiryDate check:expiryDateCheck])
             result->_expiryDate = [self dateFromString:expiryDate];
         
-        NSString *optional1 = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(28, 14)];
-        NSString *optional1CheckString = [self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(42, 1)]];
+        NSString *optional1 = [self sliceOfLine:lower from:28 length:14];
+        NSString *optional1CheckString = [self ensureNumberString:[self sliceOfLine:lower from:42 length:1]];
         NSInteger optional1CheckValue = [optional1CheckString isEqualToString:TGPassportEmptyCharacter] ? 0 : [optional1CheckString integerValue];
         if ([self isDataValid:optional1 check:optional1CheckValue])
             result->_optional1 = [self cleanString:optional1];
         
         NSString *data = [NSString stringWithFormat:@"%@%d%@%d%@%d%@%@", documentNumber, (int)documentNumberCheck, birthDate, (int)birthDateCheck, expiryDate, (int)expiryDateCheck, optional1, optional1CheckString];
-        NSInteger dataCheck = [[self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(43, 1)]] integerValue];
-        if ([self isDataValid:data check:dataCheck])
+        if ([self isDataValid:data check:[self checkValueOfLine:lower at:43]])
         {
             if ([result->_documentType isEqualToString:@"P"] && [result->_documentSubtype isEqualToString:@"N"] && [result->_issuingCountry isEqualToString:@"RUS"])
             {
@@ -213,48 +197,38 @@ NSString *const TGPassportEmptyCharacter = @"<";
     }
     else if (lines.count == 3)
     {
-        if ([(NSString *)[lines objectAtIndex:0] length] != TGPassportTD1Length || [(NSString *)[lines objectAtIndex:1] length] != TGPassportTD1Length || [(NSString *)[lines objectAtIndex:2] length] != TGPassportTD1Length)
+        NSString *top = [lines objectAtIndex:0];
+        NSString *middle = [lines objectAtIndex:1];
+        NSString *bottom = [lines objectAtIndex:2];
+        if (top.length != TGPassportTD1Length || middle.length != TGPassportTD1Length || bottom.length != TGPassportTD1Length)
             return nil;
         
         TGPassportMRZ *result = [[TGPassportMRZ alloc] init];
-        result->_documentType = [[lines objectAtIndex:0] substringToIndex:1];
-        result->_documentSubtype = [self cleanString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(1, 1)]];
-        result->_issuingCountry = [self cleanString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(2, 3)]];
+        [self fillHeadOf:result fromLine:top];
         
-        NSString *documentNumber = [self ensureNumberString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(5, 9)]];
-        NSInteger documentNumberCheck = [[self ensureNumberString:[[lines objectAtIndex:0] substringWithRange:NSMakeRange(14, 1)]] integerValue];
+        NSString *documentNumber = [self ensureNumberString:[self sliceOfLine:top from:5 length:9]];
+        NSInteger documentNumberCheck = [self checkValueOfLine:top at:14];
         if ([self isDataValid:documentNumber check:documentNumberCheck])
             result->_documentNumber = documentNumber;
         
-        NSString *optional1 = [[lines objectAtIndex:0] substringWithRange:NSMakeRange(15, 15)];
-        result->_optional1 = [self cleanString:optional1];
+        result->_optional1 = [self cleanString:[self sliceOfLine:top from:15 length:15]];
         
-        NSString *birthDate = [self ensureNumberString:[[lines objectAtIndex:1] substringToIndex:6]];
-        NSInteger birthDateCheck = [[[lines objectAtIndex:1] substringWithRange:NSMakeRange(6, 1)] integerValue];
+        NSString *birthDate = [self ensureNumberString:[middle substringToIndex:6]];
+        NSInteger birthDateCheck = [[self sliceOfLine:middle from:6 length:1] integerValue];
         if ([self isDataValid:birthDate check:birthDateCheck])
             result->_birthDate = [self dateFromString:birthDate];
         
-        NSString *gender = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(7, 1)];
-        if ([gender isEqualToString:TGPassportEmptyCharacter])
-            gender = nil;
-        result->_gender = gender;
+        result->_gender = [self genderOfLine:middle at:7];
         
-        NSString *expiryDate = [self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(8, 6)]];
-        NSInteger expiryDateCheck = [[self ensureNumberString:[[lines objectAtIndex:1] substringWithRange:NSMakeRange(14, 1)]] integerValue];
+        NSString *expiryDate = [self ensureNumberString:[self sliceOfLine:middle from:8 length:6]];
+        NSInteger expiryDateCheck = [self checkValueOfLine:middle at:14];
         if ([self isDataValid:expiryDate check:expiryDateCheck])
             result->_expiryDate = [self dateFromString:expiryDate];
         
-        result->_nationality = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(15, 3)];
+        result->_nationality = [self sliceOfLine:middle from:15 length:3];
+        result->_optional2 = [self sliceOfLine:middle from:18 length:11];
         
-        NSString *optional2 = [[lines objectAtIndex:1] substringWithRange:NSMakeRange(18, 11)];
-        result->_optional2 = optional2;
-        
-        NSCharacterSet *emptyCharacterSet = [NSCharacterSet characterSetWithCharactersInString:TGPassportEmptyCharacter];
-        NSString *fullName = [self ensureAlphaString:[lines objectAtIndex:2]];
-        fullName = [fullName stringByTrimmingCharactersInSet:emptyCharacterSet];
-        NSArray *names = [fullName componentsSeparatedByString:@"<<"];
-        result->_lastName = [self nameString:[names objectAtIndex:0]];
-        result->_firstName = [self nameString:[names lastObject]];
+        [self fillNamesOf:result fromFullName:[self ensureAlphaString:bottom]];
         result->_mrz = [lines componentsJoinedByString:@"\n"];
         
         return result;

@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTTransformInterpolator.m
 //  Lottie
@@ -38,10 +38,10 @@
   return interpolator;
 }
 
-- (instancetype)initWithPosition:(NSArray *)position
-                        rotation:(NSArray *)rotation
-                          anchor:(NSArray *)anchor
-                           scale:(NSArray *)scale {
+- (instancetype)initWithPosition:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)position
+                        rotation:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)rotation
+                          anchor:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)anchor
+                           scale:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)scale {
   self = [super init];
   if (self) {
     [self initializeWithPositionX:nil positionY:nil position:position rotation:rotation anchor:anchor scale:scale];
@@ -49,11 +49,11 @@
   return self;
 }
 
-- (instancetype)initWithPositionX:(NSArray *)positionX
-                        positionY:(NSArray *)positionY
-                         rotation:(NSArray *)rotation
-                           anchor:(NSArray *)anchor
-                            scale:(NSArray *)scale {
+- (instancetype)initWithPositionX:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionX
+                        positionY:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionY
+                         rotation:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)rotation
+                           anchor:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)anchor
+                            scale:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)scale {
   self = [super init];
   if (self) {
     [self initializeWithPositionX:positionX positionY:positionY position:nil rotation:rotation anchor:anchor scale:scale];
@@ -62,12 +62,12 @@
 }
 
 
-- (void)initializeWithPositionX:(NSArray *)positionX
-                      positionY:(NSArray *)positionY
-                       position:(NSArray *)position
-                       rotation:(NSArray *)rotation
-                         anchor:(NSArray *)anchor
-                          scale:(NSArray *)scale {
+- (void)initializeWithPositionX:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionX
+                      positionY:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)positionY
+                       position:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)position
+                       rotation:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)rotation
+                         anchor:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)anchor
+                          scale:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)scale {
   
   if (position) {
     _positionInterpolator = [[LOTPointInterpolator alloc] initWithKeyframes:position];

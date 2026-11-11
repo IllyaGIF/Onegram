@@ -129,8 +129,7 @@ static CTFontRef textFontForSize(CGFloat size)
         _iconModel.diameter = buttonDiameter;
         [self addSubmodel:_iconModel];
         
-        NSString *transcription = message.contentProperties[@"ios6Transcription"];
-        _textModel = [[TGModernTextViewModel alloc] initWithText:transcription.length != 0 ? transcription : message.caption font:textFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize)];
+        _textModel = [[TGModernTextViewModel alloc] initWithText:message.caption font:textFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize)];
         _textModel.underlineAllLinks = _incomingAppearance ? _context.presentation.pallete.underlineAllIncomingLinks : _context.presentation.pallete.underlineAllOutgoingLinks;
         _textModel.textCheckingResults = message.textCheckingResults;
         _textModel.textColor = _incomingAppearance ? _context.presentation.pallete.chatIncomingTextColor : _context.presentation.pallete.chatOutgoingTextColor;
@@ -227,10 +226,8 @@ static CTFontRef textFontForSize(CGFloat size)
         }
     }
     
-    NSString *transcription = message.contentProperties[@"ios6Transcription"];
-    NSString *displayText = transcription.length != 0 ? transcription : message.caption;
-    if (!TGStringCompare(_textModel.text, displayText)) {
-        _textModel.text = displayText;
+    if (!TGStringCompare(_textModel.text, message.caption)) {
+        _textModel.text = message.caption;
         _textModel.textCheckingResults = message.textCheckingResults;
         if (sizeUpdated != NULL)
            *sizeUpdated = true;
@@ -519,16 +516,18 @@ static CTFontRef textFontForSize(CGFloat size)
     }
 }
 
-- (int)gestureRecognizer:(TGDoubleTapGestureRecognizer *)__unused recognizer shouldFailTap:(CGPoint)__unused point
+- (int)gestureRecognizer:(TGDoubleTapGestureRecognizer *)recognizer shouldFailTap:(CGPoint)__unused point
 {
-    if (_textModel.frame.size.height > FLT_EPSILON && point.y >= CGRectGetMinY(_textModel.frame)) {
-        return false;
-    }
-    
-    if ((_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point)) ||
-        (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)))
+    CGPoint convertedPoint = [recognizer locationInView:[_contentModel boundView]];
+    if ([self _mediaActivationAreaContainsPoint:convertedPoint] || (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, convertedPoint)) || (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, convertedPoint)) || (_viaUserModel && CGRectContainsPoint(_viaUserModel.frame, convertedPoint)))
         return 3;
-    return 3;
+    return 0;
+}
+
+- (bool)_mediaActivationAreaContainsPoint:(CGPoint)point
+{
+    CGPoint contentOrigin = _contentModel.frame.origin;
+    return _iconModel != nil && CGRectContainsPoint(CGRectInset(CGRectOffset(_iconModel.frame, -contentOrigin.x, -contentOrigin.y), -4.0f, -4.0f), point);
 }
 
 - (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
@@ -559,17 +558,8 @@ static CTFontRef textFontForSize(CGFloat size)
             }
             else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
                 [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
-            else if (_textModel.frame.size.height <= FLT_EPSILON || point.y < CGRectGetMinY(_textModel.frame)) {
-                if (_status == nil) {
-                    [self activateMedia];
-                } else if (_status != nil) {
-                    if (!_status.paused) {
-                        [self activateMedia];
-                    } else {
-                        [self activateMedia];
-                    }
-                }
-            }
+            else if ([self _mediaActivationAreaContainsPoint:point])
+                [self activateMedia];
         }
     }
 }

@@ -5,7 +5,9 @@
 typedef enum {
     TGStickerKeyboardTabSettingsCellSettings,
     TGStickerKeyboardTabSettingsCellGifs,
-    TGStickerKeyboardTabSettingsCellTrending
+    TGStickerKeyboardTabSettingsCellTrending,
+    TGStickerKeyboardTabSettingsCellCustomEmoji,
+    TGStickerKeyboardTabSettingsCellCreateSticker
 } TGStickerKeyboardTabSettingsCellMode;
 
 @interface TGStickerKeyboardTabSettingsCell : PSUICollectionViewCell

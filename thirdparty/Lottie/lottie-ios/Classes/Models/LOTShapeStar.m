@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeStar.m
 //  Lottie
@@ -21,46 +21,46 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *outerRadius = [jsonDictionary objectForKey:@2];
+  NSDictionary *outerRadius = jsonDictionary[@"or"];
   if (outerRadius) {
     _outerRadius = [[LOTKeyframeGroup alloc] initWithData:outerRadius];
   }
   
-  NSDictionary *outerRoundness = [jsonDictionary objectForKey:@2];
+  NSDictionary *outerRoundness = jsonDictionary[@"os"];
   if (outerRoundness) {
     _outerRoundness = [[LOTKeyframeGroup alloc] initWithData:outerRoundness];
   }
   
-  NSDictionary *innerRadius = [jsonDictionary objectForKey:@2];
+  NSDictionary *innerRadius = jsonDictionary[@"ir"];
   if (innerRadius) {
     _innerRadius = [[LOTKeyframeGroup alloc] initWithData:innerRadius];
   }
   
-  NSDictionary *innerRoundness = [jsonDictionary objectForKey:@2];
+  NSDictionary *innerRoundness = jsonDictionary[@"is"];
   if (innerRoundness) {
     _innerRoundness = [[LOTKeyframeGroup alloc] initWithData:innerRoundness];
   }
   
-  NSDictionary *position = [jsonDictionary objectForKey:@2];
+  NSDictionary *position = jsonDictionary[@"p"];
   if (position) {
     _position = [[LOTKeyframeGroup alloc] initWithData:position];
   }
   
-  NSDictionary *numberOfPoints = [jsonDictionary objectForKey:@2];
+  NSDictionary *numberOfPoints = jsonDictionary[@"pt"];
   if (numberOfPoints) {
     _numberOfPoints = [[LOTKeyframeGroup alloc] initWithData:numberOfPoints];
   }
   
-  NSDictionary *rotation = [jsonDictionary objectForKey:@2];
+  NSDictionary *rotation = jsonDictionary[@"r"];
   if (rotation) {
     _rotation = [[LOTKeyframeGroup alloc] initWithData:rotation];
   }
   
-  NSNumber *type = [jsonDictionary objectForKey:@2];
+  NSNumber *type = jsonDictionary[@"sy"];
   _type = type.integerValue;
 }
 

@@ -10,7 +10,7 @@
 
 @implementation UIViewController (Stripe_ParentViewController)
 
-- (UIViewController *)stp_parentViewControllerOfClass:(Class)klass {
+- (UIViewController *_Nullable)stp_parentViewControllerOfClass:(Class _Nonnull)klass {
     if ([self.parentViewController isKindOfClass:klass]) {
         return self.parentViewController;
     }
@@ -33,7 +33,7 @@
     return NO;
 }
 
-- (UIViewController *)stp_previousViewControllerInNavigation {
+- (UIViewController *_Nullable)stp_previousViewControllerInNavigation {
     NSInteger index = [self.navigationController.viewControllers indexOfObject:self];
     if (index == NSNotFound || index <= 0) {
         return nil;

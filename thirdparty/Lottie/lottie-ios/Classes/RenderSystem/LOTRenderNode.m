@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTRenderNode.m
 //  Pods
@@ -11,8 +11,8 @@
 
 @implementation LOTRenderNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                    keyName:(NSString * )keyname {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                    keyName:(NSString * _Nullable)keyname {
   self = [super initWithInputNode:inputNode keyName:keyname];
   if (self) {
     _outputLayer = [CAShapeLayer new];
@@ -22,7 +22,7 @@
 }
 
 /// Layer Properties that need to disable implicit animations
-- (NSDictionary * )actionsForRenderLayer {
+- (NSDictionary * _Nonnull)actionsForRenderLayer {
   return @{@"path": [NSNull null]};
 }
 

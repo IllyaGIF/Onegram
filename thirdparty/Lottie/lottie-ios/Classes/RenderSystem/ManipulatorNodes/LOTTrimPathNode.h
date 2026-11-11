@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTTrimPathNode.h
 //  Lottie
@@ -12,7 +12,7 @@
 
 @interface LOTTrimPathNode : LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  trimPath:(LOTShapeTrimPath *)trimPath;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  trimPath:(LOTShapeTrimPath *_Nonnull)trimPath;
 
 @end

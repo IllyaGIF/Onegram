@@ -7,6 +7,7 @@
 //
 
 #import "STPPaymentMethodsInternalViewController.h"
+#import "OGStripeCompat.h"
 #import "STPImageLibrary.h"
 #import "STPImageLibrary+Private.h"
 #import "NSArray+Stripe_BoundSafe.h"
@@ -26,7 +27,7 @@ static NSInteger STPPaymentMethodAddCardSection = 1;
 @property(nonatomic)STPPaymentConfiguration *configuration;
 @property(nonatomic)STPTheme *theme;
 @property(nonatomic)STPUserInformation *prefilledInformation;
-@property(nonatomic)NSArray *paymentMethods;
+@property(nonatomic)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *paymentMethods;
 @property(nonatomic)id<STPPaymentMethod> selectedPaymentMethod;
 @property(nonatomic, unsafe_unretained)id<STPPaymentMethodsInternalViewControllerDelegate> delegate;
 @property(nonatomic, unsafe_unretained)UITableView *tableView;
@@ -71,7 +72,7 @@ static NSInteger STPPaymentMethodAddCardSection = 1;
     tableView.separatorStyle = UITableViewCellSeparatorStyleNone; // use fake separator views
     if (iosMajorVersion() >= 7)
     {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
         tableView.separatorInset = UIEdgeInsetsMake(0, 18, 0, 0);
 #endif
     }

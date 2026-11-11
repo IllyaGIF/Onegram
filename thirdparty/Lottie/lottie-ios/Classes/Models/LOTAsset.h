@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAsset.h
 //  Pods
@@ -19,18 +19,18 @@
 @interface LOTAsset : NSObject
 
 - (instancetype)initWithJSON:(NSDictionary *)jsonDictionary
-              withAssetGroup:(LOTAssetGroup * )assetGroup
-             withAssetBundle:(NSBundle *)bundle
+              withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
+             withAssetBundle:(NSBundle *_Nonnull)bundle
                withFramerate:(NSNumber *)framerate;
 
-@property (nonatomic, readonly) NSString *referenceID;
-@property (nonatomic, readonly) NSNumber *assetWidth;
-@property (nonatomic, readonly) NSNumber *assetHeight;
+@property (nonatomic, readonly) NSString *_Nullable referenceID;
+@property (nonatomic, readonly) NSNumber *_Nullable assetWidth;
+@property (nonatomic, readonly) NSNumber *_Nullable assetHeight;
 
-@property (nonatomic, readonly) NSString *imageName;
-@property (nonatomic, readonly) NSString *imageDirectory;
+@property (nonatomic, readonly) NSString *_Nullable imageName;
+@property (nonatomic, readonly) NSString *_Nullable imageDirectory;
 
-@property (nonatomic, readonly) LOTLayerGroup *layerGroup;
+@property (nonatomic, readonly) LOTLayerGroup *_Nullable layerGroup;
 
 @property (nonatomic, readwrite) NSString *rootDirectory;
 @property (nonatomic, readonly) NSBundle *assetBundle;

@@ -16,11 +16,11 @@ typedef NS_ENUM(NSInteger, STPPostalCodeType) {
 
 @interface STPPostalCodeValidator : NSObject
 
-+ (BOOL)stringIsValidPostalCode:(NSString *)string
++ (BOOL)stringIsValidPostalCode:(NSString *_Nullable)string
                            type:(STPPostalCodeType)postalCodeType;
-+ (BOOL)stringIsValidPostalCode:(NSString *)string
-                    countryCode:(NSString *)countryCode;
++ (BOOL)stringIsValidPostalCode:(NSString *_Nullable)string
+                    countryCode:(NSString *_Nullable)countryCode;
 
-+ (STPPostalCodeType)postalCodeTypeForCountryCode:(NSString *)countryCode;
++ (STPPostalCodeType)postalCodeTypeForCountryCode:(NSString *_Nullable)countryCode;
 
 @end

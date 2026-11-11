@@ -116,7 +116,7 @@ static void TGIOS3PlaceholderDrawImage(CGContextRef context, UIImage *image, CGR
 }
 #endif
 
-static bool TGClassicIOS6StyleEnabled(void)
+static bool OGClassicStyleEnabled(void)
 {
     return (TGCurrentInterfaceStyle() != 0);
 }
@@ -136,7 +136,7 @@ static UIImage *TGClassicIOS6AvatarResource(NSString *name)
 
 static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
 {
-    if (!TGClassicIOS6StyleEnabled())
+    if (!OGClassicStyleEnabled())
         return nil;
 
     NSString *type = args[@"type"];
@@ -233,14 +233,14 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
         int64_t uid = [args[@"uid"] longLongValue];
         int colorIndex = [[TGInterfaceAssets instance] userColorIndex:uid];
         
-        return [[NSString alloc] initWithFormat:@"%@:%d:%@x%@:%d", args[@"type"], uid == 0 ? -1 : colorIndex, args[@"w"], args[@"h"], TGClassicIOS6StyleEnabled() ? 1 : 0];
+        return [[NSString alloc] initWithFormat:@"%@:%d:%@x%@:%d", args[@"type"], uid == 0 ? -1 : colorIndex, args[@"w"], args[@"h"], OGClassicStyleEnabled() ? 1 : 0];
     }
     else
     {
         int64_t gid = [args[@"cid"] longLongValue];
         int colorIndex = [[TGInterfaceAssets instance] groupColorIndex:gid];
         
-        return [[NSString alloc] initWithFormat:@"%@:%d:%@x%@:%d", args[@"type"], gid == 0 ? -1 : colorIndex, args[@"w"], args[@"h"], TGClassicIOS6StyleEnabled() ? 1 : 0];
+        return [[NSString alloc] initWithFormat:@"%@:%d:%@x%@:%d", args[@"type"], gid == 0 ? -1 : colorIndex, args[@"w"], args[@"h"], OGClassicStyleEnabled() ? 1 : 0];
     }
 }
 

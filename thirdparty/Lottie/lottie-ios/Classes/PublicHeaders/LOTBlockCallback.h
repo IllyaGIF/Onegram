@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTBlockCallback.h
 //  Lottie
@@ -22,13 +22,13 @@
  @param interpolatedColor The color interpolated at the current time between startColor and endColor. This represents the keypaths current color for the current time.
  @return CGColorRef the color to set the keypath node for the current frame
  */
-typedef CGColorRef  (^LOTColorValueCallbackBlock)(CGFloat currentFrame,
+typedef CGColorRef _Nonnull (^LOTColorValueCallbackBlock)(CGFloat currentFrame,
                                                           CGFloat startKeyFrame,
                                                           CGFloat endKeyFrame,
                                                           CGFloat interpolatedProgress,
-                                                          CGColorRef  startColor,
-                                                          CGColorRef  endColor,
-                                                          CGColorRef  interpolatedColor);
+                                                          CGColorRef _Nullable startColor,
+                                                          CGColorRef _Nullable endColor,
+                                                          CGColorRef _Nullable interpolatedColor);
 
 /*!
  @brief A block that is used to change a Number value at keytime, the block is called continuously for a keypath while the aniamtion plays.
@@ -94,7 +94,7 @@ typedef CGSize (^LOTSizeValueCallbackBlock)(CGFloat currentFrame,
  @param interpolatedProgress A value from 0-1 that represents the current progress between keyframes. It respects the keyframes current easing curves.
  @return UIBezierPath the path to set the keypath node for the current frame.
  */
-typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
+typedef CGPathRef  _Nonnull (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
                                                          CGFloat startKeyFrame,
                                                          CGFloat endKeyFrame,
                                                          CGFloat interpolatedProgress);
@@ -105,9 +105,9 @@ typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
 
 @interface LOTColorBlockCallback : NSObject <LOTColorValueDelegate>
 
-+ (instancetype )withBlock:(LOTColorValueCallbackBlock  )block;
++ (instancetype _Nonnull)withBlock:(LOTColorValueCallbackBlock _Nonnull )block NS_SWIFT_NAME(init(block:));
 
-@property (nonatomic, copy) LOTColorValueCallbackBlock callback;
+@property (nonatomic, copy) LOTColorValueCallbackBlock _Nonnull callback;
 
 @end
 
@@ -117,9 +117,9 @@ typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
 
 @interface LOTNumberBlockCallback : NSObject <LOTNumberValueDelegate>
 
-+ (instancetype )withBlock:(LOTNumberValueCallbackBlock )block;
++ (instancetype _Nonnull)withBlock:(LOTNumberValueCallbackBlock _Nonnull)block NS_SWIFT_NAME(init(block:));
 
-@property (nonatomic, copy) LOTNumberValueCallbackBlock callback;
+@property (nonatomic, copy) LOTNumberValueCallbackBlock _Nonnull callback;
 
 @end
 
@@ -129,9 +129,9 @@ typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
 
 @interface LOTPointBlockCallback : NSObject <LOTPointValueDelegate>
 
-+ (instancetype )withBlock:(LOTPointValueCallbackBlock )block;
++ (instancetype _Nonnull)withBlock:(LOTPointValueCallbackBlock _Nonnull)block NS_SWIFT_NAME(init(block:));
 
-@property (nonatomic, copy) LOTPointValueCallbackBlock callback;
+@property (nonatomic, copy) LOTPointValueCallbackBlock _Nonnull callback;
 
 @end
 
@@ -141,9 +141,9 @@ typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
 
 @interface LOTSizeBlockCallback : NSObject <LOTSizeValueDelegate>
 
-+ (instancetype )withBlock:(LOTSizeValueCallbackBlock )block;
++ (instancetype _Nonnull)withBlock:(LOTSizeValueCallbackBlock _Nonnull)block NS_SWIFT_NAME(init(block:));
 
-@property (nonatomic, copy) LOTSizeValueCallbackBlock callback;
+@property (nonatomic, copy) LOTSizeValueCallbackBlock _Nonnull callback;
 
 @end
 
@@ -153,9 +153,9 @@ typedef CGPathRef   (^LOTPathValueCallbackBlock)(CGFloat currentFrame,
 
 @interface LOTPathBlockCallback : NSObject <LOTPathValueDelegate>
 
-+ (instancetype )withBlock:(LOTPathValueCallbackBlock )block;
++ (instancetype _Nonnull)withBlock:(LOTPathValueCallbackBlock _Nonnull)block NS_SWIFT_NAME(init(block:));
 
-@property (nonatomic, copy) LOTPathValueCallbackBlock callback;
+@property (nonatomic, copy) LOTPathValueCallbackBlock _Nonnull callback;
 
 @end
 

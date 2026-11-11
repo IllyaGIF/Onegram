@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeStroke.m
 //  LottieAnimator
@@ -22,21 +22,21 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *color = [jsonDictionary objectForKey:@2];
+  NSDictionary *color = jsonDictionary[@"c"];
   if (color) {
     _color = [[LOTKeyframeGroup alloc] initWithData:color];
   }
   
-  NSDictionary *width = [jsonDictionary objectForKey:@2];
+  NSDictionary *width = jsonDictionary[@"w"];
   if (width) {
     _width = [[LOTKeyframeGroup alloc] initWithData:width];
   }
   
-  NSDictionary *opacity = [jsonDictionary objectForKey:@2];
+  NSDictionary *opacity = jsonDictionary[@"o"];
   if (opacity) {
     _opacity = [[LOTKeyframeGroup alloc] initWithData:opacity];
     [_opacity remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -44,14 +44,14 @@
     }];
   }
   
-  _capType = [[jsonDictionary objectForKey:@2] integerValue] - 1;
-  _joinType = [[jsonDictionary objectForKey:@2] integerValue] - 1;
+  _capType = [jsonDictionary[@"lc"] integerValue] - 1;
+  _joinType = [jsonDictionary[@"lj"] integerValue] - 1;
   
-  NSNumber *fillEnabled = [jsonDictionary objectForKey:@2];
+  NSNumber *fillEnabled = jsonDictionary[@"fillEnabled"];
   _fillEnabled = fillEnabled.boolValue;
   
   NSDictionary *dashOffset = nil;
-  NSArray *dashes = [jsonDictionary objectForKey:@2];
+  NSArray *dashes = jsonDictionary[@"d"];
   if (dashes) {
     NSMutableArray *dashPattern = [NSMutableArray array];
     for (NSDictionary *dash in dashes) {

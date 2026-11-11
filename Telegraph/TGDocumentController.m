@@ -27,8 +27,8 @@
     TGFilePreviewItem *_item;
     int32_t _messageId;
     SMetaDisposable *_fullscreenDisposable;
-    UIDocumentInteractionController *_openInController;
-    bool _didPresentOpenInFallback;
+    UIDocumentInteractionController *_externalOpenMenu;
+    bool _externalMenuOffered;
 }
 
 @end
@@ -81,20 +81,24 @@
     }
 }
 
+- (void)og_compat_offerExternalOpenMenu
+{
+    _externalMenuOffered = true;
+    UIDocumentInteractionController *menu = [UIDocumentInteractionController interactionControllerWithURL:_item.previewItemURL];
+    menu.delegate = self;
+    _externalOpenMenu = menu;
+    
+    CGSize size = self.view.bounds.size;
+    if (![menu presentOpenInMenuFromRect:CGRectMake(CGFloor(size.width / 2.0f), CGFloor(size.height / 2.0f), 1.0f, 1.0f) inView:self.view animated:true])
+        _externalOpenMenu = nil;
+}
+
 - (void)viewDidAppear:(BOOL)animated
 {
     [super viewDidAppear:animated];
     
-    if (!_previewMode && !_didPresentOpenInFallback && ![QLPreviewController canPreviewItem:_item])
-    {
-        _didPresentOpenInFallback = true;
-        _openInController = [UIDocumentInteractionController interactionControllerWithURL:_item.previewItemURL];
-        _openInController.delegate = self;
-        
-        CGRect sourceRect = CGRectMake(CGFloor(self.view.bounds.size.width / 2.0f), CGFloor(self.view.bounds.size.height / 2.0f), 1.0f, 1.0f);
-        if (![_openInController presentOpenInMenuFromRect:sourceRect inView:self.view animated:true])
-            _openInController = nil;
-    }
+    if (!_previewMode && !_externalMenuOffered && ![QLPreviewController canPreviewItem:_item])
+        [self og_compat_offerExternalOpenMenu];
     
     __weak TGDocumentController *weakSelf = self;
     [_fullscreenDisposable setDisposable:[[(TGNavigationBar *)self.navigationController.navigationBar hiddenSignal] startWithNext:^(NSNumber *next)
@@ -144,7 +148,7 @@
 
 - (void)documentInteractionControllerDidDismissOpenInMenu:(UIDocumentInteractionController *)__unused controller
 {
-    _openInController = nil;
+    _externalOpenMenu = nil;
 }
 
 - (BOOL)prefersStatusBarHidden

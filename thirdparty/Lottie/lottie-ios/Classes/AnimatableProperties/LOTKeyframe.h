@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTKeyframe.h
 //  Pods
@@ -32,7 +32,7 @@
 @property (nonatomic, readonly) CGPoint pointValue;
 @property (nonatomic, readonly) CGSize sizeValue;
 @property (nonatomic, readonly) UIColor *colorValue;
-@property (nonatomic, readonly) LOTBezierData *pathData;
+@property (nonatomic, readonly) LOTBezierData *_Nullable pathData;
 @property (nonatomic, readonly) NSArray *arrayValue;
 
 @end
@@ -43,7 +43,7 @@
 
 - (void)remapKeyframesWithBlock:(CGFloat (^)(CGFloat inValue))remapBlock;
 
-@property (nonatomic, readonly) NSArray *keyframes;
+@property (nonatomic, readonly) OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *keyframes;
 
 @end
 

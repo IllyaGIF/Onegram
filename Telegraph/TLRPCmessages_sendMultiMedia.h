@@ -11,6 +11,7 @@
 @property (nonatomic) int32_t forumTopicId;
 @property (nonatomic, strong) TLInputPeer *monoforumPeer;
 @property (nonatomic, strong) TLInputPeer *sendAs;
+@property (nonatomic) int64_t allowPaidStars;
 @property (nonatomic, strong) NSArray *multi_media;
 
 @end

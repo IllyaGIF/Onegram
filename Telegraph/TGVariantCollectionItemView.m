@@ -69,12 +69,12 @@
 {
     [super setPresentation:presentation];
     
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    bool classicDarkStyle = classicIOS6Style && presentation.pallete.isDark;
-    _titleLabel.textColor = _customTitleColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
-    _variantLabel.textColor = _customVariantColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
-    _descriptionLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
-    UIImage *disclosureImage = classicIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
+    bool classicDarkStyle = classicThemeStyle && presentation.pallete.isDark;
+    _titleLabel.textColor = _customTitleColor ?: (classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
+    _variantLabel.textColor = _customVariantColor ?: (classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
+    _descriptionLabel.textColor = classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
+    UIImage *disclosureImage = classicThemeStyle ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
     if ([TGPresentation brandedIOS6Style])
         disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]] ?: disclosureImage;
     else if (classicDarkStyle)
@@ -115,8 +115,8 @@
     if (_descriptionLabel == nil)
     {
         _descriptionLabel = TGCollectionItemDescriptionLabel();
-        bool classicIOS6Style = [TGPresentation classicIOS6Style];
-        _descriptionLabel.textColor = classicIOS6Style && !self.presentation.pallete.isDark ? UIColorRGB(0x7f7f7f) : self.presentation.pallete.collectionMenuVariantColor;
+        bool classicThemeStyle = [TGPresentation classicThemeStyle];
+        _descriptionLabel.textColor = classicThemeStyle && !self.presentation.pallete.isDark ? UIColorRGB(0x7f7f7f) : self.presentation.pallete.collectionMenuVariantColor;
         [self addSubview:_descriptionLabel];
     }
     _descriptionLabel.hidden = false;
@@ -226,7 +226,7 @@
     bool hasDescription = _descriptionLabel != nil && !_descriptionLabel.hidden;
     if (hasDescription)
         bounds.size.height = 44.0f;
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     CGFloat width = bounds.size.width - self.safeAreaInset.left - self.safeAreaInset.right - classicInset * 2.0f;
     
     CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)];

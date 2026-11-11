@@ -26,7 +26,26 @@
 #import "TLMetaScheme.h"
 #import "TGConversation+Telegraph.h"
 
-extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
+extern NSArray *OGInputMessageIdsFromMessageIds(NSArray *messageIds);
+
+static NSArray *OGCompatMessageIdNumbers(NSArray *downloadMessages)
+{
+    NSMutableArray *numbers = [NSMutableArray arrayWithCapacity:downloadMessages.count];
+    for (TGDownloadMessage *entry in downloadMessages)
+        [numbers addObject:@(entry.messageId)];
+    return numbers;
+}
+
+static NSDictionary *OGCompatOriginsByDocumentId(NSArray *documents)
+{
+    NSMutableDictionary *origins = [[NSMutableDictionary alloc] init];
+    for (TGDocumentMediaAttachment *document in documents)
+    {
+        if (document.originInfo != nil)
+            origins[@(document.documentId)] = document.originInfo;
+    }
+    return origins;
+}
 
 @implementation TGDownloadMessage
 
@@ -41,6 +60,18 @@ extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
 }
 
 @end
+
+static TGMediaOriginInfo *TGDownloadMessagesSelectOriginInfo(id result, int64_t identifier)
+{
+    if (![result isKindOfClass:[NSDictionary class]])
+        return nil;
+
+    NSDictionary *originInfos = result;
+    TGMediaOriginInfo *originInfo = identifier != 0 ? originInfos[@(identifier)] : nil;
+    if (originInfo == nil && originInfos.count == 1)
+        originInfo = originInfos.allValues.firstObject;
+    return originInfo;
+}
 
 @implementation TGDownloadMessagesSignal
 
@@ -77,20 +108,15 @@ extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
         NSMutableArray *signals = [[NSMutableArray alloc] init];
         
         [channelMessageIdsByPeerId enumerateKeysAndObjectsUsingBlock:^(__unused id key, NSArray *messages, __unused BOOL *stop) {
-            if (messages.count != 0) {
-                TGDownloadMessage *firstMessage = (TGDownloadMessage *)messages[0];
+            if (messages.count > 0) {
+                TGDownloadMessage *leadMessage = (TGDownloadMessage *)[messages objectAtIndex:0];
                 TLRPCchannels_getMessages$channels_getMessages *getChannelMessages = [[TLRPCchannels_getMessages$channels_getMessages alloc] init];
                 TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-                inputChannel.channel_id = TGChannelIdFromPeerId(firstMessage.peerId);
-                inputChannel.access_hash = firstMessage.accessHash;
+                inputChannel.channel_id = TGChannelIdFromPeerId(leadMessage.peerId);
+                inputChannel.access_hash = leadMessage.accessHash;
                 getChannelMessages.channel = inputChannel;
                 
-                NSMutableArray *messageIds = [[NSMutableArray alloc] init];
-                for (TGDownloadMessage *message in messages) {
-                    [messageIds addObject:@(message.messageId)];
-                }
-                
-                getChannelMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(messageIds);
+                getChannelMessages.n_id = OGInputMessageIdsFromMessageIds(OGCompatMessageIdNumbers(messages));
                 
                 SSignal *signal = [[networking requestSignal:getChannelMessages] map:^id(TLmessages_Messages *result) {
                     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
@@ -111,7 +137,7 @@ extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
             }
         }];
         
-        if (signals.count != 0) {
+        if ([signals count] > 0) {
             channelSignal = [[SSignal combineSignals:signals] map:^id(NSArray *messageLists) {
                 NSMutableArray *messages = [[NSMutableArray alloc] init];
                 for (NSArray *array in messageLists) {
@@ -124,7 +150,7 @@ extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
     
     if (genericMessageIds.count != 0) {
         TLRPCmessages_getMessages$messages_getMessages *getMessages = [[TLRPCmessages_getMessages$messages_getMessages alloc] init];
-        getMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(genericMessageIds);
+        getMessages.n_id = OGInputMessageIdsFromMessageIds(genericMessageIds);
         genericSignal = [[networking requestSignal:getMessages] map:^id(TLmessages_Messages *result) {
             [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
             
@@ -300,9 +326,8 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     }];
     
     return [clear then:[[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
-        NSMutableDictionary *resetPeerUnseenMentionsStates = [[NSMutableDictionary alloc] init];
-        resetPeerUnseenMentionsStates[@(peerId)] = [[TGUnseenPeerMentionsState alloc] initWithVersion:0 count:0 maxIdWithPrecalculatedCount:0];
-        [TGDatabaseInstance() transactionResetPeerUnseenMentionsStates:resetPeerUnseenMentionsStates];
+        TGUnseenPeerMentionsState *emptyMentionsState = [[TGUnseenPeerMentionsState alloc] initWithVersion:0 count:0 maxIdWithPrecalculatedCount:0];
+        [TGDatabaseInstance() transactionResetPeerUnseenMentionsStates:[NSDictionary dictionaryWithObject:emptyMentionsState forKey:@(peerId)]];
         return [SSignal complete];
     }] switchToLatest]];
 }
@@ -320,21 +345,10 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 
 + (SSignal *)updatedOriginInfo:(TGMediaOriginInfo *)origin identifier:(int64_t)identifier
 {
-    return [[[self fileReferenceManager] updatedOriginInfo:origin] mapToSignal:^SSignal *(NSDictionary *dictionary) {
-        TGMediaOriginInfo *updatedInfo = nil;
-        if ([dictionary isKindOfClass:[NSDictionary class]])
-        {
-            if (identifier != 0)
-                updatedInfo = dictionary[@(identifier)];
-
-            if (updatedInfo == nil && dictionary.count == 1)
-                updatedInfo = dictionary.allValues.firstObject;
-        }
-
-        if (updatedInfo == nil || updatedInfo.fileReference.length == 0)
-            return [SSignal fail:nil];
-
-        return [SSignal single:updatedInfo];
+    return [[[self fileReferenceManager] updatedOriginInfo:origin] mapToSignal:^SSignal *(id result)
+    {
+        TGMediaOriginInfo *refreshedInfo = TGDownloadMessagesSelectOriginInfo(result, identifier);
+        return refreshedInfo.fileReference.length != 0 ? [SSignal single:refreshedInfo] : [SSignal fail:nil];
     }];
 }
 
@@ -343,14 +357,12 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     switch (origin.type) {
         case TGMediaOriginTypeMessage:
         {
-            SSignal *accessHashSignal = [SSignal defer:^SSignal *{
-                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:origin.cid.longLongValue];
-                int64_t accessHash = conversation.accessHash;
-                return [SSignal single:@(accessHash)];
+            SSignal *hashLookup = [SSignal defer:^SSignal *{
+                return [SSignal single:@([TGDatabaseInstance() loadConversationWithId:origin.cid.longLongValue].accessHash)];
             }];
             
-            return [[accessHashSignal mapToSignal:^SSignal *(NSNumber *accessHash) {
-                TGDownloadMessage *downloadMessage = [[TGDownloadMessage alloc] initWithPeerId:origin.cid.longLongValue accessHash:accessHash.longLongValue messageId:origin.mid.intValue];
+            return [[hashLookup mapToSignal:^SSignal *(NSNumber *resolvedHash) {
+                TGDownloadMessage *downloadMessage = [[TGDownloadMessage alloc] initWithPeerId:origin.cid.longLongValue accessHash:[resolvedHash longLongValue] messageId:origin.mid.intValue];
                 return [[self downloadMessages:@[downloadMessage]] take:1];
             }] mapToSignal:^SSignal *(NSArray *messages)
             {
@@ -383,7 +395,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     }
                     else if (attachment.type == TGAudioMediaAttachmentType)
                     {
-                        originInfo = ((TGAudioMediaAttachment *)attachment).ios6OriginInfo;
+                        originInfo = ((TGAudioMediaAttachment *)attachment).downloadOriginInfo;
                         identifier = ((TGAudioMediaAttachment *)attachment).audioId;
                         break;
                     }
@@ -402,30 +414,24 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     }
                 }
                 
-                if (originInfo != nil && originInfo.fileReference.length != 0)
-                    return [SSignal single:@{ @(identifier): originInfo }];
+                if (originInfo.fileReference.length == 0)
+                    return [SSignal fail:nil];
 
-                return [SSignal fail:nil];
+                return [SSignal single:@{@(identifier): originInfo}];
             }];
         }
             break;
             
         case TGMediaOriginTypeSticker:
         {
-            if (origin.stickerPackId == nil || origin.stickerPackAccessHash == nil)
+            NSNumber *packIdNumber = origin.stickerPackId;
+            NSNumber *packHashNumber = origin.stickerPackAccessHash;
+            if (packIdNumber == nil || packHashNumber == nil)
                 return [SSignal single:@{}];
 
-            TGStickerPackIdReference *reference = [[TGStickerPackIdReference alloc] initWithPackId:origin.stickerPackId.longLongValue packAccessHash:origin.stickerPackAccessHash.longLongValue shortName:nil];
+            TGStickerPackIdReference *reference = [[TGStickerPackIdReference alloc] initWithPackId:[packIdNumber longLongValue] packAccessHash:[packHashNumber longLongValue] shortName:nil];
             return [[TGStickersSignals stickerPackInfo:reference] map:^id(TGStickerPack *pack) {
-                NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-                if (![pack isKindOfClass:[TGStickerPack class]])
-                    return dict;
-                for (TGDocumentMediaAttachment *attachment in pack.documents)
-                {
-                    if (attachment.originInfo != nil)
-                        dict[@(attachment.documentId)] = attachment.originInfo;
-                }
-                return dict;
+                return OGCompatOriginsByDocumentId([pack isKindOfClass:[TGStickerPack class]] ? pack.documents : nil);
             }];
         }
             break;
@@ -433,15 +439,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         case TGMediaOriginTypeRecentSticker:
         {
             return [[TGRecentStickersSignal remoteRecentStickers] map:^id(NSDictionary *recentStickers) {
-                NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-                if (![recentStickers isKindOfClass:[NSDictionary class]])
-                    return dict;
-                for (TGDocumentMediaAttachment *attachment in recentStickers[@"documents"])
-                {
-                    if (attachment.originInfo != nil)
-                        dict[@(attachment.documentId)] = attachment.originInfo;
-                }
-                return dict;
+                return OGCompatOriginsByDocumentId([recentStickers isKindOfClass:[NSDictionary class]] ? recentStickers[@"documents"] : nil);
             }];
         }
             break;

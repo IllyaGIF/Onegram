@@ -17,8 +17,8 @@
 
 @implementation STPCheckoutAccountLookup
 
-+ (instancetype)lookupWithData:(NSData *)data
-                            URLResponse:(NSURLResponse *)response {
++ (instancetype _Nullable)lookupWithData:(NSData *_Nullable)data
+                            URLResponse:(NSURLResponse *_Nullable)response {
     if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
         return nil;
     }

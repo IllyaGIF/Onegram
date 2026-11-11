@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimatedSwitch.h
 //  Lottie
@@ -14,10 +14,10 @@
 @interface LOTAnimatedSwitch : LOTAnimatedControl
 
 /// Convenience method to initialize a control from the Main Bundle by name
-+ (instancetype )switchNamed:(NSString * )toggleName;
++ (instancetype _Nonnull)switchNamed:(NSString * _Nonnull)toggleName;
 
 /// Convenience method to initialize a control from the specified bundle by name
-+ (instancetype )switchNamed:(NSString * )toggleName inBundle:(NSBundle * )bundle;
++ (instancetype _Nonnull)switchNamed:(NSString * _Nonnull)toggleName inBundle:(NSBundle * _Nonnull)bundle;
 
 
 /// The ON/OFF state of the control. Setting will toggle without animation
@@ -38,7 +38,7 @@
  * Defaults 0-1
  **/
 - (void)setProgressRangeForOnState:(CGFloat)fromProgress
-                        toProgress:(CGFloat)toProgress;
+                        toProgress:(CGFloat)toProgress NS_SWIFT_NAME(setProgressRangeForOnState(fromProgress:toProgress:));
 
 /**
  * Sets the animation play range for the OFF state animation.
@@ -47,7 +47,7 @@
  * Defaults 1-0
  **/
 - (void)setProgressRangeForOffState:(CGFloat)fromProgress
-                         toProgress:(CGFloat)toProgress;
+                         toProgress:(CGFloat)toProgress NS_SWIFT_NAME(setProgressRangeForOffState(fromProgress:toProgress:));
 
 @end
 

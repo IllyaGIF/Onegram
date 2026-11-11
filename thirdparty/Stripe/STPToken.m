@@ -12,12 +12,12 @@
 #import "NSDictionary+Stripe.h"
 
 @interface STPToken()
-@property (nonatomic) NSString *tokenId;
+@property (nonatomic) NSString *_Nonnull tokenId;
 @property (nonatomic) BOOL livemode;
-@property (nonatomic) STPCard *card;
-@property (nonatomic) STPBankAccount *bankAccount;
-@property (nonatomic) NSDate *created;
-@property (nonatomic, readwrite, copy) NSDictionary *allResponseFields;
+@property (nonatomic) STPCard *_Nullable card;
+@property (nonatomic) STPBankAccount *_Nullable bankAccount;
+@property (nonatomic) NSDate *_Nullable created;
+@property (nonatomic, readwrite, copy) NSDictionary *_Nonnull allResponseFields;
 @end
 
 @implementation STPToken

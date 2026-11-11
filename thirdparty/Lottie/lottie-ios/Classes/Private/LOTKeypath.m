@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTKeypath.m
 //  Lottie_iOS
@@ -13,17 +13,17 @@ NSString *const kLOTKeypathEnd = @"LOTENDKEYPATH";
 
 @implementation LOTKeypath {
   NSInteger _currentDepth;
-  NSMutableArray *_fuzzyDepthStack;
+  OG_COMPAT_GENERIC(NSMutableArray, NSNumber *) *_fuzzyDepthStack;
   NSMutableArray *_currentStack;
   NSArray *_keys;
   NSMutableDictionary *_searchResults;
 }
 
-+ ( LOTKeypath *)keypathWithString:( NSString *)keypath {
++ (LOTKeypath *_Nonnull)keypathWithString:(NSString *_Nonnull)keypath {
   return [[self alloc] initWithKeys:[keypath componentsSeparatedByString:@"."]];
 }
 
-+ ( LOTKeypath *)keypathWithKeys:( NSString *)firstKey, ... {
++ (LOTKeypath *_Nonnull)keypathWithKeys:(NSString *_Nonnull)firstKey, ... {
   NSMutableArray *keys = [NSMutableArray array];
   va_list args;
   va_start(args, firstKey);
@@ -55,7 +55,7 @@ NSString *const kLOTKeypathEnd = @"LOTENDKEYPATH";
   return self;
 }
 
-- (BOOL)pushKey:( NSString *)key {
+- (BOOL)pushKey:(NSString *_Nonnull)key {
   if (_currentDepth == _keys.count &&
       self.hasFuzzyWildcard == NO) {
     return NO;
@@ -84,7 +84,7 @@ NSString *const kLOTKeypathEnd = @"LOTENDKEYPATH";
   [_currentStack removeLastObject];
 
   if (self.hasFuzzyWildcard ) {
-    if (stackCount == [[_fuzzyDepthStack lastObject] integerValue]) {
+    if (stackCount == [_fuzzyDepthStack.lastObject integerValue]) {
       [_fuzzyDepthStack removeLastObject];
     } else {
       return;
@@ -130,7 +130,7 @@ NSString *const kLOTKeypathEnd = @"LOTENDKEYPATH";
   return (_currentDepth == _keys.count);
 }
 
-- (void)addSearchResultForCurrentPath:(id )result {
+- (void)addSearchResultForCurrentPath:(id _Nonnull)result {
   [_searchResults setObject:result forKey:self.currentKeyPath];
 }
 

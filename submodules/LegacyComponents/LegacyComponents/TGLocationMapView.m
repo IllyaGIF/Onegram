@@ -83,10 +83,13 @@
     
     self.scrollEnabled = enabled;
     self.zoomEnabled = enabled;
-    if ([self respondsToSelector:@selector(setRotateEnabled:)])
-        [self setValue:[NSNumber numberWithBool:enabled] forKey:@"rotateEnabled"];
-    if ([self respondsToSelector:@selector(setPitchEnabled:)])
-        [self setValue:[NSNumber numberWithBool:enabled] forKey:@"pitchEnabled"];
+    NSNumber *flag = @(enabled);
+    for (NSString *property in @[@"rotateEnabled", @"pitchEnabled"])
+    {
+        NSString *setterName = [NSString stringWithFormat:@"set%@%@:", [[property substringToIndex:1] uppercaseString], [property substringFromIndex:1]];
+        if ([self respondsToSelector:NSSelectorFromString(setterName)])
+            [self setValue:flag forKey:property];
+    }
 }
 
 - (void)setCompassInsets:(UIEdgeInsets)compassInsets

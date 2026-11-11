@@ -21,7 +21,7 @@
 @property (nonatomic, readwrite) STPCardFundingType funding;
 @property (nonatomic, readwrite) NSString *fingerprint;
 @property (nonatomic, readwrite) NSString *country;
-@property (nonatomic, readwrite, copy) NSDictionary *allResponseFields;
+@property (nonatomic, readwrite, copy) NSDictionary *_Nonnull allResponseFields;
 
 @end
 

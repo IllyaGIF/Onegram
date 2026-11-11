@@ -25,42 +25,42 @@ typedef NS_ENUM(NSInteger, STPBankAccountStatus) {
 /**
  *  The last 4 digits of the bank account's account number.
  */
-- (NSString *)last4;
+- (NSString *_Nonnull)last4;
 
 /**
  *  The routing number for the bank account. This should be the ACH routing number, not the wire routing number.
  */
-@property (nonatomic, copy) NSString *routingNumber;
+@property (nonatomic, copy) NSString *_Nonnull routingNumber;
 
 /**
  *  Two-letter ISO code representing the country the bank account is located in.
  */
-@property (nonatomic, copy) NSString *country;
+@property (nonatomic, copy) NSString *_Nullable country;
 
 /**
  *  The default currency for the bank account.
  */
-@property (nonatomic, copy) NSString *currency;
+@property (nonatomic, copy) NSString *_Nullable currency;
 
 /**
  *  The Stripe ID for the bank account.
  */
-@property (nonatomic, readonly) NSString *bankAccountId;
+@property (nonatomic, readonly) NSString *_Nonnull bankAccountId;
 
 /**
  *  The last 4 digits of the account number.
  */
-@property (nonatomic, readonly) NSString *last4;
+@property (nonatomic, readonly) NSString *_Nullable last4;
 
 /**
  *  The name of the bank that owns the account.
  */
-@property (nonatomic, readonly) NSString *bankName;
+@property (nonatomic, readonly) NSString *_Nullable bankName;
 
 /**
  *  The name of the person or business that owns the bank account.
  */
-@property(nonatomic, copy) NSString *accountHolderName;
+@property(nonatomic, copy) NSString *_Nullable accountHolderName;
 
 /**
  *  The type of entity that holds the account.
@@ -70,7 +70,7 @@ typedef NS_ENUM(NSInteger, STPBankAccountStatus) {
 /**
  *  A proxy for the account number, this uniquely identifies the account and can be used to compare equality of different bank accounts.
  */
-@property (nonatomic, readonly) NSString *fingerprint;
+@property (nonatomic, readonly) NSString *_Nullable fingerprint;
 
 /**
  *  The validation status of the bank account. @see STPBankAccountStatus
@@ -93,6 +93,6 @@ typedef NS_ENUM(NSInteger, STPBankAccountStatus) {
 
 #define DEPRECATED_IN_FAVOR_OF_STPBANKACCOUNTPARAMS __attribute__((deprecated("For collecting your users' bank account details, you should use an STPBankAccountParams object instead of an STPBankAccount.")))
 
-- (void)setAccountNumber:(NSString *)accountNumber DEPRECATED_IN_FAVOR_OF_STPBANKACCOUNTPARAMS;
+- (void)setAccountNumber:(NSString *_Nullable)accountNumber DEPRECATED_IN_FAVOR_OF_STPBANKACCOUNTPARAMS;
 
 @end

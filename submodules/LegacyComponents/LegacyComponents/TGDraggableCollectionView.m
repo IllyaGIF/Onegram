@@ -133,7 +133,7 @@ typedef enum
 - (UIView *)_prepareDraggedViewForCell:(PSUICollectionViewCell *)cell
 {
     UIView *view = [[UIView alloc] initWithFrame:[self convertRect:cell.frame toView:[self _draggedViewSuperview]]];
-    TGSetLayerRasterizationScale(view.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(view.layer, TGScreenScaling());
     
     _outsideSnapshotView = [cell snapshotViewAfterScreenUpdates:false];
     [view addSubview:_outsideSnapshotView];
@@ -150,7 +150,7 @@ typedef enum
     [self addSubview:_insideSnapshotView];
     _insideSnapshotView.center = [self convertPoint:_draggedView.center fromView:[self _draggedViewSuperview]];
     
-    TGSetLayerShouldRasterize(_draggedView.layer, true);
+    OGCompatLayerSetShouldRasterize(_draggedView.layer, true);
     _draggedView.alpha = 0.0f;
     
     [UIView animateWithDuration:duration delay:0.0f options:UIViewAnimationOptionBeginFromCurrentState animations:^

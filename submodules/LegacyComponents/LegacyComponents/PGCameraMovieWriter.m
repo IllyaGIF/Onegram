@@ -321,7 +321,7 @@
         {
             if (!_startedWriting)
             {
-                [_delayedAudioSamples addObject:(__bridge id )(sampleBuffer)];
+                [_delayedAudioSamples addObject:(__bridge id)sampleBuffer];
                 keepSample = true;
             }
             else

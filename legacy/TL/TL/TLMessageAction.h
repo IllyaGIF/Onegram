@@ -164,4 +164,23 @@
 
 @end
 
+@interface TLMessageAction$messageActionPaidMessagesRefunded : TLMessageAction
+
+@property (nonatomic) int32_t count;
+@property (nonatomic) int64_t stars;
+
+@end
+
+@interface TLMessageAction$messageActionPaidMessagesPrice : TLMessageAction
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int64_t stars;
+
+@end
+
+@interface TLMessageAction$messageActionNoPaidMessagesTokenUsed : TLMessageAction
+
+
+@end
+
 #endif

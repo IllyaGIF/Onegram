@@ -539,12 +539,10 @@
             [_context setStatusBarHidden:false withAnimation:UIStatusBarAnimationNone];
         }
         
-        SEL updateScreenEdgesSelector = NSSelectorFromString(@"setNeedsUpdateOfScreenEdgesDeferringSystemGestures");
-        if (iosMajorVersion() >= 11 && [strongSelf.controller respondsToSelector:updateScreenEdgesSelector])
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [strongSelf.controller performSelector:updateScreenEdgesSelector];
-#pragma clang diagnostic pop
+        SEL refreshSelector = NSSelectorFromString(@"setNeedsUpdateOfScreenEdgesDeferringSystemGestures");
+        UIViewController *host = strongSelf.controller;
+        if (iosMajorVersion() >= 11 && [host respondsToSelector:refreshSelector])
+            ((void (*)(id, SEL))[host methodForSelector:refreshSelector])(host, refreshSelector);
     };
     
     controller.requestThumbnailImage = ^SSignal *(id<TGMediaEditableItem> editableItem)

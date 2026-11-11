@@ -144,7 +144,7 @@
 {
     NSMutableArray *boldRanges = [[NSMutableArray alloc] init];
     
-    NSMutableString *cleanText = [[NSMutableString alloc] initWithString:text != nil ? text : @""];
+    NSMutableString *cleanText = [[NSMutableString alloc] initWithString:text ?: @""];
     while (true)
     {
         NSRange startRange = [cleanText rangeOfString:@"**"];
@@ -169,34 +169,16 @@
         style.lineBreakMode = NSLineBreakByWordWrapping;
         style.alignment = NSTextAlignmentCenter;
         
-        UIFont *baseFont = textLabel.font;
-        if (baseFont == nil)
-            baseFont = [UIFont systemFontOfSize:16.0f];
-        UIColor *baseTextColor = textLabel.textColor;
-        if (baseTextColor == nil)
-            baseTextColor = [UIColor blackColor];
+        NSMutableDictionary *baseAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:style, NSParagraphStyleAttributeName, nil];
+        baseAttributes[NSFontAttributeName] = textLabel.font ?: [UIFont systemFontOfSize:16.0f];
+        baseAttributes[NSForegroundColorAttributeName] = textLabel.textColor ?: [UIColor blackColor];
 
-        NSMutableDictionary *baseAttributes = [[NSMutableDictionary alloc] init];
-        if (baseFont != nil)
-            [baseAttributes setObject:baseFont forKey:NSFontAttributeName];
-        if (baseTextColor != nil)
-            [baseAttributes setObject:baseTextColor forKey:NSForegroundColorAttributeName];
-
-        NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:cleanText attributes:baseAttributes];
+        NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:cleanText];
+        [attributedString setAttributes:baseAttributes range:NSMakeRange(0, cleanText.length)];
         
-        if (style != nil)
-            [attributedString addAttributes:@{NSParagraphStyleAttributeName: style} range:NSMakeRange(0, attributedString.length)];
-        
-        UIFont *boldFont = TGMediumSystemFontOfSize(17.0f);
-        if (boldFont == nil)
-            boldFont = [UIFont boldSystemFontOfSize:17.0f];
-        NSMutableDictionary *boldAttributes = [[NSMutableDictionary alloc] init];
-        if (boldFont != nil)
-            [boldAttributes setObject:boldFont forKey:NSFontAttributeName];
-        for (NSValue *nRange in boldRanges)
-        {
-            [attributedString addAttributes:boldAttributes range:[nRange rangeValue]];
-        }
+        NSDictionary *boldAttributes = @{NSFontAttributeName: TGMediumSystemFontOfSize(17.0f) ?: [UIFont boldSystemFontOfSize:17.0f]};
+        for (NSValue *boldRange in boldRanges)
+            [attributedString addAttributes:boldAttributes range:[boldRange rangeValue]];
         
         textLabel.attributedText = attributedString;
     }

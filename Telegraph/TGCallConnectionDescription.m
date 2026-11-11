@@ -49,13 +49,13 @@
     {
         _identifier = identifier;
         _flags = flags;
-        _turn = (flags & (1 << 0)) != 0;
-        _stun = (flags & (1 << 1)) != 0;
+        _stun = (flags & 2) != 0;
+        _turn = (flags & 1) != 0;
         _ipv4 = ipv4 ?: @"";
         _ipv6 = ipv6 ?: @"";
         _port = port;
-        _username = username ?: @"";
-        _password = password ?: @"";
+        _username = username != nil ? username : @"";
+        _password = password != nil ? password : @"";
     }
     return self;
 }
@@ -115,9 +115,9 @@
         _key = key;
         _keyHash = keyHash;
         _defaultConnection = defaultConnection;
-        _alternativeConnections = alternativeConnections ?: @[];
-        _webrtcConnections = webrtcConnections ?: @[];
-        _customParameters = customParameters ?: @"";
+        _customParameters = customParameters != nil ? customParameters : @"";
+        _alternativeConnections = alternativeConnections != nil ? alternativeConnections : @[];
+        _webrtcConnections = webrtcConnections != nil ? webrtcConnections : @[];
         
         _minLayer = minLayer;
         _maxLayer = maxLayer;

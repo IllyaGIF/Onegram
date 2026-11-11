@@ -78,7 +78,7 @@
     }
     
     CGSize checkSize = _checkView.frame.size;
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     if (_alignToRight)
     {
         _label.frame = CGRectMake(15.0f + classicInset + self.safeAreaInset.left, CGFloor((bounds.size.height - 26) / 2), bounds.size.width - 44.0f - 16.0f - classicInset * 2.0f - self.safeAreaInset.left - self.safeAreaInset.right, 26);

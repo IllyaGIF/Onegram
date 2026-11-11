@@ -35,7 +35,7 @@ static CTFontRef nameFont()
     dispatch_once(&onceToken, ^
     {
         if (iosMajorVersion() >= 7) {
-            font = TGIos6CreateCTFontFromUIFont(TGMediumSystemFontOfSize(14.0f));
+            font = OGCompatCreateCTFont(TGMediumSystemFontOfSize(14.0f));
         } else {
             UIFont *systemFont = TGMediumSystemFontOfSize(14.0f);
             font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
@@ -53,7 +53,7 @@ static CTFontRef textFont()
     dispatch_once(&onceToken, ^
     {
         if (iosMajorVersion() >= 7) {
-            font = TGIos6CreateCTFontFromUIFont(TGSystemFontOfSize(14.0f));
+            font = OGCompatCreateCTFont(TGSystemFontOfSize(14.0f));
         } else {
             UIFont *systemFont = TGSystemFontOfSize(14.0f);
             font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
@@ -63,20 +63,12 @@ static CTFontRef textFont()
     return font;
 }
 
-static NSString *TGReplyHeaderSafeText(NSString *text)
+static NSString *OGCompatDefuseAngleBrackets(NSString *text)
 {
-    if (text.length == 0)
-        return text == nil ? @"" : text;
-    
-    if ([text rangeOfString:@">"].location == NSNotFound && [text rangeOfString:@"<"].location == NSNotFound)
-        return text;
-    
-    NSMutableString *safeText = [[NSMutableString alloc] initWithString:text];
-    NSString *safeGreater = [[NSString alloc] initWithFormat:@"%C", (unichar)0x203a];
-    NSString *safeLess = [[NSString alloc] initWithFormat:@"%C", (unichar)0x2039];
-    [safeText replaceOccurrencesOfString:@">" withString:safeGreater options:0 range:NSMakeRange(0, safeText.length)];
-    [safeText replaceOccurrencesOfString:@"<" withString:safeLess options:0 range:NSMakeRange(0, safeText.length)];
-    return safeText;
+    if (text == nil)
+        return @"";
+    NSString *result = [text stringByReplacingOccurrencesOfString:@">" withString:@"\u203a"];
+    return [result stringByReplacingOccurrencesOfString:@"<" withString:@"\u2039"];
 }
 
 
@@ -115,8 +107,8 @@ static NSString *TGReplyHeaderSafeText(NSString *text)
         } else if ([peer isKindOfClass:[TGConversation class]]) {
             title = ((TGConversation *)peer).chatTitle;
         }
-        title = TGReplyHeaderSafeText(title);
-        text = TGReplyHeaderSafeText(text);
+        title = OGCompatDefuseAngleBrackets(title);
+        text = OGCompatDefuseAngleBrackets(text);
         
         UIColor *titleColor = brandedOutgoing ? [UIColor whiteColor] : (authorColor ?: (incoming ? presentation.pallete.chatIncomingAccentColor : presentation.pallete.chatOutgoingAccentColor));
         _nameModel = [[TGModernTextViewModel alloc] initWithText:title font:nameFont()];

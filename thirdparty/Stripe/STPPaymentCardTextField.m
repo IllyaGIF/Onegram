@@ -10,6 +10,7 @@
 
 //#import "Stripe.h"
 #import "STPPaymentCardTextField.h"
+#import "OGStripeCompat.h"
 #import "STPPaymentCardTextFieldViewModel.h"
 #import "STPFormTextField.h"
 #import "STPImageLibrary.h"
@@ -38,20 +39,9 @@
 @property(nonatomic, assign)BOOL numberFieldShrunk;
 
 @property(nonatomic, readwrite, strong)STPCardParams *internalCardParams;
-@property(nonatomic, copy)UIColor *stpCursorColor;
+@property(nonatomic, copy)UIColor *storedCursorColor;
 
 @end
-
-static NSDictionary *STPTextAttributesForField(UITextField *field) {
-    NSMutableDictionary *attributes = [NSMutableDictionary dictionary];
-    if (field.font != nil) {
-        attributes[NSFontAttributeName] = field.font;
-    }
-    if (field.textColor != nil) {
-        attributes[NSForegroundColorAttributeName] = field.textColor;
-    }
-    return attributes;
-}
 
 @implementation STPPaymentCardTextField
 
@@ -110,9 +100,7 @@ CGFloat const STPPaymentCardTextFieldDefaultPadding = 13;
     UIImageView *brandImageView = [[UIImageView alloc] initWithImage:self.brandImage];
     brandImageView.contentMode = UIViewContentModeCenter;
     brandImageView.backgroundColor = [UIColor clearColor];
-    if ([brandImageView respondsToSelector:@selector(setTintColor:)]) {
-        [(id)brandImageView setTintColor:self.placeholderColor];
-    }
+    OGCompatApplyTint(brandImageView, self.placeholderColor);
     self.brandImageView = brandImageView;
     
     STPFormTextField *numberField = [self buildTextField];
@@ -235,9 +223,7 @@ CGFloat const STPPaymentCardTextFieldDefaultPadding = 13;
 - (void)setPlaceholderColor:(UIColor *)placeholderColor {
     _placeholderColor = [placeholderColor copy];
     
-    if ([self.brandImageView respondsToSelector:@selector(setTintColor:)]) {
-        [(id)self.brandImageView setTintColor:placeholderColor];
-    }
+    OGCompatApplyTint(self.brandImageView, placeholderColor);
     
     for (STPFormTextField *field in [self allFields]) {
         field.placeholderColor = _placeholderColor;
@@ -248,33 +234,31 @@ CGFloat const STPPaymentCardTextFieldDefaultPadding = 13;
     return _placeholderColor ?: [self.class placeholderGrayColor];
 }
 
-- (void)setNumberPlaceholder:(NSString *)numberPlaceholder {
+- (void)setNumberPlaceholder:(NSString * __nullable)numberPlaceholder {
     _numberPlaceholder = [numberPlaceholder copy];
     self.numberField.placeholder = _numberPlaceholder;
 }
 
-- (void)setExpirationPlaceholder:(NSString *)expirationPlaceholder {
+- (void)setExpirationPlaceholder:(NSString * __nullable)expirationPlaceholder {
     _expirationPlaceholder = [expirationPlaceholder copy];
     self.expirationField.placeholder = _expirationPlaceholder;
 }
 
-- (void)setCvcPlaceholder:(NSString *)cvcPlaceholder {
+- (void)setCvcPlaceholder:(NSString * __nullable)cvcPlaceholder {
     _cvcPlaceholder = [cvcPlaceholder copy];
     self.cvcField.placeholder = _cvcPlaceholder;
 }
 
 - (void)setCursorColor:(UIColor *)cursorColor {
-    self.stpCursorColor = cursorColor;
-    if ([self respondsToSelector:@selector(setTintColor:)]) {
-        [(id)self setTintColor:cursorColor];
-    }
+    self.storedCursorColor = cursorColor;
+    OGCompatApplyTint(self, cursorColor);
 }
 
 - (UIColor *)cursorColor {
-    return self.stpCursorColor;
+    return self.storedCursorColor;
 }
 
-- (void)setBorderColor:(UIColor *)borderColor {
+- (void)setBorderColor:(UIColor * __nullable)borderColor {
     _borderColor = borderColor;
     if (borderColor) {
         self.layer.borderColor = [[borderColor copy] CGColor];
@@ -284,7 +268,7 @@ CGFloat const STPPaymentCardTextFieldDefaultPadding = 13;
     }
 }
 
-- (UIColor *)borderColor {
+- (UIColor * __nullable)borderColor {
     return _borderColor;
 }
 
@@ -674,13 +658,13 @@ typedef void (^STPNumberShrunkCompletionBlock)(BOOL completed);
     switch (fieldType) {
         case STPCardFieldTypeNumber:
             return [[NSAttributedString alloc] initWithString:self.viewModel.cardNumber
-                                                   attributes:STPTextAttributesForField(self.numberField)];
+                                                   attributes:OGCompatTextAttributes(self.numberField)];
         case STPCardFieldTypeExpiration:
             return [[NSAttributedString alloc] initWithString:self.viewModel.rawExpiration
-                                                   attributes:STPTextAttributesForField(self.expirationField)];
+                                                   attributes:OGCompatTextAttributes(self.expirationField)];
         case STPCardFieldTypeCVC:
             return [[NSAttributedString alloc] initWithString:self.viewModel.cvc
-                                                   attributes:STPTextAttributesForField(self.cvcField)];
+                                                   attributes:OGCompatTextAttributes(self.cvcField)];
     }
 }
 
@@ -833,11 +817,11 @@ typedef void (^STPNumberShrunkCompletionBlock)(BOOL completed);
 
 @dynamic delegate, card;
 
-- (void)setDelegate:(id<PTKViewDelegate>)delegate {
+- (void)setDelegate:(id<PTKViewDelegate> __nullable)delegate {
     self.internalDelegate = delegate;
 }
 
-- (id<PTKViewDelegate>)delegate {
+- (id<PTKViewDelegate> __nullable)delegate {
     return self.internalDelegate;
 }
 

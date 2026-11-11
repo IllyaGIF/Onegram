@@ -43,6 +43,12 @@ static const CGFloat TGCallAlertViewContentInset = 20.0f;
 
 @end
 
+static UIViewController *OGCompatPrimaryRootController(void)
+{
+    UIWindow *primaryWindow = [[LegacyComponentsGlobals provider] applicationWindows][0];
+    return primaryWindow.rootViewController;
+}
+
 @implementation TGCallAlertView
 
 - (instancetype)initWithTitle:(NSString *)title message:(id)message customView:(UIView *)customView cancelButtonTitle:(NSString *)cancelButtonTitle doneButtonTitle:(NSString *)doneButtonTitle completionBlock:(void (^)(bool))completionBlock
@@ -62,8 +68,8 @@ static const CGFloat TGCallAlertViewContentInset = 20.0f;
         
         _backgroundView = [[UIView alloc] init];
         _backgroundView.backgroundColor = [UIColor whiteColor];
-        TGSetLayerRasterizationScale(_backgroundView.layer, TGScreenScaling());
-        TGSetLayerShouldRasterize(_backgroundView.layer, true);
+        OGCompatLayerSetRasterizationScale(_backgroundView.layer, TGScreenScaling());
+        OGCompatLayerSetShouldRasterize(_backgroundView.layer, true);
         _backgroundView.layer.cornerRadius = 12.0f;
         _backgroundView.layer.masksToBounds = true;
         [self addSubview:_backgroundView];
@@ -474,7 +480,7 @@ static const CGFloat TGCallAlertViewContentInset = 20.0f;
 
 - (UIViewController *)statusBarAppearanceSourceController
 {
-    UIViewController *rootController = [(UIWindow *)[[[LegacyComponentsGlobals provider] applicationWindows] objectAtIndex:0] rootViewController];
+    UIViewController *rootController = OGCompatPrimaryRootController();
     UIViewController *topViewController = nil;
     if ([rootController respondsToSelector:@selector(viewControllers)]) {
         topViewController = [(UINavigationController *)rootController viewControllers].lastObject;
@@ -507,7 +513,7 @@ static const CGFloat TGCallAlertViewContentInset = 20.0f;
 
 - (UIViewController *)autorotationSourceController
 {
-    UIViewController *rootController = [(UIWindow *)[[[LegacyComponentsGlobals provider] applicationWindows] objectAtIndex:0] rootViewController];
+    UIViewController *rootController = OGCompatPrimaryRootController();
     UIViewController *topViewController = nil;
     if ([rootController respondsToSelector:@selector(viewControllers)]) {
         topViewController = [(UINavigationController *)rootController viewControllers].lastObject;
@@ -554,7 +560,7 @@ static const CGFloat TGCallAlertViewContentInset = 20.0f;
         }
     }
     
-    UIViewController *rootController = [(UIWindow *)[[[LegacyComponentsGlobals provider] applicationWindows] objectAtIndex:0] rootViewController];
+    UIViewController *rootController = OGCompatPrimaryRootController();
     
     if (rootController.presentedViewController != nil)
         return [rootController.presentedViewController shouldAutorotate];

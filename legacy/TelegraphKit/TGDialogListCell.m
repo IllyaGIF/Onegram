@@ -31,21 +31,23 @@
 #import "TGPresentationAssets.h"
 #import "TGCommunityAppearance.h"
 #import "TGCommunitySignals.h"
+#import "TGPaidMessagesSignals.h"
 
 #import "TGSimpleImageView.h"
 #import "../../OnegramRuntime/OGRemoteClock.h"
 #import "../../OnegramRuntime/OGRuntime.h"
 #import "TGStoryRingView.h"
 #import "TGRichMessageInlineImageStore.h"
+#import "TGDialogFilterIcons.h"
 
 #include <math.h>
 
-static bool TGDialogListClassicIOS6Style(void)
+static bool OGCompatDialogListClassicStyle(void)
 {
-    return [TGPresentation classicIOS6Style];
+    return [TGPresentation classicThemeStyle];
 }
 
-static bool TGDialogListBrandedIOS6Style(void)
+static bool OGCompatDialogListBrandedStyle(void)
 {
     return [TGPresentation brandedIOS6Style];
 }
@@ -61,35 +63,35 @@ static NSString *TGDialogListStartupLocalized(NSString *key)
     return OGPlatformUsesConstrainedBackgroundExecution() ? TGStartupLocalized(key) : TGLocalized(key);
 }
 
-static const CGFloat TGDialogListBrandedIOS6TitleFontSize = 15.6f;
+static const CGFloat OGCompatDialogListBrandedTitleFontSize = 15.6f;
 static const CGFloat TGDialogListEmojiStatusSize = 18.0f;
-static const CGFloat TGDialogListBrandedIOS6BodyFontSize = 12.0f;
-static const CGFloat TGDialogListBrandedIOS6BadgeScale = 0.97f;
-static const CGFloat TGDialogListBrandedIOS6BadgeSpacing = 6.0f;
-static const CGFloat TGDialogListBrandedIOS6AccessoryCenterInset = 20.0f;
+static const CGFloat OGCompatDialogListBrandedBodyFontSize = 12.0f;
+static const CGFloat OGCompatDialogListBrandedBadgeScale = 0.97f;
+static const CGFloat OGCompatDialogListBrandedBadgeSpacing = 6.0f;
+static const CGFloat OGCompatDialogListBrandedAccessoryCenterInset = 20.0f;
 
-static CGFloat TGDialogListAvatarSize(void)
+static CGFloat OGDialogListAvatarDiameter(void)
 {
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
         return 50.0f;
-    return TGDialogListClassicIOS6Style() ? 52.0f : 62.0f;
+    return OGCompatDialogListClassicStyle() ? 52.0f : 62.0f;
 }
 
 static CGFloat TGDialogListAvatarInset(void)
 {
-    return TGDialogListBrandedIOS6Style() ? 6.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 10.0f);
+    return OGCompatDialogListBrandedStyle() ? 6.0f : (OGCompatDialogListClassicStyle() ? 12.0f : 10.0f);
 }
 
-static CGFloat TGDialogListContentOffset(void)
+static CGFloat OGDialogListTextLeading(void)
 {
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
         return 61.0f;
-    return TGDialogListClassicIOS6Style() ? 72.0f : 80.0f;
+    return OGCompatDialogListClassicStyle() ? 72.0f : 80.0f;
 }
 
 static UIColor *TGDialogListMessageTextColor(UIColor *defaultColor, bool unread)
 {
-    if (!TGDialogListBrandedIOS6Style())
+    if (!OGCompatDialogListBrandedStyle())
         return defaultColor;
     OGDialogListAppearance *appearance = [TGPresentation brandedIOS6DialogListAppearance];
     return unread ? appearance.messageUnreadColor : appearance.messageColor;
@@ -411,6 +413,70 @@ static void TGDialogListDrawLayout(TGReusableLabelLayoutData *layout, CGRect rec
     {
         [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:nil shadowOffset:CGSizeZero];
     }
+}
+
+static UIFont *TGDialogListFolderTagFont(void)
+{
+    static UIFont *font = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        font = TGMediumSystemFontOfSize(11.0f);
+    });
+    return font;
+}
+
+static CGFloat TGDialogListFolderTagsHeight(void)
+{
+    return TGDialogFilterTagSize(@"A", TGDialogListFolderTagFont()).height;
+}
+
+static CGFloat TGDialogListFolderTagsLayout(NSArray *tags, CGFloat maxWidth, void (^item)(NSString *title, UIColor *color, CGFloat x, CGFloat width))
+{
+    UIFont *font = TGDialogListFolderTagFont();
+    CGFloat spacing = 4.0f;
+    CGFloat x = 0.0f;
+    NSUInteger count = tags.count;
+    for (NSUInteger index = 0; index < count; index++)
+    {
+        NSDictionary *tag = tags[index];
+        NSString *title = tag[@"title"];
+        CGFloat width = TGDialogFilterTagSize(title, font).width;
+        NSUInteger remaining = count - index - 1;
+        CGFloat reserved = remaining == 0 ? 0.0f : spacing + TGDialogFilterTagSize([NSString stringWithFormat:@"+%d", (int)remaining], font).width;
+        CGFloat start = x == 0.0f ? 0.0f : x + spacing;
+        if (start + width + reserved > maxWidth)
+        {
+            if (index == 0 && maxWidth - reserved >= 24.0f)
+            {
+                width = maxWidth - reserved;
+            }
+            else
+            {
+                NSString *moreTitle = [NSString stringWithFormat:@"+%d", (int)(count - index)];
+                CGFloat moreWidth = TGDialogFilterTagSize(moreTitle, font).width;
+                if (start + moreWidth > maxWidth)
+                    break;
+                if (item != nil)
+                    item(moreTitle, nil, start, moreWidth);
+                x = start + moreWidth;
+                break;
+            }
+        }
+        if (item != nil)
+            item(title, tag[@"color"], start, width);
+        x = start + width;
+    }
+    return x;
+}
+
+static void TGDialogListDrawFolderTags(NSArray *tags, CGRect frame, UIColor *moreColor)
+{
+    UIFont *font = TGDialogListFolderTagFont();
+    TGDialogListFolderTagsLayout(tags, frame.size.width, ^(NSString *title, UIColor *color, CGFloat x, CGFloat width)
+    {
+        TGDialogFilterDrawTag(title, color ?: (moreColor ?: [UIColor grayColor]), font, CGRectMake(frame.origin.x + x, frame.origin.y, width, frame.size.height));
+    });
 }
 
 static bool TGDialogListRequiresPackEmoji(NSString *text)
@@ -986,6 +1052,10 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
 @property (nonatomic, copy) NSDictionary *pluginNameGlow;
 @property (nonatomic, copy) NSDictionary *pluginNameShadow;
 
+@property (nonatomic) NSUInteger maxTextLines;
+@property (nonatomic, copy) NSArray *folderTags;
+@property (nonatomic) CGRect folderTagsFrame;
+
 - (void)setBackdropColor:(UIColor *)backdropColor image:(UIImage *)backdropImage imageFrame:(CGRect)backdropImageFrame;
 
 @end
@@ -1215,6 +1285,35 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
         _textFrame = textFrame;
         _textLayout = nil;
         _legacyTextLayout = nil;
+    }
+}
+
+- (void)setMaxTextLines:(NSUInteger)maxTextLines
+{
+    if (_maxTextLines != maxTextLines)
+    {
+        _maxTextLines = maxTextLines;
+        _textLayout = nil;
+        _legacyTextLayout = nil;
+        [self setNeedsDisplay];
+    }
+}
+
+- (void)setFolderTags:(NSArray *)folderTags
+{
+    if (!TGDialogListObjectsEqual(_folderTags, folderTags))
+    {
+        _folderTags = [folderTags copy];
+        [self setNeedsDisplay];
+    }
+}
+
+- (void)setFolderTagsFrame:(CGRect)folderTagsFrame
+{
+    if (!CGRectEqualToRect(_folderTagsFrame, folderTagsFrame))
+    {
+        _folderTagsFrame = folderTagsFrame;
+        [self setNeedsDisplay];
     }
 }
 
@@ -1484,9 +1583,11 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
                 textFrame = CGRectMake(textFrame.origin.x + 19, textFrame.origin.y, textFrame.size.width - 19, textFrame.size.height);
             }
             
-            NSUInteger maxLines = TGDialogListBrandedIOS6Style() ? (_authorName.length == 0 ? 2 : 1) : (textFrame.size.height >= 30.0f ? 2 : 1);
+            NSUInteger maxLines = OGCompatDialogListBrandedStyle() ? (_authorName.length == 0 ? 2 : 1) : (textFrame.size.height >= 30.0f ? 2 : 1);
             if ([TGOnegramSettings boolForKey:TGOnegramSettingChatListCompact])
                 maxLines = 1;
+            if (_maxTextLines != 0)
+                maxLines = MIN(maxLines, _maxTextLines);
             bool legacyIOS3Text = iosMajorVersion() <= 3;
             bool nativeText = TGDialogListUseLegacyNativeText(_text);
             if (legacyIOS3Text)
@@ -1514,7 +1615,7 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
             CGContextSetFillColorWithColor(context, _authorNameColor == nil ? [UIColor blackColor].CGColor : [_authorNameColor CGColor]);
             if (CGRectIntersectsRect(rect, authorNameFrame))
             {
-                NSTextAlignment alignment = TGDialogListBrandedIOS6Style() || useStableTextDrawing ? NSTextAlignmentLeft : NSTextAlignmentRight;
+                NSTextAlignment alignment = OGCompatDialogListBrandedStyle() || useStableTextDrawing ? NSTextAlignmentLeft : NSTextAlignmentRight;
                 UIColor *authorColor = _authorNameColor == nil ? [UIColor blackColor] : _authorNameColor;
                 bool legacyIOS3Author = iosMajorVersion() <= 3;
                 bool nativeAuthor = TGDialogListUseLegacyNativeText(_authorName);
@@ -1539,6 +1640,8 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
             }
         }
     }
+    if (_folderTags.count != 0 && !CGRectIsEmpty(_folderTagsFrame) && CGRectIntersectsRect(rect, _folderTagsFrame))
+        TGDialogListDrawFolderTags(_folderTags, _folderTagsFrame, _textColor);
     _missedEmoji = TGReusableLabelMissedEmoji();
 }
 
@@ -1605,6 +1708,9 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
     CGRect muteFrame;
     CGRect titleFrame;
     CGRect messageFrame;
+    NSArray *folderTags;
+    CGRect folderTagsFrame;
+    NSUInteger maxTextLines;
 }
 @end
 
@@ -1789,7 +1895,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 
 - (bool)brandedStatusVisible
 {
-    return TGDialogListBrandedIOS6Style() && _textView.statusText.length != 0 && _textView.statusFont != nil;
+    return OGCompatDialogListBrandedStyle() && _textView.statusText.length != 0 && _textView.statusFont != nil;
 }
 
 - (void)layoutBrandedBadgesWithTitleRect:(CGRect)titleRect badgeSize:(CGSize)badgeSize
@@ -1806,7 +1912,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 
     CGFloat titleCenterY = titleRect.origin.y + TGDialogListTitleCapCenterOffset(_textView.titleFont);
 
-    CGFloat nextX = titleLineMaxX + TGDialogListBrandedIOS6BadgeSpacing;
+    CGFloat nextX = titleLineMaxX + OGCompatDialogListBrandedBadgeSpacing;
     if (!_unreadCountBackgrond.hidden)
     {
         CGRect badgeFrame = CGRectMake(nextX, TGDialogListCenteredOrigin(titleCenterY, badgeSize.height), badgeSize.width, badgeSize.height);
@@ -1818,7 +1924,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         labelFrame.origin.y += TGScreenPixel;
         if (!CGRectEqualToRect(_unreadCountLabel.frame, labelFrame))
             _unreadCountLabel.frame = labelFrame;
-        nextX = CGRectGetMaxX(badgeFrame) + TGDialogListBrandedIOS6BadgeSpacing;
+        nextX = CGRectGetMaxX(badgeFrame) + OGCompatDialogListBrandedBadgeSpacing;
     }
 
     CGSize mentionSize = _unseenMentionsView.image.size;
@@ -1835,7 +1941,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         return nil;
     if (!CGSizeEqualToSize(entry->size, size) || ABS(entry->contentOffset - contentOffset) > FLT_EPSILON || ABS(entry->contentWidth - contentWidth) > FLT_EPSILON)
         return nil;
-    if (entry->presentation != _presentation || entry->brandedStyle != TGDialogListBrandedIOS6Style() || entry->classicStyle != TGDialogListClassicIOS6Style())
+    if (entry->presentation != _presentation || entry->brandedStyle != OGCompatDialogListBrandedStyle() || entry->classicStyle != OGCompatDialogListClassicStyle())
         return nil;
     if (!TGDialogListObjectsEqual(entry->unreadText, _unreadCountLabel.text ?: @"") || !TGDialogListObjectsEqual(entry->unreadFont, _unreadCountLabel.font))
         return nil;
@@ -1867,6 +1973,8 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         return nil;
     if (!TGDialogListObjectsEqual(entry->messageText, _messageText) || !TGDialogListObjectsEqual(entry->renderedMessageText, _textView.text) || !TGDialogListObjectsEqual(entry->messageFont, _textView.textFont))
         return nil;
+    if (!TGDialogListObjectsEqual(entry->folderTags, _folderTags))
+        return nil;
     return entry;
 }
 
@@ -1879,7 +1987,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     }
     if (!CGRectEqualToRect(_unreadCountBackgrond.frame, entry->unreadBackgroundFrame))
         _unreadCountBackgrond.frame = entry->unreadBackgroundFrame;
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
         [self applyBrandedBadgeAppearance];
     if (!CGRectEqualToRect(_pinnedBackgrond.frame, entry->pinnedFrame))
         _pinnedBackgrond.frame = entry->pinnedFrame;
@@ -1911,6 +2019,9 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         _muteIcon.frame = entry->muteFrame;
     _textView.titleFrame = entry->titleFrame;
     _textView.textFrame = entry->messageFrame;
+    _textView.maxTextLines = entry->maxTextLines;
+    _textView.folderTags = _folderTags;
+    _textView.folderTagsFrame = entry->folderTagsFrame;
     _validSize = size;
     _fastLayoutSize = self.bounds.size;
     _fastLayoutContentOffset = contentOffset;
@@ -1927,8 +2038,8 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     entry->contentOffset = contentOffset;
     entry->contentWidth = contentWidth;
     entry->presentation = _presentation;
-    entry->brandedStyle = TGDialogListBrandedIOS6Style();
-    entry->classicStyle = TGDialogListClassicIOS6Style();
+    entry->brandedStyle = OGCompatDialogListBrandedStyle();
+    entry->classicStyle = OGCompatDialogListClassicStyle();
     entry->unreadText = [_unreadCountLabel.text ?: @"" copy];
     entry->unreadFont = _unreadCountLabel.font;
     entry->unreadCountHidden = _unreadCountBackgrond.hidden;
@@ -1978,6 +2089,9 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     entry->muteFrame = _muteIcon == nil ? CGRectZero : _muteIcon.frame;
     entry->titleFrame = _textView.titleFrame;
     entry->messageFrame = _textView.textFrame;
+    entry->folderTags = [_folderTags copy];
+    entry->folderTagsFrame = _textView.folderTagsFrame;
+    entry->maxTextLines = _textView.maxTextLines;
     TGDialogListCellGeometryCachePut(entry);
 }
 
@@ -2217,10 +2331,10 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         return;
 
     messageText = TGDialogListVisiblePreviewText(messageText);
-    CGFloat contentX = branded ? 61.0f : (classic ? 72.0f : 80.0f);
-    UIFont *titleFont = branded ? TGBoldSystemFontOfSize(TGDialogListBrandedIOS6TitleFontSize) : TGMediumSystemFontOfSize(16.0f);
-    UIFont *bodyFont = TGSystemFontOfSize(branded ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
-    UIFont *badgeFont = branded ? TGBoldSystemFontOfSize(11.0f * TGDialogListBrandedIOS6BadgeScale) : (classic ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(14.0f));
+    CGFloat contentOriginX = branded ? 61.0f : (classic ? 72.0f : 80.0f);
+    UIFont *titleFont = branded ? TGBoldSystemFontOfSize(OGCompatDialogListBrandedTitleFontSize) : TGMediumSystemFontOfSize(16.0f);
+    UIFont *bodyFont = TGSystemFontOfSize(branded ? OGCompatDialogListBrandedBodyFontSize : 15.0f);
+    UIFont *badgeFont = branded ? TGBoldSystemFontOfSize(11.0f * OGCompatDialogListBrandedBadgeScale) : (classic ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(14.0f));
     int totalUnreadCount = unreadCount + serviceUnreadCount;
     bool deliveryFailed = deliveryState == TGMessageDeliveryStateFailed;
     bool showBadge = !deliveryFailed && (totalUnreadCount > 0 || unreadMark);
@@ -2228,14 +2342,14 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     bool showMention = !deliveryFailed && unreadMentionCount > 0 && (totalUnreadCount > 0 || unreadMark || unread);
     NSString *badgeText = totalUnreadCount > 0 ? (branded ? [TGPresentation brandedIOS6BadgeTextForCount:totalUnreadCount] : (totalUnreadCount < 1000 ? [NSString stringWithFormat:@"%d", totalUnreadCount] : (TGOnegramUsesExactNumbers() ? TGOnegramExactCountString(totalUnreadCount) : [NSString stringWithFormat:@"%dK", totalUnreadCount / 1000]))) : @"";
     CGFloat badgeTextWidth = badgeText.length == 0 ? 9.0f : TGDialogListCachedTextMetric(badgeText, badgeFont, 0.0f, 1, 0).width;
-    CGFloat badgeWidth = branded ? MAX(18.0f * TGDialogListBrandedIOS6BadgeScale, badgeTextWidth + 10.0f * TGDialogListBrandedIOS6BadgeScale) : MAX(20.0f, badgeTextWidth + 11.0f);
+    CGFloat badgeWidth = branded ? MAX(18.0f * OGCompatDialogListBrandedBadgeScale, badgeTextWidth + 10.0f * OGCompatDialogListBrandedBadgeScale) : MAX(20.0f, badgeTextWidth + 11.0f);
     CGFloat statusWidth = branded && statusText.length != 0 ? MIN(103.2f, TGDialogListCachedTextMetric(statusText, bodyFont, 0.0f, 1, 0).width) : 0.0f;
     CGFloat dateFontSize = TGIsPad() ? 15.0f : (branded ? 10.0f : 14.0f);
     UIFont *dateFont = TGSystemFontOfSize(dateFontSize);
     CGSize dateSize = [TGDateLabel measureDateText:dateText dateFont:dateFont textFont:dateFont amWidth:TGIsPad() ? 25.0f : 24.0f pmWidth:TGIsPad() ? 25.0f : 24.0f];
     OGDialogLayoutInput input = {0};
     input.width = width;
-    input.contentInset = contentX;
+    input.contentInset = contentOriginX;
     input.dateOrigin = width - (int)dateSize.width - 11.0f;
     input.statusWidth = statusWidth;
     input.badgeWidth = badgeWidth;
@@ -2354,8 +2468,8 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         };
         _wrapView.toggleArchived = ^(bool archived) {
             __strong TGDialogListCell *strongSelf = weakSelf;
-            if (strongSelf != nil && strongSelf->_conversationId != 0 && strongSelf->_toggleArchiveConversation) {
-                strongSelf->_toggleArchiveConversation(strongSelf->_conversationId, archived);
+            if (strongSelf != nil && strongSelf->_conversationId != 0 && strongSelf->_archiveToggleHandler) {
+                strongSelf->_archiveToggleHandler(strongSelf->_conversationId, archived);
             }
         };
         
@@ -2366,9 +2480,9 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 
         _textView = [[TGDialogListTextView alloc] initWithFrame:CGRectMake(73, 2, self.frame.size.width - 73, 46)];
         _textView.contentMode = UIViewContentModeLeft;
-        _textView.titleFont = TGDialogListBrandedIOS6Style() ? TGBoldSystemFontOfSize(TGDialogListBrandedIOS6TitleFontSize) : TGMediumSystemFontOfSize(16.0f);
-        _textView.textFont = TGSystemFontOfSize(TGDialogListBrandedIOS6Style() ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
-        _textView.authorNameFont = TGSystemFontOfSize(TGDialogListBrandedIOS6Style() ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
+        _textView.titleFont = OGCompatDialogListBrandedStyle() ? TGBoldSystemFontOfSize(OGCompatDialogListBrandedTitleFontSize) : TGMediumSystemFontOfSize(16.0f);
+        _textView.textFont = TGSystemFontOfSize(OGCompatDialogListBrandedStyle() ? OGCompatDialogListBrandedBodyFontSize : 15.0f);
+        _textView.authorNameFont = TGSystemFontOfSize(OGCompatDialogListBrandedStyle() ? OGCompatDialogListBrandedBodyFontSize : 15.0f);
         _textView.opaque = false;
         _textView.backgroundColor = nil;
         
@@ -2376,7 +2490,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         
         _dateString = [[NSMutableString alloc] initWithCapacity:16];
         
-        CGFloat dateFontSize = TGDialogListBrandedIOS6Style() ? 10.0f : 14.0f;
+        CGFloat dateFontSize = OGCompatDialogListBrandedStyle() ? 10.0f : 14.0f;
         CGFloat amWidth = 24.0f;
         if (TGIsPad())
         {
@@ -2398,15 +2512,15 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         
         bool fadeTransition = cpuCoreCount() > 1;
         
-        CGFloat avatarSize = TGDialogListAvatarSize();
+        CGFloat avatarSize = OGDialogListAvatarDiameter();
         CGFloat avatarX = TGDialogListAvatarInset();
-        CGFloat avatarY = TGDialogListBrandedIOS6Style() ? 5.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 7.0f);
+        CGFloat avatarY = OGCompatDialogListBrandedStyle() ? 5.0f : (OGCompatDialogListClassicStyle() ? 12.0f : 7.0f);
         _avatarView = [[TGLetteredAvatarView alloc] initWithFrame:CGRectMake(avatarX, avatarY, avatarSize, avatarSize)];
-        [_avatarView setSingleFontSize:TGDialogListBrandedIOS6Style() ? 21.0f : (TGDialogListClassicIOS6Style() ? 24.0f : 28.0f) doubleFontSize:TGDialogListBrandedIOS6Style() ? 16.0f : (TGDialogListClassicIOS6Style() ? 18.0f : 21.0f) useBoldFont:false];
-        if (TGDialogListClassicIOS6Style())
+        [_avatarView setSingleFontSize:OGCompatDialogListBrandedStyle() ? 21.0f : (OGCompatDialogListClassicStyle() ? 24.0f : 28.0f) doubleFontSize:OGCompatDialogListBrandedStyle() ? 16.0f : (OGCompatDialogListClassicStyle() ? 18.0f : 21.0f) useBoldFont:false];
+        if (OGCompatDialogListClassicStyle())
         {
             _avatarView.clipsToBounds = true;
-            _avatarView.layer.cornerRadius = TGDialogListBrandedIOS6Style() ? 8.0f : 7.0f;
+            _avatarView.layer.cornerRadius = OGCompatDialogListBrandedStyle() ? 8.0f : 7.0f;
         }
         _avatarView.fadeTransition = fadeTransition;
         [_wrapView addSubview:_avatarView];
@@ -2446,25 +2560,25 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         return;
     
     _presentation = presentation;
-    _textView.titleFont = TGDialogListBrandedIOS6Style() ? TGBoldSystemFontOfSize(TGDialogListBrandedIOS6TitleFontSize) : TGMediumSystemFontOfSize(16.0f);
-    _textView.textFont = TGSystemFontOfSize(TGDialogListBrandedIOS6Style() ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
+    _textView.titleFont = OGCompatDialogListBrandedStyle() ? TGBoldSystemFontOfSize(OGCompatDialogListBrandedTitleFontSize) : TGMediumSystemFontOfSize(16.0f);
+    _textView.textFont = TGSystemFontOfSize(OGCompatDialogListBrandedStyle() ? OGCompatDialogListBrandedBodyFontSize : 15.0f);
     _textView.authorNameFont = _textView.textFont;
-    CGFloat dateFontSize = TGIsPad() ? 15.0f : (TGDialogListBrandedIOS6Style() ? 10.0f : 14.0f);
+    CGFloat dateFontSize = TGIsPad() ? 15.0f : (OGCompatDialogListBrandedStyle() ? 10.0f : 14.0f);
     _dateLabel.dateFont = TGSystemFontOfSize(dateFontSize);
     _dateLabel.dateTextFont = _dateLabel.dateFont;
     _dateLabel.dateLabelFont = _dateLabel.dateFont;
     _validSize = CGSizeZero;
     
-    if (TGDialogListClassicIOS6Style())
+    if (OGCompatDialogListClassicStyle())
     {
         bool darkStyle = presentation.pallete.isDark;
         self.backgroundColor = darkStyle ? presentation.pallete.backgroundColor : [UIColor whiteColor];
         self.selectedBackgroundView.backgroundColor = darkStyle ? presentation.pallete.selectionColor : UIColorRGB(0xd8e5f1);
         _separatorLayer.backgroundColor = darkStyle ? [UIColor clearColor].CGColor : UIColorRGB(0xd4d4d4).CGColor;
         _separatorLayer.hidden = darkStyle;
-        if (TGDialogListBrandedIOS6Style())
+        if (OGCompatDialogListBrandedStyle())
         {
-            CGFloat badgeFontSize = 11.0f * TGDialogListBrandedIOS6BadgeScale;
+            CGFloat badgeFontSize = 11.0f * OGCompatDialogListBrandedBadgeScale;
             UIFont *badgeFont = TGBoldSystemFontOfSize(badgeFontSize);
             _unreadCountLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(badgeFontSize);
             _unreadCountLabel.shadowColor = [UIColor clearColor];
@@ -2492,10 +2606,10 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     _textView.presentation = presentation;
     [_textView setNeedsDisplay];
     
-    CGFloat brandedBadgeHeight = 18.0f * TGDialogListBrandedIOS6BadgeScale;
+    CGFloat brandedBadgeHeight = 18.0f * OGCompatDialogListBrandedBadgeScale;
     UIImage *brandedBadgeImage = [TGPresentation brandedIOS6ShadowedBadgeImageForWidth:brandedBadgeHeight height:brandedBadgeHeight];
-    _unreadBackgroundImage = TGDialogListBrandedIOS6Style() ? brandedBadgeImage : presentation.images.dialogBadgeImage;
-    _unreadMutedBackgroundImage = TGDialogListBrandedIOS6Style() ? brandedBadgeImage : presentation.images.dialogMutedBadgeImage;
+    _unreadBackgroundImage = OGCompatDialogListBrandedStyle() ? brandedBadgeImage : presentation.images.dialogBadgeImage;
+    _unreadMutedBackgroundImage = OGCompatDialogListBrandedStyle() ? brandedBadgeImage : presentation.images.dialogMutedBadgeImage;
     
     bool resetButtons = _wrapView.presentation != nil && presentation != _wrapView.presentation;
     _wrapView.presentation = presentation;
@@ -2513,29 +2627,29 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     {
         _unreadCountBackgrond.image = _unreadBackgroundImage;
     }
-    _unreadCountBackgrond.contentMode = TGDialogListBrandedIOS6Style() ? UIViewContentModeCenter : UIViewContentModeScaleToFill;
+    _unreadCountBackgrond.contentMode = OGCompatDialogListBrandedStyle() ? UIViewContentModeCenter : UIViewContentModeScaleToFill;
     
     if (_unseenMentionsView == nil)
     {
-        _unseenMentionsView = [[TGSimpleImageView alloc] initWithImage:TGDialogListBrandedIOS6Style() ? presentation.images.dialogBrandedMentionIcon : presentation.images.dialogMentionedIcon];
+        _unseenMentionsView = [[TGSimpleImageView alloc] initWithImage:OGCompatDialogListBrandedStyle() ? presentation.images.dialogBrandedMentionIcon : presentation.images.dialogMentionedIcon];
         [_wrapView addSubview:_unseenMentionsView];
     }
     else
     {
-        _unseenMentionsView.image = TGDialogListBrandedIOS6Style() ? presentation.images.dialogBrandedMentionIcon : presentation.images.dialogMentionedIcon;
+        _unseenMentionsView.image = OGCompatDialogListBrandedStyle() ? presentation.images.dialogBrandedMentionIcon : presentation.images.dialogMentionedIcon;
     }
     
     if (_pinnedBackgrond == nil)
     {
-        _pinnedBackgrond = [[TGSimpleImageView alloc] initWithImage:TGDialogListBrandedIOS6Style() ? presentation.images.dialogBrandedPinIcon : presentation.images.dialogPinnedIcon];
+        _pinnedBackgrond = [[TGSimpleImageView alloc] initWithImage:OGCompatDialogListBrandedStyle() ? presentation.images.dialogBrandedPinIcon : presentation.images.dialogPinnedIcon];
         [_wrapView addSubview:_pinnedBackgrond];
     }
     else
     {
-        _pinnedBackgrond.image = TGDialogListBrandedIOS6Style() ? presentation.images.dialogBrandedPinIcon : presentation.images.dialogPinnedIcon;
+        _pinnedBackgrond.image = OGCompatDialogListBrandedStyle() ? presentation.images.dialogBrandedPinIcon : presentation.images.dialogPinnedIcon;
     }
 
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
     {
         if (_brandedDisclosureView == nil)
         {
@@ -2550,9 +2664,9 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         _brandedDisclosureView.hidden = true;
     }
 
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
     {
-        _textView.statusFont = TGSystemFontOfSize(TGDialogListBrandedIOS6BodyFontSize);
+        _textView.statusFont = TGSystemFontOfSize(OGCompatDialogListBrandedBodyFontSize);
         _textView.statusColor = [TGPresentation brandedIOS6DialogListAppearance].statusColor;
         _textView.statusText = _statusText;
 
@@ -2658,7 +2772,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         
         if (TGIsPad() && _separatorLayer != nil)
         {
-            bool hidden = (TGDialogListClassicIOS6Style() && _presentation.pallete.isDark) || self.selected || self.highlighted;
+            bool hidden = (OGCompatDialogListClassicStyle() && _presentation.pallete.isDark) || self.selected || self.highlighted;
             if (_separatorLayer.hidden != hidden)
             {
                 [CATransaction begin];
@@ -2693,7 +2807,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         
         if (TGIsPad() && _separatorLayer != nil)
         {
-            bool hidden = (TGDialogListClassicIOS6Style() && _presentation.pallete.isDark) || self.selected || self.highlighted;
+            bool hidden = (OGCompatDialogListClassicStyle() && _presentation.pallete.isDark) || self.selected || self.highlighted;
             if (_separatorLayer.hidden != hidden)
             {
                 [CATransaction begin];
@@ -2800,8 +2914,8 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     if (_isSavedMessages || _avatarUrl.length == 0 || _hasExplicitContent)
         return;
 
-    CGFloat avatarSize = TGDialogListAvatarSize();
-    NSString *avatarFilter = TGDialogListBrandedIOS6Style() ? @"scale:50x50" : (TGDialogListClassicIOS6Style() ? @"scale:52x52" : @"circle:62x62");
+    CGFloat avatarSize = OGDialogListAvatarDiameter();
+    NSString *avatarFilter = OGCompatDialogListBrandedStyle() ? @"scale:50x50" : (OGCompatDialogListClassicStyle() ? @"scale:52x52" : @"circle:62x62");
     if (![_avatarView.currentUrl isEqualToString:_avatarUrl])
     {
         UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:avatarSize];
@@ -2971,7 +3085,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 
 static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool mutable, bool groupable, bool grouped, bool archived, bool isAd) {
     bool archiveButton = !isAd && !(archived && [TGOnegramSettings boolForKey:TGOnegramSettingGeneralDisableUnarchiveSwipe]);
-    if (TGDialogListBrandedIOS6Style())
+    if (OGCompatDialogListBrandedStyle())
     {
         NSMutableArray *buttons = [[NSMutableArray alloc] init];
         if (archiveButton)
@@ -3027,7 +3141,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 
 - (UIImage *)brandedBackgroundImage
 {
-    if (!TGDialogListBrandedIOS6Style())
+    if (!OGCompatDialogListBrandedStyle())
         return nil;
     return _presentation.images.dialogBrandedBackgroundImage;
 }
@@ -3125,8 +3239,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 {
     NSString *sourceMessageText = _sourceMessageText;
     NSString *sourceAuthorName = _sourceAuthorName;
-    bool brandedStyle = TGDialogListBrandedIOS6Style();
-    bool classicStyle = TGDialogListClassicIOS6Style();
+    bool brandedStyle = OGCompatDialogListBrandedStyle();
+    bool classicStyle = OGCompatDialogListClassicStyle();
     bool presentationChanged = !_hasResetSnapshot || _resetPresentation != _presentation || _resetBrandedStyle != brandedStyle || _resetClassicStyle != classicStyle;
     bool previewDirty = !_hasResetSnapshot || presentationChanged || _resetSourceConversationId != _conversationId || _resetSourceIsSavedMessages != _isSavedMessages || _resetSourceEncryptionStatus != _encryptionStatus || _resetSourceIsGroupChat != _isGroupChat || _resetSourceRawText != _rawText || _resetSourceIsChannel != _isChannel || _resetSourceIsChannelGroup != _isChannelGroup || _resetSourceIsEncrypted != _isEncrypted || _resetSourceEncryptionOutgoing != _encryptionOutgoing || _resetSourceAuthorIsSelf != _authorIsSelf || _resetSourceOutgoing != _outgoing || !TGDialogListObjectsEqual(_resetSourceMessageText, sourceMessageText) || !TGDialogListObjectsEqual(_resetSourceMessageAttachments, _messageAttachments) || !TGDialogListObjectsEqual(_resetSourcePreparedPreview, _preparedPreview) || !TGDialogListObjectsEqual(_resetSourceUsers, _users) || !TGDialogListObjectsEqual(_resetSourceAuthorName, sourceAuthorName) || !TGDialogListObjectsEqual(_resetSourceEncryptionFirstName, _encryptionFirstName);
     bool avatarDirty = !_hasResetSnapshot || presentationChanged || _resetAvatarConversationId != _conversationId || _resetAvatarIsSavedMessages != _isSavedMessages || _resetAvatarEncryptedUserId != _encryptedUserId || _resetAvatarIsFeed != _isFeed || _resetAvatarHasExplicitContent != _hasExplicitContent || _resetAvatarIsEncrypted != _isEncrypted || _resetAvatarIsBroadcast != _isBroadcast || !TGDialogListObjectsEqual(_resetAvatarUrl, _avatarUrl) || !TGDialogListObjectsEqual(_resetAvatarTitleLetters, _titleLetters) || !TGDialogListObjectsEqual(_resetFeedChatIds, _feedChatIds) || !TGDialogListObjectsEqual(_resetFeedChatTitles, _feedChatTitles) || !TGDialogListObjectsEqual(_resetFeedAvatarUrls, _feedAvatarUrls) || !TGDialogListObjectsEqual(_resetAvatarTitleText, _titleText);
@@ -3713,6 +3827,17 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                             _messageTextColor = actionTextColor;
                             break;
                         }
+                        case TGMessageActionPaidMessagesRefunded:
+                        case TGMessageActionPaidMessagesPrice:
+                        case TGMessageActionNoPaidMessagesTokenUsed:
+                        {
+                            NSString *peerName = TGPeerIdIsUser(_conversationId) ? [TGDatabaseInstance() loadUser:_conversationId].displayFirstName : nil;
+                            _messageText = [TGPaidMessagesSignals serviceTextForAction:actionAttachment outgoing:_authorIsSelf authorName:_authorName peerName:peerName];
+                            _messageTextColor = actionTextColor;
+                            attachmentFound = true;
+                            _hideAuthorName = true;
+                            break;
+                        }
                         case TGMessageActionBotAllowed:
                         {
                             _messageText = [NSString stringWithFormat:TGLocalized(@"AuthSessions.Message"), actionAttachment.actionData[@"domain"]];
@@ -4181,7 +4306,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             if (_avatarView.hidden)
                 _avatarView.hidden = false;
 
-            CGFloat avatarSize = TGDialogListAvatarSize();
+            CGFloat avatarSize = OGDialogListAvatarDiameter();
             UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:avatarSize];
             if (_isSavedMessages)
             {
@@ -4488,6 +4613,16 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 {
 }
 
+- (void)setFolderTags:(NSArray *)folderTags
+{
+    if (!TGDialogListObjectsEqual(_folderTags, folderTags))
+    {
+        _folderTags = [folderTags copy];
+        _validSize = CGSizeZero;
+        [self setNeedsLayout];
+    }
+}
+
 - (void)setIsLastCell:(bool)isLastCell {
     if (_isLastCell != isLastCell) {
         _isLastCell = isLastCell;
@@ -4553,9 +4688,9 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                         frame.size.width = self.bounds.size.width - 116.0f;
                         frame.origin.x = 116.0f;
                     } else {
-                        CGFloat contentX = TGDialogListContentOffset() + communityInset;
-                        frame.size.width = self.bounds.size.width - contentX;
-                        frame.origin.x = contentX;
+                        CGFloat contentOriginX = OGDialogListTextLeading() + communityInset;
+                        frame.size.width = self.bounds.size.width - contentOriginX;
+                        frame.origin.x = contentOriginX;
                     }
                 }
                 if (!CGRectEqualToRect(subview.frame, frame)) {
@@ -4598,8 +4733,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     CGFloat safeInset = 0.0f;
     if (iosMajorVersion() >= 11 && [self respondsToSelector:@selector(safeAreaInsets)])
     {
-        UIEdgeInsets (*safeAreaInsetsImp)(id, SEL) = (UIEdgeInsets (*)(id, SEL))[self methodForSelector:@selector(safeAreaInsets)];
-        safeInset = safeAreaInsetsImp(self, @selector(safeAreaInsets)).left;
+        UIEdgeInsets (*safeInsetGetter)(id, SEL) = (UIEdgeInsets (*)(id, SEL))[self methodForSelector:@selector(safeAreaInsets)];
+        safeInset = safeInsetGetter(self, @selector(safeAreaInsets)).left;
     }
     
     if (contentOffset > safeInset + FLT_EPSILON && (_pinnedToTop || _isAd)) {
@@ -4643,8 +4778,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     
     TG_TIMESTAMP_MEASURE(cellLayout);
     
-    CGFloat contentX = TGDialogListContentOffset();
-    CGFloat separatorOffset = contentX + communityInset;
+    CGFloat contentOriginX = OGDialogListTextLeading();
+    CGFloat separatorOffset = contentOriginX + communityInset;
     
     if (_separatorLayer != nil) {
         bool disabledActions = [CATransaction disableActions];
@@ -4660,25 +4795,25 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         _wrapView.frame = wrapFrame;
     [self updateCommunityIndicator];
 
-    CGFloat avatarSize = TGDialogListAvatarSize();
+    CGFloat avatarSize = OGDialogListAvatarDiameter();
     CGFloat avatarX = TGDialogListAvatarInset();
-    CGFloat avatarY = TGDialogListBrandedIOS6Style() ? 5.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 7.0f);
+    CGFloat avatarY = OGCompatDialogListBrandedStyle() ? 5.0f : (OGCompatDialogListClassicStyle() ? 12.0f : 7.0f);
     CGRect avatarFrame = CGRectMake(avatarX, avatarY, avatarSize, avatarSize);
     if (!CGRectEqualToRect(_avatarView.frame, avatarFrame))
         _avatarView.frame = avatarFrame;
     if (_storyRingView != nil)
         [_storyRingView layoutAroundFrame:avatarFrame spacing:1.5f];
-    if (TGDialogListBrandedIOS6Style() && _brandedAvatarOverlayView != nil && !CGSizeEqualToSize(_brandedAvatarOverlayView.image.size, avatarFrame.size))
+    if (OGCompatDialogListBrandedStyle() && _brandedAvatarOverlayView != nil && !CGSizeEqualToSize(_brandedAvatarOverlayView.image.size, avatarFrame.size))
         _brandedAvatarOverlayView.image = [TGPresentation brandedIOS6DialogAvatarOverlayImageForSize:avatarFrame.size];
 
-    if (TGDialogListBrandedIOS6Style() && _brandedDisclosureView != nil)
+    if (OGCompatDialogListBrandedStyle() && _brandedDisclosureView != nil)
     {
         UIImage *disclosureImage = _unread ? _presentation.images.dialogBrandedDisclosureUnreadIcon : _presentation.images.dialogBrandedDisclosureIcon;
         if (_brandedDisclosureView.image != disclosureImage)
             _brandedDisclosureView.image = disclosureImage;
         CGSize disclosureSize = disclosureImage.size;
         CGFloat disclosureY = CGFloor(CGRectGetMidY(_avatarView.frame) - disclosureSize.height / 2.0f);
-        CGRect disclosureFrame = CGRectMake(TGDialogListCenteredOrigin(size.width - TGDialogListBrandedIOS6AccessoryCenterInset, disclosureSize.width), disclosureY, disclosureSize.width, disclosureSize.height);
+        CGRect disclosureFrame = CGRectMake(TGDialogListCenteredOrigin(size.width - OGCompatDialogListBrandedAccessoryCenterInset, disclosureSize.width), disclosureY, disclosureSize.width, disclosureSize.height);
         if (!CGRectEqualToRect(_brandedDisclosureView.frame, disclosureFrame))
             _brandedDisclosureView.frame = disclosureFrame;
     }
@@ -4698,18 +4833,18 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 
         if (_textView != nil)
         {
-            if (TGDialogListBrandedIOS6Style())
+            if (OGCompatDialogListBrandedStyle())
             {
-                CGRect textViewFrame = CGRectMake(contentX, 0.0f, size.width - contentX, 62.0f);
+                CGRect textViewFrame = CGRectMake(contentOriginX, 0.0f, size.width - contentOriginX, 62.0f);
                 if (!CGRectEqualToRect(_textView.frame, textViewFrame))
                 {
                     _textView.frame = textViewFrame;
                     [_textView setNeedsDisplay];
                 }
             }
-            else if (!CGSizeEqualToSize(_textView.frame.size, CGRectMake(contentX - 1.0f, 6, size.width - (contentX - 1.0f), 62).size))
+            else if (!CGSizeEqualToSize(_textView.frame.size, CGRectMake(contentOriginX - 1.0f, 6, size.width - (contentOriginX - 1.0f), 62).size))
             {
-                _textView.frame = CGRectMake(contentX, 6, size.width - contentX, 62);
+                _textView.frame = CGRectMake(contentOriginX, 6, size.width - contentOriginX, 62);
                 [_textView setNeedsDisplay];
             }
         }
@@ -4725,17 +4860,17 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         }
         CGFloat countTextWidth = _unreadCountLabel.hidden ? 9.0f : _layoutUnreadTextWidth;
         
-        CGFloat brandedBadgeHeight = 18.0f * TGDialogListBrandedIOS6BadgeScale;
-        CGFloat brandedBadgeHorizontalPadding = 10.0f * TGDialogListBrandedIOS6BadgeScale;
-        CGFloat backgroundWidth = TGDialogListBrandedIOS6Style() ? MAX(brandedBadgeHeight, countTextWidth + brandedBadgeHorizontalPadding) : MAX(20.0f, countTextWidth + 11.0f);
-        CGRect unreadCountBackgroundFrame = TGDialogListBrandedIOS6Style() ? CGRectMake(0.0f, 0.0f, backgroundWidth, brandedBadgeHeight) : CGRectMake(size.width - 11.0f - backgroundWidth, 38.0f, backgroundWidth, 20.0f);
-        if (!TGDialogListBrandedIOS6Style() && !CGRectEqualToRect(_unreadCountBackgrond.frame, unreadCountBackgroundFrame))
+        CGFloat brandedBadgeHeight = 18.0f * OGCompatDialogListBrandedBadgeScale;
+        CGFloat brandedBadgeHorizontalPadding = 10.0f * OGCompatDialogListBrandedBadgeScale;
+        CGFloat backgroundWidth = OGCompatDialogListBrandedStyle() ? MAX(brandedBadgeHeight, countTextWidth + brandedBadgeHorizontalPadding) : MAX(20.0f, countTextWidth + 11.0f);
+        CGRect unreadCountBackgroundFrame = OGCompatDialogListBrandedStyle() ? CGRectMake(0.0f, 0.0f, backgroundWidth, brandedBadgeHeight) : CGRectMake(size.width - 11.0f - backgroundWidth, 38.0f, backgroundWidth, 20.0f);
+        if (!OGCompatDialogListBrandedStyle() && !CGRectEqualToRect(_unreadCountBackgrond.frame, unreadCountBackgroundFrame))
             _unreadCountBackgrond.frame = unreadCountBackgroundFrame;
         CGFloat brandedAccessoryCenterX = CGRectGetMidX(_brandedDisclosureView.frame);
-        CGRect pinnedFrame = TGDialogListBrandedIOS6Style() ? CGRectMake(TGDialogListCenteredOrigin(brandedAccessoryCenterX, 16.0f), 4.0f, 16.0f, 16.0f) : CGRectMake(size.width - 14.0f - 20.0f, 39.0f, 20.0f, 20.0f);
+        CGRect pinnedFrame = OGCompatDialogListBrandedStyle() ? CGRectMake(TGDialogListCenteredOrigin(brandedAccessoryCenterX, 16.0f), 4.0f, 16.0f, 16.0f) : CGRectMake(size.width - 14.0f - 20.0f, 39.0f, 20.0f, 20.0f);
         if (!CGRectEqualToRect(_pinnedBackgrond.frame, pinnedFrame))
             _pinnedBackgrond.frame = pinnedFrame;
-        if (!TGDialogListBrandedIOS6Style())
+        if (!OGCompatDialogListBrandedStyle())
         {
             CGRect unreadCountLabelFrame = _unreadCountLabel.frame;
             unreadCountLabelFrame.origin = CGPointMake(unreadCountBackgroundFrame.origin.x + TGScreenPixelFloor(((unreadCountBackgroundFrame.size.width - countTextWidth) / 2.0f)), unreadCountBackgroundFrame.origin.y + 1.0f - TGScreenPixel);
@@ -4767,7 +4902,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         CGSize dateTextSize = _layoutDateTextSize;
 
         CGFloat dateWidth = _date == 0 ? 0 : (int)(dateTextSize.width);
-        CGRect dateFrame = TGDialogListBrandedIOS6Style() ? CGRectMake(MIN(TGDialogListCenteredOrigin(brandedAccessoryCenterX, dateWidth), size.width - 8.0f - dateWidth), 48.0f, CGCeil(dateTextSize.width), 15.0f) : CGRectMake(size.width - dateWidth - 11.0f + (contentOffset > FLT_EPSILON ? 4.0f : 0.0f), 10.0f + TGScreenPixel - (TGIsPad() ? 1.0f : 0.0f), _isAd ? dateTextSize.width : 75, 20);
+        CGRect dateFrame = OGCompatDialogListBrandedStyle() ? CGRectMake(MIN(TGDialogListCenteredOrigin(brandedAccessoryCenterX, dateWidth), size.width - 8.0f - dateWidth), 48.0f, CGCeil(dateTextSize.width), 15.0f) : CGRectMake(size.width - dateWidth - 11.0f + (contentOffset > FLT_EPSILON ? 4.0f : 0.0f), 10.0f + TGScreenPixel - (TGIsPad() ? 1.0f : 0.0f), _isAd ? dateTextSize.width : 75, 20);
         if (!CGRectEqualToRect(_dateLabel.frame, dateFrame))
             _dateLabel.frame = dateFrame;
         bool showsDeliveryStatus = !_deliveredCheckmark.hidden || !_readCheckmark.hidden || (_pendingIndicator != nil && !_pendingIndicator.hidden);
@@ -4786,15 +4921,15 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         }
         OGDialogLayoutInput input = {0};
         input.width = size.width;
-        input.contentInset = contentX;
+        input.contentInset = contentOriginX;
         input.dateOrigin = dateFrame.origin.x;
         input.statusWidth = brandedStatusWidth;
         input.badgeWidth = unreadCountBackgroundFrame.size.width;
-        input.mentionWidth = TGDialogListBrandedIOS6Style() ? TGDialogListBrandedMentionWidth(_presentation) : _unseenMentionsView.image.size.width;
+        input.mentionWidth = OGCompatDialogListBrandedStyle() ? TGDialogListBrandedMentionWidth(_presentation) : _unseenMentionsView.image.size.width;
         input.verifiedWidth = _isVerified ? _verifiedIcon.bounds.size.width : 0.0f;
         input.premiumWidth = _premiumIcon.superview != nil ? _premiumIcon.bounds.size.width : 0.0f;
-        input.previewPadding = TGDialogListBrandedIOS6Style() ? TGDialogListBrandedPreviewRightPadding(_textView.textFont) : 0.0f;
-        input.branded = TGDialogListBrandedIOS6Style();
+        input.previewPadding = OGCompatDialogListBrandedStyle() ? TGDialogListBrandedPreviewRightPadding(_textView.textFont) : 0.0f;
+        input.branded = OGCompatDialogListBrandedStyle();
         input.encrypted = _isEncrypted;
         input.muted = _isMuted;
         input.muteWidth = _presentation.images.dialogMutedIcon.size.width;
@@ -4805,7 +4940,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         input.deliveryStatus = showsDeliveryStatus;
         OGDialogHorizontalLayout geometry = OGDialogHorizontalLayoutMake(input);
         CGFloat titleLabelWidth = geometry.maximumTitleWidth;
-        CGFloat groupChatIconWidth = geometry.titleOrigin - contentX;
+        CGFloat groupChatIconWidth = geometry.titleOrigin - contentOriginX;
 
         UIFont *titleFont = _textView.titleFont;
         CGFloat titleTextWidth = 0.0f;
@@ -4829,7 +4964,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
-        CGFloat checkmarkY = TGDialogListBrandedIOS6Style() ? 31.0f : 13.0f;
+        CGFloat checkmarkY = OGCompatDialogListBrandedStyle() ? 31.0f : 13.0f;
         CGRect deliveredFrame = CGRectMake(dateFrame.origin.x - 16, checkmarkY, 14, 11);
         if (!CGRectEqualToRect(_deliveredCheckmark.frame, deliveredFrame))
             _deliveredCheckmark.frame = deliveredFrame;
@@ -4849,8 +4984,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         CGFloat brandedTitleHeight = CGCeil(OGPlatformFontLineHeight(_textView.titleFont));
         CGFloat brandedBodyHeight = CGCeil(OGPlatformFontLineHeight(_textView.textFont));
         CGFloat dateBaseline = dateFrame.origin.y + _dateLabel.dateFont.ascender;
-        CGFloat titleY = TGDialogListBrandedIOS6Style() ? brandedTitleY : TGDialogListPixelRound(dateBaseline - titleBaselineOffset);
-        CGRect titleRect = CGRectMake(contentX + groupChatIconWidth, titleY, titleLabelWidth, TGDialogListBrandedIOS6Style() ? brandedTitleHeight : 20.0f);
+        CGFloat titleY = OGCompatDialogListBrandedStyle() ? brandedTitleY : TGDialogListPixelRound(dateBaseline - titleBaselineOffset);
+        CGRect titleRect = CGRectMake(contentOriginX + groupChatIconWidth, titleY, titleLabelWidth, OGCompatDialogListBrandedStyle() ? brandedTitleHeight : 20.0f);
         if ([self brandedStatusVisible])
         {
             UIFont *statusFont = _textView.statusFont;
@@ -4868,7 +5003,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 
         CGFloat brandedMessageY = brandedTitleY + brandedTitleHeight;
         CGFloat brandedMessageHeight = MAX(brandedBodyHeight, 62.0f - brandedMessageY);
-        CGRect messageRect = CGRectMake(contentX, TGDialogListBrandedIOS6Style() ? brandedMessageY : 30.0f - TGScreenPixel, geometry.previewWidth, TGDialogListBrandedIOS6Style() ? brandedMessageHeight : 40.0f);
+        CGRect messageRect = CGRectMake(contentOriginX, OGCompatDialogListBrandedStyle() ? brandedMessageY : 30.0f - TGScreenPixel, geometry.previewWidth, OGCompatDialogListBrandedStyle() ? brandedMessageHeight : 40.0f);
         
         CGRect typingRect = messageRect;
         typingRect.size.width -= 12;
@@ -4894,7 +5029,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                 }
                 else
                 {
-                    _layoutTypingSize = TGDialogListBrandedIOS6Style() ? TGDialogListCachedTextMetric(typingText, typingFont, 0.0f, 1, 0) : TGDialogListCachedTextMetric(typingText, typingFont, typingWidth, 1, 2);
+                    _layoutTypingSize = OGCompatDialogListBrandedStyle() ? TGDialogListCachedTextMetric(typingText, typingFont, 0.0f, 1, 0) : TGDialogListCachedTextMetric(typingText, typingFont, typingWidth, 1, 2);
                 }
             }
             CGSize typingSize = _layoutTypingSize;
@@ -4909,22 +5044,54 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         if (_authorName != nil && !_hideAuthorName)
         {
             CGFloat authorNameY = 29.0f + TGScreenPixel;
-            if (TGDialogListBrandedIOS6Style())
+            if (OGCompatDialogListBrandedStyle())
                 authorNameY = brandedMessageY;
-            else if (!TGDialogListClassicIOS6Style() && iosMajorVersion() >= 7)
+            else if (!OGCompatDialogListClassicStyle() && iosMajorVersion() >= 7)
                 authorNameY = 26.0f;
-            _textView.authorNameFrame = CGRectMake(contentX, authorNameY, geometry.authorWidth, TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 20.0f);
+            _textView.authorNameFrame = CGRectMake(contentOriginX, authorNameY, geometry.authorWidth, OGCompatDialogListBrandedStyle() ? brandedBodyHeight : 20.0f);
             
-            CGFloat authorLineHeight = TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 12.0f;
-            messageRect.origin.y += TGDialogListBrandedIOS6Style() ? authorLineHeight : (iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17);
+            CGFloat authorLineHeight = OGCompatDialogListBrandedStyle() ? brandedBodyHeight : 12.0f;
+            messageRect.origin.y += OGCompatDialogListBrandedStyle() ? authorLineHeight : (iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17);
             messageRect.size.height -= authorLineHeight;
         }
+
+        NSUInteger maxTextLines = 0;
+        CGRect folderTagsFrame = CGRectZero;
+        if (_folderTags.count != 0 && _typingString.length == 0 && messageRect.size.width > 40.0f)
+        {
+            CGFloat tagsHeight = TGDialogListFolderTagsHeight();
+            CGFloat lineHeight = CGCeil(OGPlatformFontLineHeight(_textView.textFont));
+            bool authorVisible = _authorName != nil && !_hideAuthorName;
+            CGFloat tagsY = messageRect.origin.y + lineHeight + 2.0f;
+            if (!authorVisible && ![TGOnegramSettings boolForKey:TGOnegramSettingChatListCompact] && tagsY + tagsHeight <= size.height - 3.0f)
+            {
+                maxTextLines = 1;
+                CGFloat tagsWidth = TGDialogListFolderTagsLayout(_folderTags, messageRect.size.width, nil);
+                folderTagsFrame = CGRectMake(TGIsRTL() ? CGRectGetMaxX(messageRect) - tagsWidth : messageRect.origin.x, tagsY, tagsWidth, tagsHeight);
+            }
+            else
+            {
+                CGFloat tagsWidth = TGDialogListFolderTagsLayout(_folderTags, CGFloor(messageRect.size.width / 2.0f), nil);
+                if (tagsWidth > FLT_EPSILON)
+                {
+                    maxTextLines = 1;
+                    CGFloat lineY = messageRect.origin.y;
+                    CGFloat tagsX = TGIsRTL() ? messageRect.origin.x : CGRectGetMaxX(messageRect) - tagsWidth;
+                    messageRect.size.width -= tagsWidth + 6.0f;
+                    if (TGIsRTL())
+                        messageRect.origin.x += tagsWidth + 6.0f;
+                    folderTagsFrame = CGRectMake(tagsX, lineY + CGFloor((lineHeight - tagsHeight) / 2.0f), tagsWidth, tagsHeight);
+                }
+            }
+        }
+        _textView.maxTextLines = maxTextLines;
+        CGFloat messageRectBaseY = messageRect.origin.y;
 
         TG_TIMESTAMP_MEASURE(cellLayout);
         
         titleRect.size.width = titleLabelWidth;
         
-        if (!TGDialogListBrandedIOS6Style() && iosMajorVersion() < 7 && _authorName != nil && !_hideAuthorName)
+        if (!OGCompatDialogListBrandedStyle() && iosMajorVersion() < 7 && _authorName != nil && !_hideAuthorName)
         {
             UIFont *messageFont = _textView.textFont;
             CGFloat messageWidth = messageRect.size.width;
@@ -4981,11 +5148,13 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                 _muteIcon.frame = muteRect;
         }
         
-        if (TGDialogListBrandedIOS6Style())
+        if (OGCompatDialogListBrandedStyle())
             [self layoutBrandedBadgesWithTitleRect:titleRect badgeSize:unreadCountBackgroundFrame.size];
 
         _textView.titleFrame = titleRect;
         _textView.textFrame = messageRect;
+        _textView.folderTags = _folderTags;
+        _textView.folderTagsFrame = CGRectOffset(folderTagsFrame, 0.0f, messageRect.origin.y - messageRectBaseY);
 
         _validSize = size;
         _fastLayoutSize = self.bounds.size;

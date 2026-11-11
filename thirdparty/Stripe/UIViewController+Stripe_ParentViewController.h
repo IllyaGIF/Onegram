@@ -10,10 +10,10 @@
 
 @interface UIViewController (Stripe_ParentViewController)
 
-- (UIViewController *)stp_parentViewControllerOfClass:(Class)klass;
+- (UIViewController *_Nullable)stp_parentViewControllerOfClass:(Class _Nonnull)klass;
 - (BOOL)stp_isTopNavigationController;
 - (BOOL)stp_isAtRootOfNavigationController;
-- (UIViewController *)stp_previousViewControllerInNavigation;
+- (UIViewController *_Nullable)stp_previousViewControllerInNavigation;
 
 @end
 

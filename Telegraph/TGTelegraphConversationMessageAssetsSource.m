@@ -11,9 +11,16 @@
 int TGBaseFontSize = 16;
 static int defaultMonochromeColor = 0x000000;
 
-static CTFontRef TGCreateCTFontFromUIFont(UIFont *uiFont)
+static CTFontRef OGCompatMakeMessageFont(UIFont *current, UIFont *legacy)
 {
-    return CTFontCreateWithName((__bridge CFStringRef)uiFont.fontName, uiFont.pointSize, NULL);
+    UIFont *source = iosMajorVersion() >= 7 ? current : legacy;
+    return CTFontCreateWithName((__bridge CFStringRef)source.fontName, source.pointSize, NULL);
+}
+
+static UIImage *OGCompatStretchedBackground(UIImage *generated)
+{
+    UIImage *raw = generated != nil ? generated : [UIImage imageNamed:@"MessageTimestampBackground.png"];
+    return [raw stretchableImageWithLeftCapWidth:(int)(raw.size.width / 2) topCapHeight:(int)(raw.size.height / 2)];
 }
 
 static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alphaFactor)
@@ -21,6 +28,20 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     CGFloat r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
     TGColorGetRGBA(baseColor, &r, &g, &b, &a);
     return [UIColor colorWithRed:MIN(r * factor, 1.0f) green:MIN(g * factor, 1.0f) blue:MIN(b * factor, 1.0f) alpha:MIN(1.0f, a * alphaFactor)];
+}
+
+static CGContextRef OGCompatBeginBackgroundContext(CGSize size)
+{
+    UIGraphicsBeginImageContextWithOptions(size, false, 1.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (context == NULL)
+        UIGraphicsEndImageContext();
+    return context;
+}
+
+static UIImage *OGCompatTimestampBackgroundFallback()
+{
+    return [UIImage imageNamed:@"MessageTimestampBackground.png"];
 }
 
 @implementation TGTelegraphConversationMessageAssetsSource
@@ -85,12 +106,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
             CFRelease(font);
         
         fontSize = TGBaseFontSize;
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(TGBaseFontSize));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(TGBaseFontSize);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(TGBaseFontSize), TGSystemFontOfSize(TGBaseFontSize));
     }
     
     return font;
@@ -103,12 +119,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(13.0f), TGSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -121,12 +132,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGBoldSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGMediumSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGBoldSystemFontOfSize(13.0f), TGMediumSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -139,12 +145,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(12.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(12.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(12.0f), TGSystemFontOfSize(12.0f));
     });
     
     return font;
@@ -157,12 +158,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(13.0f), TGSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -175,12 +171,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(13.0f), TGSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -193,12 +184,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(13.0f), TGSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -211,12 +197,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGMediumSystemFontOfSize(13.0f));
-        } else {
-            UIFont *systemFont = TGMediumSystemFontOfSize(13.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGMediumSystemFontOfSize(13.0f), TGMediumSystemFontOfSize(13.0f));
     });
     
     return font;
@@ -229,12 +210,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(14.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(14.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(14.0f), TGSystemFontOfSize(14.0f));
     });
     
     return font;
@@ -421,12 +397,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     static CTFontRef font = nil;
     if (font == nil)
     {
-        if (iosMajorVersion() >= 7) {
-            font = TGCreateCTFontFromUIFont(TGSystemFontOfSize(14.0f));
-        } else {
-            UIFont *systemFont = TGSystemFontOfSize(14.0f);
-            font = CTFontCreateWithName((__bridge CFStringRef)systemFont.fontName, systemFont.pointSize, nil);
-        }
+        font = OGCompatMakeMessageFont(TGSystemFontOfSize(14.0f), TGSystemFontOfSize(14.0f));
     }
     return font;
 }
@@ -1002,10 +973,7 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     if (cachedImageColor != _monochromeColor || image == nil)
     {
         
-        UIImage *rawImage = [self generateSystemMessageBackground:_monochromeColor];
-        if (rawImage == nil)
-            rawImage = [UIImage imageNamed:@"MessageTimestampBackground.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
+        image = OGCompatStretchedBackground([self generateSystemMessageBackground:_monochromeColor]);
         
         cachedImageColor = _monochromeColor;
     }
@@ -1018,10 +986,7 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     static UIImage *image = nil;
     if (cachedImageColor != _monochromeColor || image == nil)
     {
-        UIImage *rawImage = [self generateSystemReplyBackground:_monochromeColor];
-        if (rawImage == nil)
-            rawImage = [UIImage imageNamed:@"MessageTimestampBackground.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
+        image = OGCompatStretchedBackground([self generateSystemReplyBackground:_monochromeColor]);
         
         cachedImageColor = _monochromeColor;
     }
@@ -1040,10 +1005,7 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     if (cachedImageColor != _monochromeColor || image == nil)
     {
         
-        UIImage *rawImage = [self generateSystemMessageBackground:_monochromeColor];
-        if (rawImage == nil)
-            rawImage = [UIImage imageNamed:@"MessageTimestampBackground.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
+        image = OGCompatStretchedBackground([self generateSystemMessageBackground:_monochromeColor]);
         
         cachedImageColor = _monochromeColor;
     }
@@ -1227,14 +1189,9 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
 {
     CGFloat backgroundAlpha = _systemAlpha;
     
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(16.0f, 16.0f), false, 1.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextRef context = OGCompatBeginBackgroundContext(CGSizeMake(16.0f, 16.0f));
     if (context == NULL)
-    {
-        UIGraphicsEndImageContext();
-        return [UIImage imageNamed:@"MessageTimestampBackground.png"];
-    }
+        return OGCompatTimestampBackgroundFallback();
     
     CGRect bounds = CGRectMake(0.0f, 0.0f, 16.0f, 16.0f);
     
@@ -1296,14 +1253,9 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
 {    
     CGFloat backgroundAlpha = _systemAlpha;
     
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(21, 21), false, 1.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextRef context = OGCompatBeginBackgroundContext(CGSizeMake(21, 21));
     if (context == NULL)
-    {
-        UIGraphicsEndImageContext();
-        return [UIImage imageNamed:@"MessageTimestampBackground.png"];
-    }
+        return OGCompatTimestampBackgroundFallback();
     
     CGRect bounds = CGRectMake(0.5f, 0, 20, 20);
     

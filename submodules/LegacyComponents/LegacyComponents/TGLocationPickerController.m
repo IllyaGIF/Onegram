@@ -159,8 +159,9 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
     
     _mapView.tapEnabled = true;
     _mapView.longPressAsTapEnabled = true;
-    if ([_mapView respondsToSelector:NSSelectorFromString(@"setRotateEnabled:")])
-        [_mapView setValue:[NSNumber numberWithBool:false] forKey:@"rotateEnabled"];
+    SEL rotateSetter = NSSelectorFromString(@"setRotateEnabled:");
+    if ([_mapView respondsToSelector:rotateSetter])
+        [_mapView setValue:@NO forKey:@"rotateEnabled"];
     
     __weak TGLocationPickerController *weakSelf = self;
     _mapView.singleTap = ^

@@ -15,6 +15,7 @@
     UILabel *_titleLabel;
     UILabel *_subtitleLabel;
     TGSimpleImageView *_iconView;
+    UIImage *_icon;
     TGSimpleImageView *_disclosureIndicator;
     
     UILabel *_badgeLabel;
@@ -62,10 +63,10 @@
 {
     [super setPresentation:presentation];
     
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    bool classicDarkStyle = classicIOS6Style && presentation.pallete.isDark;
-    _titleLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor;
-    UIImage *disclosureImage = classicIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
+    bool classicDarkStyle = classicThemeStyle && presentation.pallete.isDark;
+    _titleLabel.textColor = classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor;
+    UIImage *disclosureImage = classicThemeStyle ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
     if ([TGPresentation brandedIOS6Style])
         disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]] ?: disclosureImage;
     else if (classicDarkStyle)
@@ -80,7 +81,7 @@
     {
         OGTheme *theme = [OGTheme brandedTheme];
         [OGSettingsCell applyLegacyBrandedTitleStyleWithTheme:theme titleLabel:_titleLabel];
-        _iconView.image = _brandedSettingsIconName.length == 0 ? nil : [TGPresentation brandedIOS6ResourceImage:_brandedSettingsIconName];
+        _iconView.image = _brandedSettingsIconName.length == 0 ? _icon : [TGPresentation brandedIOS6ResourceImage:_brandedSettingsIconName];
         if (_iconView.image != nil)
             [OGSettingsCell applyLegacyBrandedIconStyleWithTheme:theme iconView:_iconView];
         UIImage *brandedDisclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
@@ -132,6 +133,7 @@
 
 - (void)setIcon:(UIImage *)icon
 {
+    _icon = icon;
     if (_iconView == nil && icon != nil)
     {
         _iconView = [[TGSimpleImageView alloc] initWithFrame:CGRectMake(15, (self.frame.size.height - 15) / 2, 29, 29)];
@@ -235,7 +237,7 @@
     _iconView.hidden = false;
     _badgeView.hidden = false;
     _badgeLabel.hidden = false;
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     
     if (_iconView.image != nil)
     {

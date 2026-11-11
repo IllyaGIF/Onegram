@@ -1,4 +1,5 @@
 #import "TGOnegramSettings.h"
+#import "TGMessageContextMenu.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGModernConversationCompanion.h"
 #import "../OnegramRuntime/OGRuntime.h"
@@ -88,12 +89,8 @@
 #import "TGPluginHost.h"
 #import "TGPluginsController.h"
 
-@interface TGModernConversationController (IOS6ReactionTap)
-- (void)_ios6SendReaction:(NSString *)reaction messageId:(int32_t)messageId;
-@end
-
-@interface TGGenericModernConversationCompanion (IOS6MediaAvailabilityRefresh)
-- (TGMessageModernConversationItem *)_updateMediaStatusData:(TGMessageModernConversationItem *)item;
+@interface TGModernConversationController (OGCompatReactions)
+- (void)_og_compat_sendReaction:(NSString *)reaction messageId:(int32_t)messageId;
 @end
 
 @interface TGModernConversationCompanionReference : NSObject
@@ -110,18 +107,17 @@
 @implementation TGModernConversationCompanionControllerReference
 @end
 
-static TGModernConversationController *TGIOS4ResolveModernConversationController(TGModernConversationCompanionControllerReference *reference)
+static TGModernConversationController *OGCompanionControllerFromBox(TGModernConversationCompanionControllerReference *reference)
 {
     if (reference == nil)
         return nil;
     @synchronized (reference)
     {
-        TGModernConversationController *controller = reference.value;
-        return controller;
+        return reference.value;
     }
 }
 
-static TGModernConversationCompanion *TGIOS4ResolveModernConversationCompanion(TGModernConversationCompanionReference *reference)
+static TGModernConversationCompanion *OGCompanionFromBox(TGModernConversationCompanionReference *reference)
 {
     if (reference == nil)
         return nil;
@@ -184,17 +180,97 @@ static bool isMessageQueue()
     return [messageQueue() isCurrentQueue];
 }
 
-static bool TGIsInternalTelegramLink(NSString *urlString)
+static bool TGModernConversationIsTelegramLink(NSString *urlString)
 {
     if (![urlString isKindOfClass:[NSString class]] || urlString.length == 0)
         return false;
 
-    NSURL *url = [NSURL URLWithString:urlString];
-    if (url.scheme.length == 0)
-        url = [NSURL URLWithString:[@"https://" stringByAppendingString:urlString]];
-
-    NSString *host = [url.host lowercaseString];
+    NSURL *parsedUrl = [NSURL URLWithString:urlString];
+    if (parsedUrl.scheme.length == 0)
+        parsedUrl = [NSURL URLWithString:[@"https://" stringByAppendingString:urlString]];
+    NSString *host = [parsedUrl.host lowercaseString];
     return [host isEqualToString:@"t.me"] || [host isEqualToString:@"telegram.me"];
+}
+
+static NSURL *OGConversationURLFromString(NSString *string)
+{
+    NSURL *url = [NSURL URLWithString:string];
+    if (url == nil)
+        url = [NSURL URLWithString:[string stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+    return url;
+}
+
+static int32_t OGConversationOptionMid(id options)
+{
+    return [options[@"mid"] intValue];
+}
+
+static int64_t OGConversationOptionPeerId(id options)
+{
+    return [options[@"peerId"] longLongValue];
+}
+
+static int64_t OGConversationOptionGroupedId(id options)
+{
+    return [options[@"groupedId"] longLongValue];
+}
+
+static TGMessage *OGConversationFindVisibleMessage(NSArray *items, int32_t mid, int64_t peerId, bool matchPeer)
+{
+    for (TGMessageModernConversationItem *item in items) {
+        if (item->_message.mid == mid && (!matchPeer || item->_message.cid == peerId))
+            return item->_message;
+    }
+    return nil;
+}
+
+static void OGConversationPlaybackTraits(NSArray *attachments, bool *isVoice, bool *playAsSingleInlineGif)
+{
+    bool viaBot = false;
+    for (id attachment in attachments) {
+        if ([attachment isKindOfClass:[TGViaUserAttachment class]] || [attachment isKindOfClass:[TGBotContextResultAttachment class]]) {
+            viaBot = true;
+            break;
+        }
+    }
+
+    TGDocumentAttributeAudio *audioAttribute = nil;
+    for (id attachment in attachments) {
+        if (![attachment isKindOfClass:[TGDocumentMediaAttachment class]])
+            continue;
+        for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes) {
+            if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
+                audioAttribute = attribute;
+                break;
+            }
+        }
+        if (audioAttribute != nil)
+            break;
+    }
+
+    bool voice = false;
+    bool roundVideo = false;
+    if (audioAttribute != nil) {
+        voice = audioAttribute.isVoice;
+    } else {
+        for (id attachment in attachments) {
+            if ([attachment isKindOfClass:[TGAudioMediaAttachment class]]) {
+                voice = true;
+                break;
+            } else if ([attachment isKindOfClass:[TGVideoMediaAttachment class]]) {
+                if (((TGVideoMediaAttachment *)attachment).roundMessage) {
+                    voice = true;
+                    roundVideo = true;
+                }
+            } else if ([attachment isKindOfClass:[TGWebPageMediaAttachment class]]) {
+                if (((TGWebPageMediaAttachment *)attachment).document.isRoundVideo)
+                    voice = true;
+            }
+        }
+    }
+
+    *isVoice = voice;
+    *playAsSingleInlineGif = roundVideo && viaBot;
 }
 
 static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
@@ -262,8 +338,8 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     STimer *_messageViewsRequestedBufferTimer;
     
     SSignalQueue *_mediaUploadQueue;
-    TGModernConversationCompanionReference *_ios4LifetimeReference;
-    TGModernConversationCompanionControllerReference *_ios4ControllerReference;
+    TGModernConversationCompanionReference *_ogLifetimeBox;
+    TGModernConversationCompanionControllerReference *_ogControllerBox;
 }
 
 @end
@@ -326,9 +402,9 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     self = [super init];
     if (self != nil)
     {
-        _ios4LifetimeReference = [[TGModernConversationCompanionReference alloc] init];
-        _ios4LifetimeReference.value = self;
-        _ios4ControllerReference = [[TGModernConversationCompanionControllerReference alloc] init];
+        _ogLifetimeBox = [[TGModernConversationCompanionReference alloc] init];
+        _ogLifetimeBox.value = self;
+        _ogControllerBox = [[TGModernConversationCompanionControllerReference alloc] init];
         _useInitialSnapshot = true;
         _actionHandle = [[ASHandle alloc] initWithDelegate:self];
         
@@ -349,39 +425,28 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         [_callbackInProgress set:[SSignal single:nil]];
         viewContext.callbackInProgress = [SSignal never];
         
-        TGModernConversationCompanionReference *weakViewContext = _ios4LifetimeReference;
-        TGModernConversationCompanionReference *weakSelf = _ios4LifetimeReference;
+        TGModernConversationCompanionReference *weakViewContext = _ogLifetimeBox;
+        TGModernConversationCompanionReference *weakSelf = _ogLifetimeBox;
         viewContext.playAudioMessageId = ^(int32_t mid)
         {
-            TGModernConversationCompanion *viewContextCompanion = TGIOS4ResolveModernConversationCompanion(weakViewContext);
+            TGModernConversationCompanion *viewContextCompanion = OGCompanionFromBox(weakViewContext);
             TGModernViewContext *strongViewContext = viewContextCompanion.viewContext;
             if (strongViewContext != nil) {
-                TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                 if (strongSelf == nil)
                     return;
                 
-                TGMessage *message = nil;
-                bool messageFromVisibleItems = false;
-                
-                for (TGMessageModernConversationItem *item in [strongSelf.controller _currentItems]) {
-                    if (item->_message.mid == mid && item->_message.cid == strongViewContext.conversation.conversationId) {
-                        message = item->_message;
-                        messageFromVisibleItems = true;
-                        break;
-                    }
-                }
-                
+                NSArray *visibleItems = [strongSelf.controller _currentItems];
+                int64_t viewPeerId = strongViewContext.conversation.conversationId;
+                TGMessage *message = OGConversationFindVisibleMessage(visibleItems, mid, viewPeerId, true);
                 if (message == nil)
-                    message = [TGDatabaseInstance() loadMessageWithMid:mid peerId:strongViewContext.conversation.conversationId];
+                    message = [TGDatabaseInstance() loadMessageWithMid:mid peerId:viewPeerId];
                 
-                if ([strongSelf isKindOfClass:[TGAdminLogConversationCompanion class]]) {
-                    for (TGMessageModernConversationItem *item in [strongSelf.controller _currentItems]) {
-                        if (item->_message.mid == mid) {
-                            message = item->_message;
-                            messageFromVisibleItems = true;
-                            break;
-                        }
-                    }
+                bool adminLog = [strongSelf isKindOfClass:[TGAdminLogConversationCompanion class]];
+                if (adminLog) {
+                    TGMessage *anyPeerMessage = OGConversationFindVisibleMessage(visibleItems, mid, 0, false);
+                    if (anyPeerMessage != nil)
+                        message = anyPeerMessage;
                 }
                 
                 TGModernConversationController *controller = strongSelf.controller;
@@ -396,47 +461,9 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
                 if (message != nil)
                 {
                     bool isVoice = false;
-                    bool foundDocumentAudio = false;
-                    bool foundRoundVideo = false;
-                    bool hasInlineBotAttribution = false;
-                    for (id attachment in message.mediaAttachments) {
-                        if ([attachment isKindOfClass:[TGViaUserAttachment class]] || [attachment isKindOfClass:[TGBotContextResultAttachment class]]) {
-                            hasInlineBotAttribution = true;
-                            break;
-                        }
-                    }
-                    for (id attachment in message.mediaAttachments) {
-                        if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]]) {
-                            for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes) {
-                                if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
-                                    isVoice = ((TGDocumentAttributeAudio *)attribute).isVoice;
-                                    foundDocumentAudio = true;
-                                    break;
-                                }
-                            }
-                            if (foundDocumentAudio)
-                                break;
-                        }
-                    }
-                    if (!foundDocumentAudio) {
-                        for (id attachment in message.mediaAttachments) {
-                            if ([attachment isKindOfClass:[TGAudioMediaAttachment class]]) {
-                                isVoice = true;
-                                break;
-                            } else if ([attachment isKindOfClass:[TGVideoMediaAttachment class]]) {
-                            if (((TGVideoMediaAttachment *)attachment).roundMessage) {
-                                isVoice = true;
-                                foundRoundVideo = true;
-                            }
-                            } else if ([attachment isKindOfClass:[TGWebPageMediaAttachment class]]) {
-                                TGWebPageMediaAttachment *webPage = (TGWebPageMediaAttachment *)attachment;
-                                if (webPage.document.isRoundVideo)
-                                    isVoice = true;
-                            }
-                        }
-                    }
-                    bool playAsSingleInlineGif = foundRoundVideo && hasInlineBotAttribution;
-                    if (playAsSingleInlineGif || [strongSelf isKindOfClass:[TGAdminLogConversationCompanion class]]) {
+                    bool playAsSingleInlineGif = false;
+                    OGConversationPlaybackTraits(message.mediaAttachments, &isVoice, &playAsSingleInlineGif);
+                    if (playAsSingleInlineGif || adminLog) {
                         TGUser *author = [TGDatabaseInstance() loadUser:message.fromUid];
                         TGMusicPlayerItem *item = [TGMusicPlayerItem itemWithMessage:message author:author];
                         [TGTelegraphInstance.musicPlayer setPlaylist:[TGGenericPeerPlaylistSignals playlistForItem:item voice:isVoice] initialItemKey:item.key metadata:[strongSelf playlistMetadata:isVoice]];
@@ -452,7 +479,7 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         };
         viewContext.resumeAudioMessage = ^
         {
-            TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+            TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
             if (strongSelf == nil)
                 return;
             
@@ -463,7 +490,7 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
             [[TGTelegraphInstance musicPlayer] controlPlay];
         };
         viewContext.replySwipeInteraction = ^void (int32_t mid, bool ended) {
-            TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+            TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
             if (strongSelf == nil)
                 return;
             
@@ -471,19 +498,19 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         };
         viewContext.replySwipeGrouped = ^void (int32_t mid, int64_t groupedId, CGFloat offset, bool ended)
         {
-            TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+            TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
             if (strongSelf == nil)
                 return;
             
             [strongSelf.controller _updateGroupedItemsForReplySwipeInteraction:mid groupedId:groupedId offset:offset ended:ended];
         };
         viewContext.canReplyToMessageId = ^bool(int32_t mid) {
-            TGModernConversationCompanion *viewContextCompanion = TGIOS4ResolveModernConversationCompanion(weakViewContext);
+            TGModernConversationCompanion *viewContextCompanion = OGCompanionFromBox(weakViewContext);
             TGModernViewContext *strongViewContext = viewContextCompanion.viewContext;
             if (strongViewContext != nil)
             {
                 TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:mid peerId:strongViewContext.conversation.conversationId];
-                TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                 if (strongSelf == nil)
                     return false;
                 
@@ -507,7 +534,7 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         
         viewContext.liveLocationRemaining = ^SSignal *(int32_t mid)
         {
-            TGModernConversationCompanion *viewContextCompanion = TGIOS4ResolveModernConversationCompanion(weakViewContext);
+            TGModernConversationCompanion *viewContextCompanion = OGCompanionFromBox(weakViewContext);
             TGModernViewContext *strongViewContext = viewContextCompanion.viewContext;
             if (strongViewContext != nil)
             {
@@ -524,7 +551,7 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         _downloadedMessages = [[NSMutableDictionary alloc] init];
         
         _messageViewsRequestedBufferTimer = [[STimer alloc] initWithTimeout:0.5 repeat:false completion:^{
-            TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+            TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
             if (strongSelf != nil) {
                 [strongSelf consumeRequestedMessages];
             }
@@ -537,14 +564,14 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
 
 - (TGModernConversationController *)controller
 {
-    return TGIOS4ResolveModernConversationController(_ios4ControllerReference);
+    return OGCompanionControllerFromBox(_ogControllerBox);
 }
 
 - (void)setController:(TGModernConversationController *)controller
 {
-    @synchronized (_ios4ControllerReference)
+    @synchronized (_ogControllerBox)
     {
-        _ios4ControllerReference.value = controller;
+        _ogControllerBox.value = controller;
     }
 }
 
@@ -553,13 +580,13 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_actionHandle reset];
     ((TGModernConversationViewContext *)_viewContext).companion = nil;
-    @synchronized (_ios4ControllerReference)
+    @synchronized (_ogControllerBox)
     {
-        _ios4ControllerReference.value = nil;
+        _ogControllerBox.value = nil;
     }
-    @synchronized (_ios4LifetimeReference)
+    @synchronized (_ogLifetimeBox)
     {
-        _ios4LifetimeReference.value = nil;
+        _ogLifetimeBox.value = nil;
     }
     [ActionStageInstance() removeWatcher:self];
     
@@ -710,9 +737,9 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     _initialItemsPreparationPending = false;
 #endif
     [_actionHandle reset];
-    @synchronized (_ios4LifetimeReference)
+    @synchronized (_ogLifetimeBox)
     {
-        _ios4LifetimeReference.value = nil;
+        _ogLifetimeBox.value = nil;
     }
     self.controller = nil;
     
@@ -1027,6 +1054,10 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     
 }
 
+- (void)controllerWantsToSendPoll:(TGPreparedPollMessage *)__unused pollMessage asReplyToMessageId:(int32_t)__unused replyMessageId
+{
+}
+
 - (void)controllerWantsToResendMessages:(NSArray *)__unused messageIds
 {
 }
@@ -1199,6 +1230,16 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     return true;
 }
 
+- (bool)allowPollSending
+{
+    return false;
+}
+
+- (bool)allowPublicPollVoters
+{
+    return true;
+}
+
 - (bool)encryptUploads
 {
     return false;
@@ -1292,7 +1333,8 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
     NSMutableArray *checkedMessageIndices = [[NSMutableArray alloc] init];
     for (NSNumber *peerId in [_checkedMessages allKeys]) {
         for (NSNumber *mid in [_checkedMessages[peerId] allObjects]) {
-            [checkedMessageIndices addObject:[TGMessageIndex indexWithPeerId:peerId.longLongValue messageId:mid.intValue]];
+            TGMessageIndex *checkedIndex = [TGMessageIndex indexWithPeerId:peerId.longLongValue messageId:mid.intValue];
+            [checkedMessageIndices addObject:checkedIndex];
         }
     }
     return checkedMessageIndices;
@@ -2237,18 +2279,18 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
         uint64_t generation = ++_initialItemsPreparationGeneration;
 #endif
         int32_t bindingGeneration = OSAtomicAdd32Barrier(0, &_controllerBindingGeneration);
-        TGModernConversationCompanionReference *reference = _ios4LifetimeReference;
+        TGModernConversationCompanionReference *reference = _ogLifetimeBox;
         NSTimeInterval preparationStart = OGStartupDiagnosticsTime();
         [TGModernConversationCompanion dispatchOnMessageQueue:^
         {
-            TGModernConversationCompanion *companion = TGIOS4ResolveModernConversationCompanion(reference);
+            TGModernConversationCompanion *companion = OGCompanionFromBox(reference);
             if (companion == nil || companion.controller == nil || OSAtomicAdd32Barrier(0, &companion->_controllerBindingGeneration) != bindingGeneration)
                 return;
             [companion _replaceMessages:messages atMessageId:atMessageId peerId:peerId expandFrom:expandMessageId jump:jump top:top messageIdForVisibleHoleDirection:messageIdForVisibleHoleDirection scrollBackMessageId:scrollBackMessageId animated:animated];
 #if defined(ONEGRAM_ARMV6)
             dispatch_async(dispatch_get_main_queue(), ^
             {
-                TGModernConversationCompanion *current = TGIOS4ResolveModernConversationCompanion(reference);
+                TGModernConversationCompanion *current = OGCompanionFromBox(reference);
                 if (current == nil || OSAtomicAdd32Barrier(0, &current->_controllerBindingGeneration) != bindingGeneration || current->_initialItemsPreparationGeneration != generation)
                     return;
                 current->_initialItemsPreparationPending = false;
@@ -2516,7 +2558,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
             int64_t peerId = 0;
             int32_t mid = 0;
             if ([nMessage isKindOfClass:[NSNumber class]]) {
-                mid = [((NSNumber *)nMessage) intValue];
+                mid = [nMessage intValue];
             } else if ([nMessage isKindOfClass:[TGMessageIndex class]]) {
                 peerId = ((TGMessageIndex *)nMessage).peerId;
                 mid = ((TGMessageIndex *)nMessage).messageId;
@@ -2793,7 +2835,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
             int64_t peerId = 0;
             int32_t mid = 0;
             if ([nMessage isKindOfClass:[NSNumber class]]) {
-                mid = [((NSNumber *)nMessage) intValue];
+                mid = [nMessage intValue];
             } else if ([nMessage isKindOfClass:[TGMessageIndex class]]) {
                 peerId = ((TGMessageIndex *)nMessage).peerId;
                 mid = ((TGMessageIndex *)nMessage).messageId;
@@ -2837,7 +2879,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                     int64_t peerId = 0;
                     int32_t mid = 0;
                     if ([nMessage isKindOfClass:[NSNumber class]]) {
-                        mid = [((NSNumber *)nMessage) intValue];
+                        mid = [nMessage intValue];
                     } else if ([nMessage isKindOfClass:[TGMessageIndex class]]) {
                         peerId = ((TGMessageIndex *)nMessage).peerId;
                         mid = ((TGMessageIndex *)nMessage).messageId;
@@ -2991,12 +3033,9 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                 updatedItem->_message = updatedMessage;
                 
                 TGMessageModernConversationItem *statusItem = [self _updateMediaStatusData:updatedItem];
-                bool updateMediaAvailability = false;
-                if (statusItem != nil)
-                {
+                bool updateMediaAvailability = statusItem != nil;
+                if (updateMediaAvailability)
                     updatedItem = statusItem;
-                    updateMediaAvailability = true;
-                }
                 
                 if (messageItem->_message.deliveryState != TGMessageDeliveryStateDelivered && TGAppDelegateInstance.soundEnabled)
                     [TGAppDelegateInstance playSound:@"sent.caf" vibrate:false];
@@ -3114,12 +3153,9 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                 TGMessageModernConversationItem *updatedItem = [messageItem deepCopy];
                 updatedItem->_message = updatedMessage;
 
-                if ([self isKindOfClass:[TGGenericModernConversationCompanion class]])
-                {
-                    TGMessageModernConversationItem *statusItem = [(TGGenericModernConversationCompanion *)self _updateMediaStatusData:updatedItem];
-                    if (statusItem != nil)
-                        updatedItem = statusItem;
-                }
+                TGMessageModernConversationItem *refreshedItem = [self _updateMediaStatusData:updatedItem];
+                if (refreshedItem != nil)
+                    updatedItem = refreshedItem;
 
                 [(NSMutableArray *)_items replaceObjectAtIndex:index withObject:updatedItem];
                 
@@ -3235,23 +3271,20 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     return nil;
 }
 
-- (bool)_presentOpenInMenuForUrlString:(NSString *)urlString
+- (bool)_presentThirdPartyOpenInMenuForLink:(NSString *)link
 {
-    if (urlString.length == 0)
+    if (link.length == 0)
         return false;
 
-    NSURL *url = [NSURL URLWithString:urlString];
-    if (url == nil)
-        url = [NSURL URLWithString:[urlString stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
-    NSString *scheme = [url.scheme lowercaseString];
-    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"])
-        return false;
-    if (![TGOpenInMenu hasThirdPartyAppsForURL:url])
+    NSURL *target = OGConversationURLFromString(link);
+    NSString *scheme = target.scheme.lowercaseString;
+    bool isWebScheme = [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
+    if (!isWebScheme || ![TGOpenInMenu hasThirdPartyAppsForURL:target])
         return false;
 
-    TGModernConversationController *controller = self.controller;
-    [controller endEditing];
-    [TGOpenInMenu presentInParentController:controller menuController:nil title:TGLocalized(@"Map.OpenIn") url:url buttonTitle:nil buttonAction:nil sourceView:controller.view sourceRect:nil barButtonItem:nil];
+    TGModernConversationController *conversationController = self.controller;
+    [conversationController endEditing];
+    [TGOpenInMenu presentInParentController:conversationController menuController:nil title:TGLocalized(@"Map.OpenIn") url:target buttonTitle:nil buttonAction:nil sourceView:conversationController.view sourceRect:nil barButtonItem:nil];
     return true;
 }
 
@@ -3259,11 +3292,11 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
 {
     if ([action isEqualToString:@"ios6ReactionTapped"])
     {
-        int32_t messageId = [options[@"mid"] intValue];
         NSString *reaction = options[@"reaction"];
-        bool remove = [options[@"remove"] boolValue];
-        if (messageId > 0 && (remove || reaction.length != 0))
-            [[self controller] _ios6SendReaction:remove ? nil : reaction messageId:messageId];
+        bool removing = [options[@"remove"] boolValue];
+        int32_t reactedMid = OGConversationOptionMid(options);
+        if (reactedMid > 0 && (removing || reaction.length != 0))
+            [self.controller _og_compat_sendReaction:removing ? nil : reaction messageId:reactedMid];
     }
 #if OG_PLUGINS_AVAILABLE
     else if ([action isEqualToString:@"titlePanelAction"] && [options[@"action"] isEqualToString:@"pluginActions"])
@@ -3277,12 +3310,10 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     else if ([action isEqualToString:@"messageSelectionRequested"])
     {   
         TGModernConversationController *controller = self.controller;
-        if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
-        {
+        if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] && [TGMessageContextMenu currentStyle] == TGMessageContextMenuStyleAndroid)
             [controller actionStageActionRequested:@"menuAction" options:@{@"action": @"select", @"userInfo": @{@"mid": options[@"mid"] ?: @0, @"peerId": options[@"peerId"] ?: @0, @"groupedId": options[@"groupedId"] ?: @0}}];
-        }
         else
-            [controller highlightAndShowActionsMenuForMessage:[options[@"mid"] intValue] peerId:[options[@"peerId"] longLongValue] groupedId:[options[@"groupedId"] longLongValue]];
+            [controller highlightAndShowActionsMenuForMessage:OGConversationOptionMid(options) peerId:OGConversationOptionPeerId(options) groupedId:OGConversationOptionGroupedId(options)];
     }
     else if ([action isEqualToString:@"openStarGiftRequested"])
     {
@@ -3305,8 +3336,8 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
         {
             if (!canManage)
                 return;
-            int32_t messageId = [options[@"mid"] intValue];
-            int64_t peerId = [options[@"peerId"] longLongValue];
+            int32_t messageId = OGConversationOptionMid(options);
+            int64_t peerId = OGConversationOptionPeerId(options);
             bool saved = savedGift.unsaved;
             TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
             [progressWindow showWithDelay:0.1];
@@ -3375,8 +3406,8 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     }
     else if ([action isEqualToString:@"messageSelectionChanged"])
     {
-        int64_t peerId = [options[@"peerId"] longLongValue];
-        int32_t mid = [options[@"mid"] intValue];
+        int32_t mid = OGConversationOptionMid(options);
+        int64_t peerId = OGConversationOptionPeerId(options);
         if (mid != 0)
         {
             [self setMessageChecked:[TGMessageIndex indexWithPeerId:peerId messageId:mid] checked:[options[@"selected"] boolValue]];
@@ -3387,7 +3418,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     }
     else if ([action isEqualToString:@"messageGroupSelectionChanged"])
     {
-        int64_t groupedId = [options[@"groupedId"] longLongValue];
+        int64_t groupedId = OGConversationOptionGroupedId(options);
         if (groupedId != 0)
         {
             NSMutableArray *messageIndices = [[NSMutableArray alloc] init];
@@ -3473,7 +3504,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
         }
         else
         {
-            if (TGIsInternalTelegramLink(options[@"url"]))
+            if (TGModernConversationIsTelegramLink(options[@"url"]))
             {
                 NSURL *url = [NSURL URLWithString:options[@"url"]];
                 if (url != nil)
@@ -3501,7 +3532,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                 return;
             }
 
-            if (![options[@"hidden"] boolValue] && [self _presentOpenInMenuForUrlString:options[@"url"]])
+            if (![options[@"hidden"] boolValue] && [self _presentThirdPartyOpenInMenuForLink:options[@"url"]])
                 return;
 
             NSString *youtubeVideoId = [self youtubeVideoIdFromText:options[@"url"]];
@@ -3633,7 +3664,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
             if ([options[@"hidden"] boolValue]) {
                 [TGCustomAlertView presentAlertWithTitle:nil message:[NSString stringWithFormat:TGLocalized(@"Generic.OpenHiddenLinkAlert"), options[@"url"]] cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(@"Common.OK") completionBlock:^(bool okButtonPressed) {
                     if (okButtonPressed) {
-                        if ([self _presentOpenInMenuForUrlString:options[@"url"]])
+                        if ([self _presentThirdPartyOpenInMenuForLink:options[@"url"]])
                             return;
                         NSURL *url = [NSURL URLWithString:options[@"url"]];
                         if (url == nil) {
@@ -3658,7 +3689,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
         }
         
         TGModernConversationController *controller = self.controller;
-        [controller openMediaFromMessage:[options[@"mid"] intValue] peerId:[options[@"peerId"] longLongValue] instant:[options[@"instant"] boolValue]];
+        [controller openMediaFromMessage:OGConversationOptionMid(options) peerId:OGConversationOptionPeerId(options) instant:[options[@"instant"] boolValue]];
         
         [TGAppDelegateInstance.rootController.dialogListController maybeDismissSearchResults];
     }
@@ -3666,7 +3697,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     {
         TGModernConversationController *controller = self.controller;
         TGWebPageMediaAttachment *webPage = options[@"webPage"];
-        if ([self _presentOpenInMenuForUrlString:webPage.url])
+        if ([self _presentThirdPartyOpenInMenuForLink:webPage.url])
         {
             [TGAppDelegateInstance.rootController.dialogListController maybeDismissSearchResults];
             return;
@@ -3674,7 +3705,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
         if ([webPage.embedType isEqualToString:@"application/x-shockwave-flash"])
             [(TGApplication *)[UIApplication sharedApplication] openURL:[NSURL URLWithString:webPage.url] forceNative:true];
         else
-            [controller openEmbed:webPage forMessageId:[options[@"mid"] intValue] peerId:[options[@"peerId"] longLongValue]];
+            [controller openEmbed:webPage forMessageId:OGConversationOptionMid(options) peerId:OGConversationOptionPeerId(options)];
         
         [TGAppDelegateInstance.rootController.dialogListController maybeDismissSearchResults];
     }
@@ -3691,7 +3722,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     else if ([action isEqualToString:@"stickerPackInfoRequested"])
     {
         TGModernConversationController *controller = self.controller;
-        [controller openStickerPackForMessageId:[options[@"mid"] intValue] peerId:[options[@"peerId"] longLongValue]];
+        [controller openStickerPackForMessageId:OGConversationOptionMid(options) peerId:OGConversationOptionPeerId(options)];
     }
     else if ([action isEqualToString:@"callRequested"])
     {
@@ -3924,7 +3955,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
 {
     if (_allowMessageDownloads)
     {
-        TGModernConversationCompanionReference *weakSelf = _ios4LifetimeReference;
+        TGModernConversationCompanionReference *weakSelf = _ogLifetimeBox;
         NSTimeInterval remoteTime = OGRemoteClockTime();
         NSMutableSet *webPageIds = nil;
         
@@ -3953,7 +3984,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                                     {
                                         [TGModernConversationCompanion dispatchOnMessageQueue:^
                                         {
-                                            TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                                            TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                                             if (strongSelf != nil && updatedWebPage != nil)
                                             {
                                                 [strongSelf->_downloadingWebpages removeObjectForKey:webPage.url];
@@ -3994,7 +4025,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                                         {
                                             [TGModernConversationCompanion dispatchOnMessageQueue:^
                                             {
-                                                TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                                                TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                                                 if (strongSelf != nil)
                                                 {
                                                     [strongSelf->_downloadingMessages removeObjectForKey:nKey];
@@ -4005,7 +4036,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                                         {
                                             [TGModernConversationCompanion dispatchOnMessageQueue:^
                                             {
-                                                TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                                                TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                                                 if (strongSelf != nil)
                                                 {
                                                     [strongSelf->_downloadingMessages removeObjectForKey:nKey];
@@ -4543,7 +4574,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
 - (void)maybeAskForSecretWebpages {
     if (!TGAppDelegateInstance.allowSecretWebpages && !TGAppDelegateInstance.allowSecretWebpagesInitialized && !_askedForSecretPages) {
         _askedForSecretPages = true;
-        TGModernConversationCompanionReference *weakSelf = _ios4LifetimeReference;
+        TGModernConversationCompanionReference *weakSelf = _ogLifetimeBox;
         TGDispatchOnMainThread(^{
             [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Conversation.SecretLinkPreviewAlert") cancelButtonTitle:TGLocalized(@"Common.No") okButtonTitle:TGLocalized(@"Common.Yes") completionBlock:^(bool okButtonPressed) {
                 TGAppDelegateInstance.allowSecretWebpagesInitialized = true;
@@ -4551,12 +4582,12 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                 [TGAppDelegateInstance saveSettings];
                 if (okButtonPressed) {
                     [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                        TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                        TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                         [strongSelf _itemsUpdated];
                     }];
                     
                     TGDispatchOnMainThread(^{
-                        TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                        TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                         TGModernConversationController *controller = [strongSelf controller];
                         [controller updateWebpageLinks];
                     });
@@ -4608,7 +4639,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     }
     
     TGModernConversationController *controller = self.controller;
-    TGModernConversationCompanionReference *weakSelf = _ios4LifetimeReference;
+    TGModernConversationCompanionReference *weakSelf = _ogLifetimeBox;
     [[[TGCustomActionSheet alloc] initWithTitle:nil actions:@
     [
         [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"ReportPeer.ReasonSpam") action:@"spam"],
@@ -4617,7 +4648,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
         [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"ReportPeer.ReasonCopyright") action:@"copyright"],
         [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"ReportPeer.ReasonOther") action:@"other"],
      [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]] menuController:menuController advancedActionBlock:^(__unused TGMenuSheetController *controller, __unused id target, NSString *action) {
-          TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+          TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
           if (strongSelf != nil) {
               if (![action isEqualToString:@"cancel"]) {
                   TGReportPeerReason reason = TGReportPeerReasonSpam;
@@ -4644,7 +4675,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                       }] startWithNext:nil error:^(__unused id error) {
                           [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Login.UnknownError") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
                       } completed:^{
-                          TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                          TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                           if (strongSelf != nil) {
                               TGModernConversationController *controller = strongSelf.controller;
                               [controller dismissViewControllerAnimated:true completion:nil];
@@ -4660,7 +4691,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
                               reportBlock(text);
                           }
                       }];
-                      TGModernConversationCompanion *strongSelf = TGIOS4ResolveModernConversationCompanion(weakSelf);
+                      TGModernConversationCompanion *strongSelf = OGCompanionFromBox(weakSelf);
                       if (strongSelf != nil) {
                           TGModernConversationController *myController = strongSelf.controller;
                           [myController presentViewController:[TGNavigationController navigationControllerWithControllers:@[controller]] animated:true completion:nil];

@@ -57,3 +57,59 @@
 @implementation TGMessageEntitySpoiler
 
 @end
+
+@implementation TGMessageEntityCustomEmoji
+
+- (instancetype)initWithRange:(NSRange)range documentId:(int64_t)documentId
+{
+    self = [super initWithRange:range];
+    if (self != nil)
+    {
+        _documentId = documentId;
+    }
+    return self;
+}
+
+- (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder
+{
+    self = [super initWithKeyValueCoder:coder];
+    if (self != nil)
+    {
+        _documentId = [coder decodeInt64ForCKey:"documentId"];
+    }
+    return self;
+}
+
+- (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder
+{
+    [super encodeWithKeyValueCoder:coder];
+    [coder encodeInt64:_documentId forCKey:"documentId"];
+}
+
+- (instancetype)initWithCoder:(NSCoder *)aDecoder
+{
+    self = [super initWithCoder:aDecoder];
+    if (self != nil)
+    {
+        _documentId = [aDecoder decodeInt64ForKey:@"documentId"];
+    }
+    return self;
+}
+
+- (void)encodeWithCoder:(NSCoder *)aCoder
+{
+    [super encodeWithCoder:aCoder];
+    [aCoder encodeInt64:_documentId forKey:@"documentId"];
+}
+
+- (BOOL)isEqual:(id)object
+{
+    return [super isEqual:object] && ((TGMessageEntityCustomEmoji *)object)->_documentId == _documentId;
+}
+
+- (NSUInteger)hash
+{
+    return [super hash] ^ (NSUInteger)_documentId;
+}
+
+@end

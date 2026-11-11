@@ -10,7 +10,7 @@
 
 @interface STPEmailAddressValidator : NSObject
 
-+ (BOOL)stringIsValidPartialEmailAddress:(NSString *)string;
-+ (BOOL)stringIsValidEmailAddress:(NSString *)string;
++ (BOOL)stringIsValidPartialEmailAddress:(NSString *_Nullable)string;
++ (BOOL)stringIsValidEmailAddress:(NSString *_Nullable)string;
 
 @end

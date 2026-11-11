@@ -10,7 +10,7 @@
 
 @implementation NSString (Stripe_CardBrands)
 
-+ (instancetype)stp_stringWithCardBrand:(STPCardBrand)brand {
++ (instancetype _Nonnull)stp_stringWithCardBrand:(STPCardBrand)brand {
     switch (brand) {
         case STPCardBrandAmex: return @"American Express";
         case STPCardBrandDinersClub: return @"Diners Club";

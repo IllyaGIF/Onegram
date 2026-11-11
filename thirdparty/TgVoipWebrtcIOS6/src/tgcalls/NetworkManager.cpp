@@ -38,6 +38,34 @@ static double Ios6LatencyNowMs() {
     return ((double)tv.tv_sec * 1000.0) + ((double)tv.tv_usec / 1000.0);
 }
 
+template <typename StateType>
+static StateType OGCompatTransportState(bool ready) {
+    StateType result;
+    result.isReadyToSendData = ready;
+    result.isFailed = !ready;
+    return result;
+}
+
+static Message OGCompatSignalingMessage(const CandidatesListMessage &payload) {
+    Message result;
+    result.data = payload;
+    return result;
+}
+
+static cricket::Candidate OGCompatRelayCandidate(const char *sdp) {
+    cricket::Candidate result;
+    result.FromString(sdp);
+    return result;
+}
+
+static unsigned long OGCompatCount(size_t value) {
+    return (unsigned long)value;
+}
+
+static int OGCompatFlag(bool value) {
+    return value ? 1 : 0;
+}
+
 static bool Ios6ReceiveErrorIsTransient(int errorCode) {
     switch (errorCode) {
         case ECONNREFUSED:
@@ -63,7 +91,7 @@ NetworkManager::NetworkManager(
     std::vector<RtcServer> const &rtcServers,
     std::unique_ptr<Proxy> proxy,
     std::shared_ptr<MediaTransport> mediaTransport,
-    std::function<void(const State &)> stateUpdated,
+    std::function<void(const NetworkManager::State &)> stateUpdated,
     DecryptedMessageCallback transportMessageReceived,
     MessageCallback sendSignalingMessage,
     std::function<void(int delayMs, int cause)> sendTransportServiceAsync) :
@@ -428,10 +456,7 @@ void NetworkManager::ios56ApplyDtlsState() {
         );
 
         if (_stateUpdated) {
-            State state;
-            state.isReadyToSendData = false;
-            state.isFailed = true;
-            _stateUpdated(state);
+            _stateUpdated(OGCompatTransportState<State>(false));
         }
 
         return;
@@ -466,10 +491,7 @@ void NetworkManager::ios56ApplyDtlsState() {
         );
 
         if (_stateUpdated) {
-            State state;
-            state.isReadyToSendData = false;
-            state.isFailed = true;
-            _stateUpdated(state);
+            _stateUpdated(OGCompatTransportState<State>(false));
         }
 
         return;
@@ -483,10 +505,7 @@ void NetworkManager::ios56ApplyDtlsState() {
     );
 
     if (_stateUpdated) {
-        State state;
-        state.isReadyToSendData = true;
-        state.isFailed = false;
-        _stateUpdated(state);
+        _stateUpdated(OGCompatTransportState<State>(true));
     }
 }
 
@@ -897,10 +916,7 @@ void NetworkManager::ios56HandleReceiverFailure() {
     );
 
     if (_stateUpdated) {
-        State state;
-        state.isReadyToSendData = false;
-        state.isFailed = true;
-        _stateUpdated(state);
+        _stateUpdated(OGCompatTransportState<State>(false));
     }
 }
 
@@ -956,9 +972,9 @@ void NetworkManager::start() {
     syslog(
         LOG_NOTICE,
         "IOS6WEBRTC cxx.network.localIce ufragLen=%lu pwdLen=%lu controlling=%d tie=%llu",
-        (unsigned long)_localIceParameters.ufrag.size(),
-        (unsigned long)_localIceParameters.pwd.size(),
-        _isOutgoing ? 1 : 0,
+        OGCompatCount(_localIceParameters.ufrag.size()),
+        OGCompatCount(_localIceParameters.pwd.size()),
+        OGCompatFlag(_isOutgoing),
         (unsigned long long)_ios6IceTieBreaker
     );
 
@@ -1084,9 +1100,7 @@ void NetworkManager::ios56RelayDidBecomeReady() {
                 _localIceParameters.ufrag.c_str()
             );
 
-            cricket::Candidate candidate;
-            candidate.FromString(sdp);
-            candidates.candidates.push_back(candidate);
+            candidates.candidates.push_back(OGCompatRelayCandidate(sdp));
 
             syslog(
                 LOG_NOTICE,
@@ -1100,13 +1114,11 @@ void NetworkManager::ios56RelayDidBecomeReady() {
         syslog(
             LOG_NOTICE,
             "IOS6WEBRTC cxx.network.start candidates=%lu servers=%lu",
-            (unsigned long)candidates.candidates.size(),
-            (unsigned long)_rtcServers.size()
+            OGCompatCount(candidates.candidates.size()),
+            OGCompatCount(_rtcServers.size())
         );
 
-        Message message;
-        message.data = candidates;
-        _sendSignalingMessage(std::move(message));
+        _sendSignalingMessage(OGCompatSignalingMessage(candidates));
     }
 
     if (_ios6RemoteCandidates) {
@@ -1388,10 +1400,7 @@ void NetworkManager::ios56RunIceProbe() {
 
         ios56MaybeStartDtls();
     } else if (_stateUpdated) {
-        State state;
-        state.isReadyToSendData = true;
-        state.isFailed = false;
-        _stateUpdated(state);
+        _stateUpdated(OGCompatTransportState<State>(true));
     }
 }
 
@@ -1559,10 +1568,7 @@ void NetworkManager::ios56ProcessRemoteCandidates() {
         } else if (_stateUpdated &&
                    _ios6TransportReady) {
 
-            State state;
-            state.isReadyToSendData = true;
-            state.isFailed = false;
-            _stateUpdated(state);
+            _stateUpdated(OGCompatTransportState<State>(true));
         }
 
         return;
@@ -1577,9 +1583,6 @@ uint32_t NetworkManager::sendMessage(
                 &message.data
             )) {
         if (_sendSignalingMessage) {
-            Message copy;
-            copy.data = *candidates;
-
             RTC_LOG(LS_INFO)
                 << "IOS6WEBRTC network.stub.forwardCandidates count="
                 << candidates->candidates.size()
@@ -1589,7 +1592,7 @@ uint32_t NetworkManager::sendMessage(
                 << candidates->iceParameters.pwd.size();
 
             _sendSignalingMessage(
-                std::move(copy)
+                OGCompatSignalingMessage(*candidates)
             );
         }
 
@@ -1795,10 +1798,7 @@ void NetworkManager::checkConnectionTimeout() {
     _ios6ConnectionFailed = true;
     syslog(LOG_NOTICE, "IOS6WEBRTC network.connect.timeout elapsedMs=%.0f relay=%d transport=%d", elapsedMs, _ios6Relay ? 1 : 0, _ios6TransportReady ? 1 : 0);
     if (_stateUpdated) {
-        State state;
-        state.isReadyToSendData = false;
-        state.isFailed = true;
-        _stateUpdated(state);
+        _stateUpdated(OGCompatTransportState<State>(false));
     }
 }
 

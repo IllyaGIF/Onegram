@@ -41,6 +41,8 @@
 #import "TGTwoStepSetPaswordSignal.h"
 
 #import "TGPresentation.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesSettingsController.h"
 
 @interface TGPrivacySettingsController () <ASWatcher>
 {
@@ -51,6 +53,9 @@
     TGVariantCollectionItem *_blockedUsersItem;
     TGVariantCollectionItem *_groupsAndChannelsItem;
     TGVariantCollectionItem *_callsItem;
+    TGVariantCollectionItem *_paidMessagesItem;
+    int64_t _paidMessagesStars;
+    SMetaDisposable *_paidMessagesDisposable;
     TGAccountSettings *_accountSettings;
     TGVariantCollectionItem *_lastSeenItem;
     TGVariantCollectionItem *_accountExpirationItem;
@@ -121,6 +126,9 @@
         _blockedUsersItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.BlockedUsers") action:@selector(blockedUsersPressed)];
         _groupsAndChannelsItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Privacy.GroupsAndChannels") action:@selector(groupsAndChannelsPressed)];
         _callsItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Privacy.Calls") action:@selector(callsPressed)];
+        _paidMessagesItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"PaidMessages.Settings.Title") action:@selector(paidMessagesPressed)];
+        _paidMessagesItem.variant = @"";
+        _paidMessagesDisposable = [[SMetaDisposable alloc] init];
         NSMutableArray *lastSeenSectionItems = [[NSMutableArray alloc] init];
         NSData *phoneCallsEnabledData = [TGDatabaseInstance() customProperty:@"phoneCallsEnabled"];
         int32_t phoneCallsEnabled = false;
@@ -134,6 +142,7 @@
             [lastSeenSectionItems addObject:_callsItem];
         }
         [lastSeenSectionItems addObject:_groupsAndChannelsItem];
+        [lastSeenSectionItems addObject:_paidMessagesItem];
         [lastSeenSectionItems addObject:[[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"PrivacyLastSeenSettings.GroupsAndChannelsHelp")]];
         
         TGCollectionMenuSection *lastSeenSection = [[TGCollectionMenuSection alloc] initWithItems:lastSeenSectionItems];
@@ -205,6 +214,7 @@
     [ActionStageInstance() removeWatcher:self];
     
     [_twoStepConfigDisposable dispose];
+    [_paidMessagesDisposable dispose];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -227,6 +237,38 @@
         
         [ActionStageInstance() requestActor:@"/accountSettings" options:@{} flags:0 watcher:self];
     }
+    
+    [self loadPaidMessagesSetting];
+}
+
+- (void)loadPaidMessagesSetting
+{
+    __weak TGPrivacySettingsController *weakSelf = self;
+    [_paidMessagesDisposable setDisposable:[[[TGPaidMessagesSignals chargeStarsForNonContacts] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *stars)
+    {
+        __strong TGPrivacySettingsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf setPaidMessagesStars:[stars longLongValue]];
+    }]];
+}
+
+- (void)setPaidMessagesStars:(int64_t)stars
+{
+    _paidMessagesStars = stars;
+    _paidMessagesItem.variant = stars > 0 ? [TGPaidMessagesSignals starsString:stars] : TGLocalized(@"PaidMessages.Settings.Off");
+}
+
+- (void)paidMessagesPressed
+{
+    TGPaidMessagesSettingsController *controller = [[TGPaidMessagesSettingsController alloc] initWithAccountStars:_paidMessagesStars];
+    __weak TGPrivacySettingsController *weakSelf = self;
+    controller.settingsChanged = ^(bool enabled, int64_t stars)
+    {
+        __strong TGPrivacySettingsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf setPaidMessagesStars:enabled ? stars : 0];
+    };
+    [self.navigationController pushViewController:controller animated:true];
 }
 
 - (void)setAccountSettings:(TGAccountSettings *)accountSettings

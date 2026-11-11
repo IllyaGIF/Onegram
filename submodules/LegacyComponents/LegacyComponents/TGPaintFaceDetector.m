@@ -3,15 +3,15 @@
 #import "TGPaintUtils.h"
 
 #if !defined(ONEGRAM_ARMV6)
-@interface CIImage (LegacyComponentsOrientation)
-- (CIImage *)imageByApplyingOrientation:(int)orientation;
+@interface CIFaceFeature (OGCompatFaceAttributes)
+@property (readonly) BOOL leftEyeClosed;
+@property (readonly) BOOL rightEyeClosed;
+@property (readonly) BOOL hasSmile;
+@property (readonly) float faceAngle;
 @end
 
-@interface CIFaceFeature (LegacyComponentsFaceAttributes)
-@property (nonatomic, readonly) BOOL leftEyeClosed;
-@property (nonatomic, readonly) BOOL rightEyeClosed;
-@property (nonatomic, readonly) BOOL hasSmile;
-@property (nonatomic, readonly) float faceAngle;
+@interface CIImage (OGCompatOrientation)
+- (CIImage *)imageByApplyingOrientation:(int)orientation;
 @end
 #endif
 
@@ -65,10 +65,12 @@
         
         CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeFace context:nil options:options];
         
-        CIImage *baseImage = [CIImage imageWithCGImage:image.CGImage];
-        CIImage *ciImage = baseImage;
-        if ([baseImage respondsToSelector:@selector(imageByApplyingOrientation:)])
-            ciImage = [baseImage imageByApplyingOrientation:[self tiffOrientationFromImageOrientation:image.imageOrientation]];
+        CIImage *ciImage = [CIImage imageWithCGImage:image.CGImage];
+        if ([ciImage respondsToSelector:@selector(imageByApplyingOrientation:)])
+        {
+            int tiffOrientation = [self tiffOrientationFromImageOrientation:image.imageOrientation];
+            ciImage = [ciImage imageByApplyingOrientation:tiffOrientation];
+        }
         
         NSMutableArray *result = [[NSMutableArray alloc] init];
         NSArray *features = [detector featuresInImage:ciImage];
@@ -132,20 +134,33 @@
     if (!faceFeature.hasLeftEyePosition || !faceFeature.hasRightEyePosition)
         return nil;
     
-    bool leftEyeClosed = [faceFeature respondsToSelector:@selector(leftEyeClosed)] ? faceFeature.leftEyeClosed : false;
-    bool rightEyeClosed = [faceFeature respondsToSelector:@selector(rightEyeClosed)] ? faceFeature.rightEyeClosed : false;
-    bool hasSmile = [faceFeature respondsToSelector:@selector(hasSmile)] ? faceFeature.hasSmile : false;
-    CGFloat faceAngle = [faceFeature respondsToSelector:@selector(faceAngle)] ? faceFeature.faceAngle : 0.0f;
+    CGPoint (^transpose)(CGPoint) = ^CGPoint(CGPoint point)
+    {
+        return [self _transposedPoint:point initialSize:initialSize targetSize:targetSize];
+    };
     
-    TGPaintFaceEye *leftEye = [TGPaintFaceEye eyeWithPosition:[self _transposedPoint:faceFeature.leftEyePosition initialSize:initialSize targetSize:targetSize] closed:leftEyeClosed];
-    TGPaintFaceEye *rightEye = [TGPaintFaceEye eyeWithPosition:[self _transposedPoint:faceFeature.rightEyePosition initialSize:initialSize targetSize:targetSize] closed:rightEyeClosed];
+    bool closedLeft = false;
+    bool closedRight = false;
+    bool smiles = false;
+    CGFloat angle = 0.0f;
+    if ([faceFeature respondsToSelector:@selector(leftEyeClosed)])
+        closedLeft = faceFeature.leftEyeClosed;
+    if ([faceFeature respondsToSelector:@selector(rightEyeClosed)])
+        closedRight = faceFeature.rightEyeClosed;
+    if ([faceFeature respondsToSelector:@selector(hasSmile)])
+        smiles = faceFeature.hasSmile;
+    if ([faceFeature respondsToSelector:@selector(faceAngle)])
+        angle = faceFeature.faceAngle;
     
     TGPaintFaceMouth *mouth = nil;
-    
     if (faceFeature.hasMouthPosition)
-        mouth = [TGPaintFaceMouth mouthWithPosition:[self _transposedPoint:faceFeature.mouthPosition initialSize:initialSize targetSize:targetSize] smiling:hasSmile];
+        mouth = [TGPaintFaceMouth mouthWithPosition:transpose(faceFeature.mouthPosition) smiling:smiles];
     
-    return [TGPaintFace faceWithBounds:[self _transposedRect:faceFeature.bounds initialSize:initialSize targetSize:targetSize] angle:[self _transposedAngle:TGDegreesToRadians(faceAngle)] leftEye:leftEye rightEye:rightEye mouth:mouth];
+    TGPaintFaceEye *rightEye = [TGPaintFaceEye eyeWithPosition:transpose(faceFeature.rightEyePosition) closed:closedRight];
+    TGPaintFaceEye *leftEye = [TGPaintFaceEye eyeWithPosition:transpose(faceFeature.leftEyePosition) closed:closedLeft];
+    CGRect bounds = [self _transposedRect:faceFeature.bounds initialSize:initialSize targetSize:targetSize];
+    
+    return [TGPaintFace faceWithBounds:bounds angle:[self _transposedAngle:TGDegreesToRadians(angle)] leftEye:leftEye rightEye:rightEye mouth:mouth];
 }
 
 #endif

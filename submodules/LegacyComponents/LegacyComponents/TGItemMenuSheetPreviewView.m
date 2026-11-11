@@ -68,14 +68,6 @@ typedef enum
         TGItemMenuTransitionType type = [self _transitionType];
         if (type != TGItemMenuTransitionTypeLegacy)
         {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-            id effect = nil;
-#endif
-            if (type == TGItemMenuTransitionTypeSimplified)
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-                effect = nil;
-#endif
-            
             _blurView = [[UIView alloc] initWithFrame:CGRectZero];
             [self addSubview:_blurView];
             

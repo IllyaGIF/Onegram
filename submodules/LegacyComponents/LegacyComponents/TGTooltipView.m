@@ -170,8 +170,8 @@
     
     self.transform = transform;
     
-    TGSetLayerRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
+    OGCompatLayerSetShouldRasterize(self.layer, true);
     
     self.alpha = 1.0f;
     
@@ -198,7 +198,7 @@
                         {
                             if (finished)
                             {
-                                TGSetLayerShouldRasterize(self.layer, false);
+                                OGCompatLayerSetShouldRasterize(self.layer, false);
                             }
                         }];
                     }

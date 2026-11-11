@@ -17,8 +17,8 @@
 
 @implementation STPCheckoutAPIVerification
 
-+ (instancetype)verificationWithData:(NSData *)data
-                                  URLResponse:(NSURLResponse *)response {
++ (instancetype _Nullable)verificationWithData:(NSData *_Nullable)data
+                                  URLResponse:(NSURLResponse *_Nullable)response {
     if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
         return nil;
     }

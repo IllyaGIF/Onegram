@@ -26,7 +26,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  Initializes the payment result with a given source. This is invoked by `STPPaymentContext` internally; you shouldn't have to call it directly.
  */
-- (instancetype)initWithSource:(id<STPSource>)source;
+- (instancetype _Nonnull)initWithSource:(id<STPSource>)source;
 
 @end
 

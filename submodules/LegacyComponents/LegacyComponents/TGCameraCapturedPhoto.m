@@ -90,7 +90,8 @@
         }
         UIImage *image = TGScaleImageToPixelSize(sourceImage, size);
 #else
-        CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:[self filePath]], NULL);
+        NSURL *fileURL = [NSURL fileURLWithPath:[self filePath]];
+        CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)fileURL, NULL);
         if (imageSource == NULL)
         {
             [subscriber putError:nil];
@@ -171,7 +172,8 @@
                 image = TGScaleImageToPixelSize(image, size);
             }
 #else
-            CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:[self filePath]], NULL);
+            NSURL *fileURL = [NSURL fileURLWithPath:[self filePath]];
+            CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)fileURL, NULL);
             if (imageSource == NULL)
             {
                 [subscriber putError:nil];

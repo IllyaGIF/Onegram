@@ -10,7 +10,7 @@
 
 @interface NSDictionary (Stripe)
 
-- (NSDictionary *)stp_dictionaryByRemovingNullsValidatingRequiredFields:(NSArray *)requiredFields;
+- (NSDictionary *_Nullable)stp_dictionaryByRemovingNullsValidatingRequiredFields:(NSArray *_Nonnull)requiredFields;
 
 @end
 

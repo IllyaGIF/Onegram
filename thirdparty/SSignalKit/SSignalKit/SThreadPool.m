@@ -49,7 +49,9 @@
                 while (threadPool->_queues.count == 0)
                     pthread_cond_wait(&threadPool->_cond, &threadPool->_mutex);
 
-                queue = threadPool->_queues.count == 0 ? nil : [threadPool->_queues objectAtIndex:0];
+                queue = nil;
+                if (threadPool->_queues.count != 0)
+                    queue = [threadPool->_queues objectAtIndex:0];
                 task = [queue _popFirstTask];
 
                 if (queue != nil)

@@ -15,6 +15,7 @@
 #import "TGPreparedRemoteVideoMessage.h"
 #import "TGPreparedForwardedMessage.h"
 #import "TGPreparedContactMessage.h"
+#import "TGPreparedPollMessage.h"
 #import "TGPreparedLocalDocumentMessage.h"
 #import "TGPreparedRemoteDocumentMessage.h"
 #import "TGPreparedDownloadImageMessage.h"
@@ -98,6 +99,8 @@
 #import "TGGenericModernConversationCompanion.h"
 
 #import "TGTelegramNetworking.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesConfirmation.h"
 
 @interface TGModernSendCommonMessageActor ()
 {
@@ -116,6 +119,59 @@
 
 static PSLMDBKeyValueStore *TGModernSendCommonMessageUploadedMediaStore = nil;
 static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore = nil;
+
+static UIImage *OGCompatSolidBlackImage(CGFloat side)
+{
+    CGRect canvas = CGRectMake(0.0f, 0.0f, side, side);
+    UIGraphicsBeginImageContextWithOptions(canvas.size, true, 1.0f);
+    [[UIColor blackColor] setFill];
+    UIRectFill(canvas);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static UIImage *OGCompatRoundVideoPreview(NSString *thumbnailPath, NSURL *videoUrl, double duration)
+{
+    UIImage *preview = [UIImage imageWithContentsOfFile:thumbnailPath];
+    if (preview == nil && videoUrl != nil)
+    {
+        NSTimeInterval frameTime = duration > 0.1 ? 0.1 : 0.0;
+        preview = OGPlatformVideoThumbnailAtURL(videoUrl, frameTime, CGSizeMake(240.0f, 240.0f));
+    }
+    return preview != nil ? preview : OGCompatSolidBlackImage(90.0f);
+}
+
+static void OGCompatPersistRoundVideoPreview(UIImage *preview, NSString *thumbnailPath)
+{
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    if (thumbnailPath.length == 0 || [fileManager fileExistsAtPath:thumbnailPath])
+        return;
+    NSData *jpeg = UIImageJPEGRepresentation(preview, 0.54f);
+    [fileManager createDirectoryAtPath:[thumbnailPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:nil];
+    [jpeg writeToFile:thumbnailPath atomically:true];
+}
+
+static void OGCompatMirrorDocumentFile(TGDocumentMediaAttachment *source, TGDocumentMediaAttachment *target)
+{
+    NSFileManager *files = [NSFileManager defaultManager];
+    NSString *targetDirectory = [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:target.documentId version:target.version];
+    NSString *sourceDirectory = [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:source.documentId version:source.version];
+    NSString *from = [sourceDirectory stringByAppendingPathComponent:source.safeFileName];
+    NSString *to = [targetDirectory stringByAppendingPathComponent:target.safeFileName];
+
+    if ([from isEqualToString:to] || ![files fileExistsAtPath:from] || [files fileExistsAtPath:to])
+        return;
+
+    [files createDirectoryAtPath:targetDirectory withIntermediateDirectories:true attributes:nil error:nil];
+    NSError *error = nil;
+    [files linkItemAtPath:from toPath:to error:&error];
+    if (error != nil)
+    {
+        error = nil;
+        [files copyItemAtPath:from toPath:to error:&error];
+    }
+}
 
 @implementation TGModernSendCommonMessageActor
 
@@ -336,6 +392,12 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
             urlEntity.offset = (int32_t)entity.range.location;
             urlEntity.length = (int32_t)entity.range.length;
             [result addObject:urlEntity];
+        } else if ([entity isKindOfClass:[TGMessageEntityCustomEmoji class]]) {
+            TLMessageEntity$messageEntityCustomEmoji *customEmojiEntity = [[TLMessageEntity$messageEntityCustomEmoji alloc] init];
+            customEmojiEntity.offset = (int32_t)entity.range.location;
+            customEmojiEntity.length = (int32_t)entity.range.length;
+            customEmojiEntity.document_id = ((TGMessageEntityCustomEmoji *)entity).documentId;
+            [result addObject:customEmojiEntity];
         } else if ([entity isKindOfClass:[TGMessageEntityMentionName class]]) {
             TLMessageEntity$inputMessageEntityMentionName *mentionNameEntity = [[TLMessageEntity$inputMessageEntityMentionName alloc] init];
             TGUser *user = [TGDatabaseInstance() loadUser:((TGMessageEntityMentionName *)entity).userId];
@@ -626,6 +688,14 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
             inputContact.vcard = contactMessage.vcard ?: @"";
             
             self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputContact messageGuid:nil tmpId:contactMessage.randomId messageText:nil entities:nil replyMessageId:contactMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+        }
+        else if ([self.preparedMessage isKindOfClass:[TGPreparedPollMessage class]])
+        {
+            TGPreparedPollMessage *pollMessage = (TGPreparedPollMessage *)self.preparedMessage;
+            
+            [self setupFailTimeout:[TGModernSendCommonMessageActor defaultTimeoutInterval]];
+            
+            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:[pollMessage inputMedia] messageGuid:nil tmpId:pollMessage.randomId messageText:nil entities:nil replyMessageId:pollMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedDownloadImageMessage class]])
         {
@@ -1003,31 +1073,14 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
             if (assetVideoMessage.roundMessage && assetVideoMessage.adjustments == nil)
             {
                 NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-                NSURL *fileUrl = nil;
-                if ([[NSFileManager defaultManager] fileExistsAtPath:assetVideoMessage.assetURL.path])
-                    fileUrl = assetVideoMessage.assetURL;
-                else
-                    fileUrl = [NSURL fileURLWithPath:assetVideoMessage.localVideoPath];
+                BOOL assetPresent = [[NSFileManager defaultManager] fileExistsAtPath:assetVideoMessage.assetURL.path];
+                NSURL *fileUrl = assetPresent ? assetVideoMessage.assetURL : [NSURL fileURLWithPath:assetVideoMessage.localVideoPath];
                 dict[@"fileUrl"] = fileUrl;
                 dict[@"duration"] = @(assetVideoMessage.duration);
                 dict[@"dimensions"] = [NSValue valueWithCGSize:assetVideoMessage.dimensions];
 
                 NSString *thumbnailPath = [self pathForLocalImagePath:assetVideoMessage.localThumbnailDataPath];
-                UIImage *previewImage = [UIImage imageWithContentsOfFile:thumbnailPath];
-                if (previewImage == nil && fileUrl != nil)
-                {
-                    NSTimeInterval thumbnailTime = assetVideoMessage.duration > 0.1 ? 0.1 : 0.0;
-                    previewImage = OGPlatformVideoThumbnailAtURL(fileUrl, thumbnailTime, CGSizeMake(240.0f, 240.0f));
-                }
-
-                if (previewImage == nil)
-                {
-                    UIGraphicsBeginImageContextWithOptions(CGSizeMake(90.0f, 90.0f), true, 1.0f);
-                    [[UIColor blackColor] setFill];
-                    UIRectFill(CGRectMake(0.0f, 0.0f, 90.0f, 90.0f));
-                    previewImage = UIGraphicsGetImageFromCurrentImageContext();
-                    UIGraphicsEndImageContext();
-                }
+                UIImage *previewImage = OGCompatRoundVideoPreview(thumbnailPath, fileUrl, assetVideoMessage.duration);
 
                 if (previewImage == nil)
                 {
@@ -1036,11 +1089,7 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
                     return;
                 }
 
-                if (thumbnailPath.length != 0 && ![[NSFileManager defaultManager] fileExistsAtPath:thumbnailPath])
-                {
-                    [[NSFileManager defaultManager] createDirectoryAtPath:[thumbnailPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:nil];
-                    [UIImageJPEGRepresentation(previewImage, 0.54f) writeToFile:thumbnailPath atomically:true];
-                }
+                OGCompatPersistRoundVideoPreview(previewImage, thumbnailPath);
                 dict[@"previewImage"] = previewImage;
                 if (assetVideoMessage.liveData)
                     dict[@"liveUploadData"] = assetVideoMessage.liveData;
@@ -2738,7 +2787,7 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
             }
         }
         
-        int32_t actualId = [randomIdToId[@(self.preparedMessage.randomId)] intValue];
+        int32_t actualId = [[randomIdToId objectForKey:@(self.preparedMessage.randomId)] intValue];
         TLMessage *updateMessage = updates.messages.firstObject;
         bool grouped = false;
         for (TLMessage *message in updates.messages)
@@ -3019,28 +3068,13 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
             }
             else if ([self.preparedMessage isKindOfClass:[TGPreparedRemoteDocumentMessage class]])
             {
-                TGDocumentMediaAttachment *sourceDocument = [(TGPreparedRemoteDocumentMessage *)self.preparedMessage document];
+                TGPreparedRemoteDocumentMessage *remoteDocumentMessage = (TGPreparedRemoteDocumentMessage *)self.preparedMessage;
+                TGDocumentMediaAttachment *sourceDocument = remoteDocumentMessage.document;
                 for (TGMediaAttachment *attachment in message.mediaAttachments)
                 {
                     if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
                     {
-                        TGDocumentMediaAttachment *updatedDocument = (TGDocumentMediaAttachment *)attachment;
-                        NSString *sourceDirectory = [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:sourceDocument.documentId version:sourceDocument.version];
-                        NSString *updatedDirectory = [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:updatedDocument.documentId version:updatedDocument.version];
-                        NSString *sourcePath = [sourceDirectory stringByAppendingPathComponent:sourceDocument.safeFileName];
-                        NSString *updatedPath = [updatedDirectory stringByAppendingPathComponent:updatedDocument.safeFileName];
-
-                        if (![sourcePath isEqualToString:updatedPath] && [[NSFileManager defaultManager] fileExistsAtPath:sourcePath] && ![[NSFileManager defaultManager] fileExistsAtPath:updatedPath])
-                        {
-                            [[NSFileManager defaultManager] createDirectoryAtPath:updatedDirectory withIntermediateDirectories:true attributes:nil error:nil];
-                            NSError *linkError = nil;
-                            [[NSFileManager defaultManager] linkItemAtPath:sourcePath toPath:updatedPath error:&linkError];
-                            if (linkError != nil)
-                            {
-                                linkError = nil;
-                                [[NSFileManager defaultManager] copyItemAtPath:sourcePath toPath:updatedPath error:&linkError];
-                            }
-                        }
+                        OGCompatMirrorDocumentFile(sourceDocument, (TGDocumentMediaAttachment *)attachment);
                         break;
                     }
                 }
@@ -3538,7 +3572,12 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
 
 - (void)conversationSendMessageRequestFailed:(NSString *)errorText errorCode:(int32_t)errorCode
 {
-    if ([errorText isEqualToString:@"PEER_FLOOD"]) {
+    if ([self.preparedMessage isKindOfClass:[TGPreparedPollMessage class]] && ([errorText isEqualToString:@"CHAT_SEND_POLL_FORBIDDEN"] || [errorText hasPrefix:@"POLL_"] || [errorText hasPrefix:@"QUIZ_"])) {
+        NSString *message = [errorText isEqualToString:@"CHAT_SEND_POLL_FORBIDDEN"] ? TGLocalized(@"CreatePoll.ErrorForbidden") : TGLocalized(@"CreatePoll.ErrorInvalid");
+        TGDispatchOnMainThread(^{
+            [TGCustomAlertView presentAlertWithTitle:nil message:message cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+        });
+    } else if ([errorText isEqualToString:@"PEER_FLOOD"]) {
         TGDispatchOnMainThread(^{
             static CFAbsoluteTime lastErrorTime = 0.0;
             if (CFAbsoluteTimeGetCurrent() - lastErrorTime >= 1.0) {
@@ -3556,6 +3595,8 @@ static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore =
                 }];
             }
         });
+    } else if ([TGPaidMessagesSignals isPaidMessagesError:errorText]) {
+        [TGPaidMessagesConfirmation handleSendError:errorText peerId:_conversationId];
     } else if ([errorText hasPrefix:@"FILE_REFERENCE_"] && errorCode == 400) {
         if (_updatedOriginInfo != nil || _updatedOriginInfos != nil)
         {

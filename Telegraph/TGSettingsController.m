@@ -34,12 +34,6 @@
 
 @end
 
-static NSString *TGGroqApiKeyDefaultsKey(void)
-{
-    int64_t userId = TGTelegraphInstance.clientUserId;
-    return userId != 0 ? [NSString stringWithFormat:@"TGGroqAPIKey.%lld", userId] : @"TGGroqAPIKey";
-}
-
 @implementation TGSettingsController
 
 - (id)init
@@ -369,19 +363,6 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
 
 #pragma mark - Actions
 
-- (void)groqApiKeyButtonPressed
-{
-    [TGCustomAlertView presentSecureTextInputAlertWithTitle:@"Groq API key" message:@"The key is stored only on this device and is sent directly to Groq." placeholder:@"gsk_..." text:[[NSUserDefaults standardUserDefaults] stringForKey:TGGroqApiKeyDefaultsKey()] cancelButtonTitle:@"Cancel" okButtonTitle:@"Save" completionBlock:^(NSString *enteredKey)
-    {
-        NSString *key = [[(enteredKey ?: @"") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
-        if (key.length != 0)
-            [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGGroqApiKeyDefaultsKey()];
-        else
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGGroqApiKeyDefaultsKey()];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-    }];
-}
-
 - (void)logoutButtonPressed
 {
     [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%lld)", TGTelegraphInstance.clientUserId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
@@ -437,10 +418,8 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
 
 - (void)clearChatListCacheButtonPressed
 {
-    [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:nil];
+    for (NSString *property in @[@"dialogListLoaded", @"dialogListRemoteOffset", @"dialogListHash", @"ios6DialogListCacheVersion"])
+        [TGDatabaseInstance() setCustomProperty:property value:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ClearChatListCacheRequested" object:nil];
 }
 

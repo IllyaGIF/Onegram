@@ -92,8 +92,8 @@ const CGFloat TGPhotoBrushSettingsItemHeight = 44.0f;
 {
     self.alpha = 0.0f;
 
-    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, TGScreenScaling());
+    OGCompatLayerSetShouldRasterize(self.layer, true);
     
     [self _setupBrushPreviews];
     
@@ -107,8 +107,8 @@ const CGFloat TGPhotoBrushSettingsItemHeight = 44.0f;
 
 - (void)dismissWithCompletion:(void (^)(void))completion
 {
-    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, TGScreenScaling());
+    OGCompatLayerSetShouldRasterize(self.layer, true);
     
     [UIView animateWithDuration:0.15 animations:^
     {

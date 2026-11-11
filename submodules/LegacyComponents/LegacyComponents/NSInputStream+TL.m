@@ -20,17 +20,19 @@ static inline int roundUpInput(int numToRound, int multiple)
     return numToRound + multiple - remainder;
 }
 
-static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUInteger length)
+static NSInteger OGCompatStreamFill(NSInputStream *stream, uint8_t *destination, NSUInteger wanted)
 {
-    NSUInteger offset = 0;
-    while (offset < length)
+    NSUInteger filled = 0;
+    for (;;)
     {
-        NSInteger count = [stream read:buffer + offset maxLength:length - offset];
-        if (count <= 0)
+        if (filled >= wanted)
             break;
-        offset += (NSUInteger)count;
+        NSInteger chunk = [stream read:destination + filled maxLength:wanted - filled];
+        if (chunk < 1)
+            break;
+        filled += chunk;
     }
-    return (NSInteger)offset;
+    return filled;
 }
 
 @implementation NSInputStream (TL)
@@ -39,7 +41,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int32_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 4) != 4)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 4) != 4)
     {
         TGLegacyLog(@"Couldn't read int32");
         
@@ -60,7 +62,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int32_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 4) != 4)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 4) != 4)
     {
         *failed = true;
         return 0;
@@ -80,7 +82,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int64_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 8) != 8)
     {
         TGLegacyLog(@"Couldn't read int64");
     }
@@ -99,7 +101,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     int64_t value = 0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 8) != 8)
     {
         *failed = true;
         return 0;
@@ -119,7 +121,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     double value = 0.0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 8) != 8)
     {
         TGLegacyLog(@"Couldn't read double");
     }
@@ -138,7 +140,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 {
     double value = 0.0;
     
-    if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
+    if (OGCompatStreamFill(self, (uint8_t *)&value, 8) != 8)
     {
         *failed = true;
         return 0.0;
@@ -157,7 +159,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readData:(int)length
 {
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         TGLegacyLog(@"Couldn't read %d bytes", length);
@@ -169,7 +171,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readData:(int)length failed:(bool *)failed
 {
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         free(bytes);
@@ -183,7 +185,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSMutableData *)readMutableData:(int)length
 {
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         TGLegacyLog(@"Couldn't read %d bytes", length);
@@ -195,7 +197,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSMutableData *)readMutableData:(int)length failed:(bool *)failed
 {
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         free(bytes);
@@ -209,7 +211,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSString *)readString
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
+    OGCompatStreamFill(self, &tmp, 1);
     
     int paddingBytes = 0;
     
@@ -217,7 +219,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        OGCompatStreamFill(self, ((uint8_t *)&length) + 1, 3);
         length >>= 8;
         
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -239,7 +241,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length > 0)
     {
         uint8_t *bytes = (uint8_t *)malloc(length);
-        int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+        int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
         if (readLen != length)
         {
             TGLegacyLog(@"Couldn't read %d bytes", length);
@@ -253,7 +255,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     }
     
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
+        OGCompatStreamFill(self, &tmp, 1);
     
     return string;
 }
@@ -261,7 +263,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSString *)readString:(bool *)failed
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
+    OGCompatStreamFill(self, &tmp, 1);
     
     int paddingBytes = 0;
     
@@ -269,7 +271,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        OGCompatStreamFill(self, ((uint8_t *)&length) + 1, 3);
         length >>= 8;
         
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -291,7 +293,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length > 0)
     {
         uint8_t *bytes = (uint8_t *)malloc(length);
-        int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+        int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
         if (readLen != length)
         {
             free(bytes);
@@ -307,7 +309,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     }
     
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
+        OGCompatStreamFill(self, &tmp, 1);
     
     return string;
 }
@@ -315,7 +317,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readBytes
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
+    OGCompatStreamFill(self, &tmp, 1);
     
     int paddingBytes = 0;
     
@@ -323,7 +325,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        OGCompatStreamFill(self, ((uint8_t *)&length) + 1, 3);
         length >>= 8;
         
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -341,7 +343,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     }
     
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         TGLegacyLog(@"Couldn't read %d bytes", length);
@@ -350,7 +352,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     NSData *result = [NSData dataWithBytesNoCopy:bytes length:length freeWhenDone:true];
     
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
+        OGCompatStreamFill(self, &tmp, 1);
     
     return result;
 }
@@ -358,7 +360,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 - (NSData *)readBytes:(bool *)failed
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
+    OGCompatStreamFill(self, &tmp, 1);
     
     int paddingBytes = 0;
     
@@ -366,7 +368,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        OGCompatStreamFill(self, ((uint8_t *)&length) + 1, 3);
         length >>= 8;
         
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -384,7 +386,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     }
     
     uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
+    int readLen = (int)OGCompatStreamFill(self, bytes, (NSUInteger)length);
     if (readLen != length)
     {
         free(bytes);
@@ -395,7 +397,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     NSData *result = [NSData dataWithBytesNoCopy:bytes length:length freeWhenDone:true];
     
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
+        OGCompatStreamFill(self, &tmp, 1);
     
     return result;
 }

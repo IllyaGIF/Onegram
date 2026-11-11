@@ -21,6 +21,7 @@ extern NSString *const TGStoriesStoreDidChangeNotification;
 - (void)setPeerStories:(TGPeerStories *)peerStories;
 - (void)addStories:(NSArray *)stories forPeerId:(int64_t)peerId;
 - (void)removeStoryIds:(NSArray *)storyIds forPeerId:(int64_t)peerId;
+- (void)updateStory:(TGStoryItem *)story;
 - (void)markStory:(TGStoryItem *)story seenForPeerId:(int64_t)peerId;
 
 @end

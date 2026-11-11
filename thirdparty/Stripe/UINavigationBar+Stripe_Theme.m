@@ -9,6 +9,7 @@
 #import "UINavigationBar+Stripe_Theme.h"
 #import "STPTheme.h"
 #import "STPColorUtils.h"
+#import "OGStripeCompat.h"
 
 static NSInteger const STPNavigationBarHairlineViewTag = 787473;
 
@@ -17,11 +18,12 @@ static NSInteger const STPNavigationBarHairlineViewTag = 787473;
 - (void)stp_setTheme:(STPTheme *)theme {
     [self stp_hairlineImageView].hidden = YES;
     [self stp_artificialHairlineView].backgroundColor = theme.tertiaryBackgroundColor;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    self.barTintColor = theme.primaryBackgroundColor;
+    UIColor *backgroundColor = theme.primaryBackgroundColor;
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
+    self.barTintColor = backgroundColor;
     self.tintColor = theme.accentColor;
 #else
-    self.tintColor = theme.primaryBackgroundColor;
+    self.tintColor = backgroundColor;
 #endif
     self.barStyle = theme.barStyle;
     self.translucent = theme.translucentNavigationBar;

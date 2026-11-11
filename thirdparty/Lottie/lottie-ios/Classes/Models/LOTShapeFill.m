@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeFill.m
 //  LottieAnimator
@@ -22,16 +22,16 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *color = [jsonDictionary objectForKey:@2];
+  NSDictionary *color = jsonDictionary[@"c"];
   if (color) {
     _color = [[LOTKeyframeGroup alloc] initWithData:color];
   }
   
-  NSDictionary *opacity = [jsonDictionary objectForKey:@2];
+  NSDictionary *opacity = jsonDictionary[@"o"];
   if (opacity) {
     _opacity = [[LOTKeyframeGroup alloc] initWithData:opacity];
     [_opacity remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -39,14 +39,14 @@
     }];
   }
   
-  NSNumber *evenOdd = [jsonDictionary objectForKey:@2];
+  NSNumber *evenOdd = jsonDictionary[@"r"];
   if (evenOdd.integerValue == 2) {
     _evenOddFillRule = YES;
   } else {
     _evenOddFillRule = NO;
   }
   
-  NSNumber *fillEnabled = [jsonDictionary objectForKey:@2];
+  NSNumber *fillEnabled = jsonDictionary[@"fillEnabled"];
   _fillEnabled = fillEnabled.boolValue;
 }
 

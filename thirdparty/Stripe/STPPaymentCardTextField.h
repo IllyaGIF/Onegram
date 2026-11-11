@@ -27,37 +27,37 @@
  *
  *  @param textField the text field that has changed
  */
-- (void)paymentCardTextFieldDidChange:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidChange:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing begins in the payment card field's number field.
  */
-- (void)paymentCardTextFieldDidBeginEditingNumber:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidBeginEditingNumber:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing ends in the payment card field's number field.
  */
-- (void)paymentCardTextFieldDidEndEditingNumber:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidEndEditingNumber:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing begins in the payment card field's CVC field.
  */
-- (void)paymentCardTextFieldDidBeginEditingCVC:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidBeginEditingCVC:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing ends in the payment card field's CVC field.
  */
-- (void)paymentCardTextFieldDidEndEditingCVC:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidEndEditingCVC:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing begins in the payment card field's expiration field.
  */
-- (void)paymentCardTextFieldDidBeginEditingExpiration:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidBeginEditingExpiration:(STPPaymentCardTextField *_Nonnull)textField;
 
 /**
  *  Called when editing ends in the payment card field's expiration field.
  */
-- (void)paymentCardTextFieldDidEndEditingExpiration:(STPPaymentCardTextField *)textField;
+- (void)paymentCardTextFieldDidEndEditingExpiration:(STPPaymentCardTextField *_Nonnull)textField;
 
 @end
 
@@ -75,47 +75,47 @@
 /**
  *  The font used in each child field. Default is [UIFont systemFontOfSize:18]. Set this property to nil to reset to the default.
  */
-@property(nonatomic, copy) UIFont *font UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIFont *_Null_unspecified font UI_APPEARANCE_SELECTOR;
 
 /**
  *  The text color to be used when entering valid text. Default is [UIColor blackColor]. Set this property to nil to reset to the default.
  */
-@property(nonatomic, copy) UIColor *textColor UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIColor *_Null_unspecified textColor UI_APPEARANCE_SELECTOR;
 
 /**
  *  The text color to be used when the user has entered invalid information, such as an invalid card number. Default is [UIColor redColor]. Set this property to nil to reset to the default.
  */
-@property(nonatomic, copy) UIColor *textErrorColor UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIColor *_Null_unspecified textErrorColor UI_APPEARANCE_SELECTOR;
 
 /**
  *  The text placeholder color used in each child field. Default is [UIColor lightGreyColor]. Set this property to nil to reset to the default. On iOS 7 and above, this will also set the color of the card placeholder icon.
  */
-@property(nonatomic, copy) UIColor *placeholderColor UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIColor *_Null_unspecified placeholderColor UI_APPEARANCE_SELECTOR;
 
 /**
  *  The placeholder for the card number field. Default is @"1234567812345678". If this is set to something that resembles a card number, it will automatically format it as such (in other words, you don't need to add spaces to this string).
  */
-@property(nonatomic, copy) NSString *numberPlaceholder;
+@property(nonatomic, copy) NSString *_Nullable numberPlaceholder;
 
 /**
  *  The placeholder for the expiration field. Defaults to @"MM/YY".
  */
-@property(nonatomic, copy) NSString *expirationPlaceholder;
+@property(nonatomic, copy) NSString *_Nullable expirationPlaceholder;
 
 /**
  *  The placeholder for the cvc field. Defaults to @"CVC".
  */
-@property(nonatomic, copy) NSString *cvcPlaceholder;
+@property(nonatomic, copy) NSString *_Nullable cvcPlaceholder;
 
 /**
  *  The cursor color for the field. This is a proxy for the view's tintColor property, exposed for clarity only (in other words, calling setCursorColor is identical to calling setTintColor).
  */
-@property(nonatomic, copy) UIColor *cursorColor UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIColor *_Null_unspecified cursorColor UI_APPEARANCE_SELECTOR;
 
 /**
  *  The border color for the field. Default is [UIColor lightGreyColor]. Can be nil (in which case no border will be drawn).
  */
-@property(nonatomic, copy) UIColor *borderColor UI_APPEARANCE_SELECTOR;
+@property(nonatomic, copy) UIColor *_Nullable borderColor UI_APPEARANCE_SELECTOR;
 
 /**
  *  The width of the field's border. Default is 1.0.
@@ -135,12 +135,12 @@
 /**
  *  This behaves identically to setting the inputAccessoryView for each child text field.
  */
-@property(nonatomic, strong) UIView *inputAccessoryView;
+@property(nonatomic, strong) UIView *_Nullable inputAccessoryView;
 
 /**
  *  The curent brand image displayed in the receiver.
  */
-@property (nonatomic, readonly) UIImage *brandImage;
+@property (nonatomic, readonly) UIImage *_Nullable brandImage;
 
 /**
  *  Causes the text field to begin editing. Presents the keyboard.
@@ -169,7 +169,7 @@
  *  @param cardBrand The brand of card entered.
  *  @return The cvc image used for a card brand.
  */
-+ (UIImage *)cvcImageForCardBrand:(STPCardBrand)cardBrand;
++ (UIImage *_Nullable)cvcImageForCardBrand:(STPCardBrand)cardBrand;
 
 /**
  *  Returns the brand image used for a card brand.
@@ -177,7 +177,7 @@
  *  @param cardBrand The brand of card entered.
  *  @return The brand image used for a card brand.
  */
-+ (UIImage *)brandImageForCardBrand:(STPCardBrand)cardBrand;
++ (UIImage *_Nullable)brandImageForCardBrand:(STPCardBrand)cardBrand;
 
 /**
  *  Returns the rectangle in which the receiver draws its brand image.
@@ -229,7 +229,7 @@
 /**
  *  The current card number displayed by the field. May or may not be valid, unless isValid is true, in which case it is guaranteed to be valid.
  */
-@property(nonatomic, readonly) NSString *cardNumber;
+@property(nonatomic, readonly) NSString *_Nullable cardNumber;
 
 /**
  *  The current expiration month displayed by the field (1 = January, etc). May or may not be valid, unless isValid is true, in which case it is guaranteed to be valid.
@@ -239,7 +239,7 @@
 /**
  *  The current expiration month displayed by the field, as a string. This may or may not be a valid entry (i.e. "0", and may be 0-prefixed (i.e. "01" for January). You can use [STPCardValidator validationStateForExpirationMonth] to validate this value.
  */
-@property(nonatomic, readonly) NSString *formattedExpirationMonth;
+@property(nonatomic, readonly) NSString *_Nullable formattedExpirationMonth;
 
 /**
  *  The current expiration year displayed by the field, modulo 100 (e.g. the year 2015 will be represented as 15). May or may not be valid, unless isValid is true, in which case it is guaranteed to be valid.
@@ -249,12 +249,12 @@
 /**
  *  The current expiration year displayed by the field, as a string. This is a 2-digit year (i.e. "15"), and may or may not be a valid entry. You can use [STPCardValidator validationStateForExpirationYear:inMonth] to validate this value.
  */
-@property(nonatomic, readonly) NSString *formattedExpirationYear;
+@property(nonatomic, readonly) NSString *_Nullable formattedExpirationYear;
 
 /**
  *  The current card CVC displayed by the field. May or may not be valid, unless isValid is true, in which case it is guaranteed to be valid.
  */
-@property(nonatomic, readonly) NSString *cvc;
+@property(nonatomic, readonly) NSString *_Nullable cvc;
 
 /**
  *  Convenience property for creating an STPCardParams from the currently entered information
@@ -262,9 +262,9 @@
  *  to scan your user's credit card with a camera, you can assemble that data into an STPCardParams
  *  object and set this property to that object to prefill the fields you've collected.
  */
-@property(nonatomic, strong, readwrite) STPCardParams *cardParams;
+@property(nonatomic, strong, readwrite) STPCardParams *_Nonnull cardParams;
 
-@property(nonatomic, strong, readwrite) STPCardParams *card __attribute__((deprecated("This has been renamed to cardParams; use that instead.")));
+@property(nonatomic, strong, readwrite) STPCardParams *_Nullable card __attribute__((deprecated("This has been renamed to cardParams; use that instead.")));
 
 - (void)commonInit;
 
@@ -285,14 +285,14 @@ __attribute__((deprecated("This protocol is provided only for backwards-compatib
 @protocol PTKViewDelegate <STPPaymentCardTextFieldDelegate>
 
 @optional
-- (void)paymentView:(PTKView *)paymentView withCard:(PTKCard *)card isValid:(BOOL)valid;
+- (void)paymentView:(PTKView *_Nonnull)paymentView withCard:(PTKCard *_Nonnull)card isValid:(BOOL)valid;
 
 @end
 
 __attribute__((deprecated("This class is provided only for backwards-compatibility with PaymentKit. You shouldn't use it - use STPPaymentCardTextField instead.")))
 @interface PTKView : STPPaymentCardTextField
 @property(nonatomic, unsafe_unretained)id<PTKViewDelegate>delegate;
-@property(nonatomic, strong, readwrite) PTKCard *card;
+@property(nonatomic, strong, readwrite) PTKCard *_Nonnull card;
 @end
 
 #pragma clang diagnostic pop

@@ -762,7 +762,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         _glkView.enableSetNeedsDisplay = false;
         _glkView.userInteractionEnabled = false;
         _glkView.delegate = self;
-        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.example.Tele6ram"]) {
+        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"co.one.Teleapp"]) {
             _glkView.hidden = true;
         }
         

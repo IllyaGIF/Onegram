@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTRepeaterRenderer.h
 //  Lottie
@@ -12,7 +12,7 @@
 
 @interface LOTRepeaterRenderer : LOTRenderNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                              shapeRepeater:(LOTShapeRepeater *)repeater;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                              shapeRepeater:(LOTShapeRepeater *_Nonnull)repeater;
 
 @end

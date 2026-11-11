@@ -107,7 +107,10 @@ NSString *const TGInstagramPlayerCallbackOnPlayback = @"onPlayback";
 + (bool)_supportsWebPage:(TGWebPageMediaAttachment *)webPage
 {
     NSURL *url = [NSURL URLWithString:webPage.embedUrl];
-    return (([url.host rangeOfString:@"cdninstagram"].location != NSNotFound) && [url.pathExtension isEqualToString:@"mp4"]);
+    NSRange cdnRange = [url.host rangeOfString:@"cdninstagram"];
+    if (cdnRange.location == NSNotFound)
+        return false;
+    return [url.pathExtension isEqualToString:@"mp4"];
 }
 
 @end

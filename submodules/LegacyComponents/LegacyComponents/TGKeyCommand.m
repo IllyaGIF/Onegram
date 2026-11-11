@@ -22,9 +22,7 @@
     if (uiKeyCommand == nil)
         return nil;
     
-    NSString *title = nil;
-    if ([uiKeyCommand respondsToSelector:@selector(discoverabilityTitle)])
-        title = [uiKeyCommand performSelector:@selector(discoverabilityTitle)];
+    NSString *title = [uiKeyCommand respondsToSelector:NSSelectorFromString(@"discoverabilityTitle")] ? [uiKeyCommand valueForKey:@"discoverabilityTitle"] : nil;
     
     return [self keyCommandWithTitle:title input:uiKeyCommand.input modifierFlags:uiKeyCommand.modifierFlags];
 }

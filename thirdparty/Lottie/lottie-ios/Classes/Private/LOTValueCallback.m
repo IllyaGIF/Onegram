@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTValueCallback.m
 //  Lottie
@@ -11,7 +11,7 @@
 
 @implementation LOTColorValueCallback
 
-+ (instancetype )withCGColor:(CGColorRef )color {
++ (instancetype _Nonnull)withCGColor:(CGColorRef _Nonnull)color {
   LOTColorValueCallback *colorCallback = [[self alloc] init];
   colorCallback.colorValue = color;
   return colorCallback;
@@ -25,7 +25,7 @@
 
 @implementation LOTNumberValueCallback
 
-+ (instancetype )withFloatValue:(CGFloat)numberValue {
++ (instancetype _Nonnull)withFloatValue:(CGFloat)numberValue {
   LOTNumberValueCallback *numberCallback = [[self alloc] init];
   numberCallback.numberValue = numberValue;
   return numberCallback;
@@ -39,7 +39,7 @@
 
 @implementation LOTPointValueCallback
 
-+ (instancetype )withPointValue:(CGPoint)pointValue {
++ (instancetype _Nonnull)withPointValue:(CGPoint)pointValue {
   LOTPointValueCallback *callback = [[self alloc] init];
   callback.pointValue = pointValue;
   return callback;
@@ -53,7 +53,7 @@
 
 @implementation LOTSizeValueCallback
 
-+ (instancetype )withPointValue:(CGSize)sizeValue {
++ (instancetype _Nonnull)withPointValue:(CGSize)sizeValue {
   LOTSizeValueCallback *callback = [[self alloc] init];
   callback.sizeValue = sizeValue;
   return callback;
@@ -67,7 +67,7 @@
 
 @implementation LOTPathValueCallback
 
-+ (instancetype )withCGPath:(CGPathRef )path {
++ (instancetype _Nonnull)withCGPath:(CGPathRef _Nonnull)path {
   LOTPathValueCallback *callback = [[self alloc] init];
   callback.pathValue = path;
   return callback;

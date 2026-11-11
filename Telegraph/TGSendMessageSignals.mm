@@ -27,11 +27,33 @@
 #import "TLMessage$modernMessageService.h"
 #import "TLUpdates$updateShortSentMessage.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesConfirmation.h"
 
 NSString *const TGAccessHashKey = @"accessHash";
 NSString *const TGChannelGroupKey = @"channelGroup";
 
+static int64_t OGCompatChannelInfoAccessHash(NSDictionary *info)
+{
+    return [[info objectForKey:TGAccessHashKey] longLongValue];
+}
+
+static bool OGCompatChannelInfoIsGroup(NSDictionary *info)
+{
+    return [[info objectForKey:TGChannelGroupKey] boolValue];
+}
+
 @implementation TGSendMessageSignals
+
++ (SSignal *)_requestSignal:(TLMetaRpc *)request peerId:(int64_t)peerId
+{
+    return [[[TGTelegramNetworking instance] requestSignal:request] onError:^(id error)
+    {
+        NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+        if ([TGPaidMessagesSignals isPaidMessagesError:errorType])
+            [TGPaidMessagesConfirmation handleSendError:errorType peerId:peerId];
+    }];
+}
 
 + (SSignal *)sendTextMessageWithPeerId:(int64_t)peerId text:(NSString *)text  replyToMid:(int32_t)replyToMid
 {
@@ -40,6 +62,18 @@ NSString *const TGChannelGroupKey = @"channelGroup";
 
 + (SSignal *)sendTextMessageWithPeerId:(int64_t)peerId text:(NSString *)text entities:(NSArray *)entities replyToMid:(int32_t)replyToMid
 {
+    return [self sendTextMessageWithPeerId:peerId text:text entities:entities replyToMid:replyToMid replyToStoryId:0];
+}
+
++ (SSignal *)sendStoryReplyWithPeerId:(int64_t)peerId storyId:(int32_t)storyId text:(NSString *)text entities:(NSArray *)entities
+{
+    if (peerId == 0 || storyId == 0 || text.length == 0)
+        return [SSignal fail:nil];
+    return [self sendTextMessageWithPeerId:peerId text:text entities:entities replyToMid:0 replyToStoryId:storyId];
+}
+
++ (SSignal *)sendTextMessageWithPeerId:(int64_t)peerId text:(NSString *)text entities:(NSArray *)entities replyToMid:(int32_t)replyToMid replyToStoryId:(int32_t)replyToStoryId
+{
     SSignal *(^sendMessage)(TGMessage *, int64_t, bool) = ^SSignal *(TGMessage *message, int64_t accessHash, bool isChannelGroup)
     {
         TLRPCmessages_sendMessage_manual *sendMessage = [[TLRPCmessages_sendMessage_manual alloc] init];
@@ -47,6 +81,11 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         sendMessage.message = message.text;
         sendMessage.random_id = message.randomId;
         sendMessage.reply_to_msg_id = replyToMid;
+        if (replyToStoryId != 0)
+        {
+            sendMessage.replyToStoryPeer = sendMessage.peer;
+            sendMessage.replyToStoryId = replyToStoryId;
+        }
         
         int32_t flags = 0;
         if (replyToMid != 0)
@@ -60,9 +99,10 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         }
         
         sendMessage.flags = flags;
+        sendMessage.allowPaidStars = [TGPaidMessagesSignals allowedStarsForPeerId:peerId];
         CFAbsoluteTime sendStart = CFAbsoluteTimeGetCurrent();
         
-        return [[SSignal single:message] then:[[[[[TGTelegramNetworking instance] requestSignal:sendMessage] mapToSignal:^SSignal *(TLUpdates *updates)
+        return [[SSignal single:message] then:[[[[self _requestSignal:sendMessage peerId:peerId] mapToSignal:^SSignal *(TLUpdates *updates)
         {
             TLMessage *updateMessage = updates.messages.firstObject;
             
@@ -130,9 +170,9 @@ NSString *const TGChannelGroupKey = @"channelGroup";
     
     return [[self _channelInfoSignalForPeerId:peerId] mapToSignal:^SSignal *(NSDictionary *info)
     {
-        return [[self _addMessageToDatabaseWithPeerId:peerId replyToMid:replyToMid text:text entities:entities attachment:nil isChannelGroup:[info[TGChannelGroupKey] boolValue] groupedId:0] mapToSignal:^SSignal *(TGMessage *message)
+        return [[self _addMessageToDatabaseWithPeerId:peerId replyToMid:replyToMid replyToStoryId:replyToStoryId text:text entities:entities attachment:nil isChannelGroup:[info[TGChannelGroupKey] boolValue] groupedId:0] mapToSignal:^SSignal *(TGMessage *message)
         {
-            return sendMessage(message, [info[TGAccessHashKey] longLongValue], [info[TGChannelGroupKey] boolValue]);
+            return sendMessage(message, OGCompatChannelInfoAccessHash(info), OGCompatChannelInfoIsGroup(info));
         }];
     }];
 }
@@ -146,6 +186,11 @@ NSString *const TGChannelGroupKey = @"channelGroup";
 }
 
 + (SSignal *)_addMessageToDatabaseWithPeerId:(int64_t)peerId replyToMid:(int32_t)replyToMid text:(NSString *)text entities:(NSArray *)entities attachment:(TGMediaAttachment *)attachment isChannelGroup:(bool)isChannelGroup groupedId:(int64_t)groupedId
+{
+    return [self _addMessageToDatabaseWithPeerId:peerId replyToMid:replyToMid replyToStoryId:0 text:text entities:entities attachment:attachment isChannelGroup:isChannelGroup groupedId:groupedId];
+}
+
++ (SSignal *)_addMessageToDatabaseWithPeerId:(int64_t)peerId replyToMid:(int32_t)replyToMid replyToStoryId:(int32_t)replyToStoryId text:(NSString *)text entities:(NSArray *)entities attachment:(TGMediaAttachment *)attachment isChannelGroup:(bool)isChannelGroup groupedId:(int64_t)groupedId
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -187,6 +232,8 @@ NSString *const TGChannelGroupKey = @"channelGroup";
             [attachments addObject:attachment];
         
         message.mediaAttachments = attachments;
+        if (replyToStoryId != 0)
+            [message setStoryReplyPeerId:peerId storyId:replyToStoryId];
         
         message.mid = [[[TGDatabaseInstance() generateLocalMids:1] firstObject] intValue];
         message.date = (int)OGRemoteClockTime();
@@ -225,8 +272,9 @@ NSString *const TGChannelGroupKey = @"channelGroup";
     }
     
     sendMedia.flags = flags;
+    sendMedia.allowPaidStars = [TGPaidMessagesSignals allowedStarsForPeerId:peerId];
     
-    return [[SSignal single:message] then:[[[[[TGTelegramNetworking instance] requestSignal:sendMedia] mapToSignal:^SSignal *(TLUpdates *updates)
+    return [[SSignal single:message] then:[[[[self _requestSignal:sendMedia peerId:peerId] mapToSignal:^SSignal *(TLUpdates *updates)
     {
         TLMessage *updateMessage = updates.messages.firstObject;
         
@@ -314,8 +362,9 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         flags |= 16;
     
     sendMultiMedia.flags = flags;
+    sendMultiMedia.allowPaidStars = [TGPaidMessagesSignals allowedStarsForPeerId:peerId] * (int64_t)messages.count;
 
-    return [[SSignal single:messages] then:[[[[[TGTelegramNetworking instance] requestSignal:sendMultiMedia] mapToSignal:^SSignal *(TLUpdates *updates)
+    return [[SSignal single:messages] then:[[[[self _requestSignal:sendMultiMedia peerId:peerId] mapToSignal:^SSignal *(TLUpdates *updates)
     {
         NSMutableDictionary *randomIdToId = [[NSMutableDictionary alloc] init];
         for (TLUpdate *update in updates.updatesList)
@@ -375,8 +424,8 @@ NSString *const TGChannelGroupKey = @"channelGroup";
 {
     return [[self _channelInfoSignalForPeerId:message.cid] mapToSignal:^SSignal *(NSDictionary *info)
     {
-        int64_t accessHash = [info[TGAccessHashKey] longLongValue];
-        bool channelGroup = [info[TGChannelGroupKey] boolValue];
+        int64_t accessHash = OGCompatChannelInfoAccessHash(info);
+        bool channelGroup = OGCompatChannelInfoIsGroup(info);
         
         return [self _sendMediaWithMessage:message accessHash:accessHash isChannelGroup:channelGroup replyToMid:0 uploadInfo:nil mediaProducer:mediaProducer];
     }];
@@ -386,8 +435,8 @@ NSString *const TGChannelGroupKey = @"channelGroup";
 {
     return [[self _channelInfoSignalForPeerId:peerId] mapToSignal:^SSignal *(NSDictionary *info)
     {
-        int64_t accessHash = [info[TGAccessHashKey] longLongValue];
-        bool channelGroup = [info[TGChannelGroupKey] boolValue];
+        int64_t accessHash = OGCompatChannelInfoAccessHash(info);
+        bool channelGroup = OGCompatChannelInfoIsGroup(info);
         
         return [[self _addMessageToDatabaseWithPeerId:peerId replyToMid:replyToMid text:nil entities:nil attachment:attachment isChannelGroup:channelGroup groupedId:0] mapToSignal:^SSignal *(TGMessage *message)
         {
@@ -413,8 +462,8 @@ NSString *const TGChannelGroupKey = @"channelGroup";
 {
     return [[self _channelInfoSignalForPeerId:peerId] mapToSignal:^SSignal *(NSDictionary *info)
     {
-        int64_t accessHash = [info[TGAccessHashKey] longLongValue];
-        bool channelGroup = [info[TGChannelGroupKey] boolValue];
+        int64_t accessHash = OGCompatChannelInfoAccessHash(info);
+        bool channelGroup = OGCompatChannelInfoIsGroup(info);
         
         NSMutableArray *signals = [[NSMutableArray alloc] init];
         for (TGMediaAttachment *attachment in attachments)
@@ -571,7 +620,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         forwardMessages.n_id = @[@(mid)];
         forwardMessages.random_id = @[@(message.randomId)];
         
-        return [[SSignal single:message] then:[[[[[TGTelegramNetworking instance] requestSignal:forwardMessages] mapToSignal:^SSignal *(TLUpdates *updates)
+        return [[SSignal single:message] then:[[[[self _requestSignal:forwardMessages peerId:peerId] mapToSignal:^SSignal *(TLUpdates *updates)
         {
             TLMessage *updateMessage = updates.messages.firstObject;
             
@@ -634,7 +683,20 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         forwardMessages.n_id = messageIds;
         forwardMessages.random_id = randomIds;
         
-        return [[[[[TGTelegramNetworking instance] requestSignal:forwardMessages] mapToSignal:^SSignal *(TLUpdates *updates)
+        TLMetaRpc *request = forwardMessages;
+        int64_t allowedStars = [TGPaidMessagesSignals allowedStarsForPeerId:peerId];
+        if (allowedStars > 0)
+        {
+            TGIOS6ForwardMessagesToThreadRpc *paidForwardMessages = [[TGIOS6ForwardMessagesToThreadRpc alloc] init];
+            paidForwardMessages.fromPeer = forwardMessages.from_peer;
+            paidForwardMessages.toPeer = forwardMessages.to_peer;
+            paidForwardMessages.messageIds = messageIds;
+            paidForwardMessages.randomIds = randomIds;
+            paidForwardMessages.allowPaidStars = allowedStars * (int64_t)messageIds.count;
+            request = paidForwardMessages;
+        }
+        
+        return [[[[self _requestSignal:request peerId:peerId] mapToSignal:^SSignal *(TLUpdates *updates)
         {
             [[TGTelegramNetworking instance] addUpdates:updates];
             return [SSignal complete];
@@ -691,7 +753,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
     
     for (NSNumber *peerIdVal in peerIds)
     {
-        int64_t peerId = peerIdVal.longLongValue;
+        int64_t peerId = [peerIdVal longLongValue];
         SSignal *signal = [TGSendMessageSignals sendTextMessageWithPeerId:peerId text:text entities:entities replyToMid:0];
         if (caption.length > 0)
             signal = [[TGSendMessageSignals sendTextMessageWithPeerId:peerId text:caption replyToMid:0] then:signal];
@@ -747,7 +809,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
     NSMutableArray *signals = [[NSMutableArray alloc] init];
     for (NSNumber *peerIdVal in peerIds)
     {
-        int64_t peerId = peerIdVal.longLongValue;
+        int64_t peerId = [peerIdVal longLongValue];
         SSignal *signal = [TGSendMessageSignals sendMultiMediaWithPeerId:peerId replyToMid:0 attachments:attachments groupedId:[self generateGroupedId]];
         if (caption.length > 0)
             signal = [[TGSendMessageSignals sendTextMessageWithPeerId:peerId text:caption replyToMid:0] then:signal];
@@ -831,7 +893,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
     
     for (NSNumber *peerIdVal in peerIds)
     {
-        int64_t peerId = peerIdVal.longLongValue;
+        int64_t peerId = [peerIdVal longLongValue];
         SSignal *signal = [TGSendMessageSignals sendMediaWithPeerId:peerId replyToMid:0 attachment:attachment uploadSignal:nil mediaProducer:mediaProducer];
         if (caption.length > 0)
             signal = [[TGSendMessageSignals sendTextMessageWithPeerId:peerId text:caption replyToMid:0] then:signal];

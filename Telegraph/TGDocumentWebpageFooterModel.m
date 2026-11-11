@@ -30,54 +30,7 @@
 
 @end
 
-static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *document)
-{
-    NSString *fileName = document.fileName.length == 0 ? @"file" : document.fileName;
-    if ([fileName pathExtension].length != 0)
-        return fileName;
-    
-    NSString *mimeType = [document.mimeType lowercaseString];
-    bool zipMime = [mimeType isEqualToString:@"application/zip"] || [mimeType isEqualToString:@"application/x-zip-compressed"];
-    if (zipMime)
-        return [fileName stringByAppendingPathExtension:(document.size > 1024 * 1024 ? @"ipa" : @"zip")];
-    
-    NSDictionary *mimeExtensions = @{
-        @"application/pdf": @"pdf",
-        @"application/x-rar-compressed": @"rar",
-        @"application/x-7z-compressed": @"7z",
-        @"application/gzip": @"gz",
-        @"application/x-tar": @"tar",
-        @"application/vnd.android.package-archive": @"apk",
-        @"application/x-debian-package": @"deb",
-        @"application/x-itunes-ipa": @"ipa",
-        @"text/plain": @"txt",
-        @"text/html": @"html",
-        @"text/css": @"css",
-        @"text/javascript": @"js",
-        @"application/javascript": @"js",
-        @"application/json": @"json",
-        @"application/xml": @"xml",
-        @"text/xml": @"xml",
-        @"image/jpeg": @"jpg",
-        @"image/png": @"png",
-        @"image/gif": @"gif",
-        @"image/webp": @"webp",
-        @"audio/mpeg": @"mp3",
-        @"audio/mp4": @"m4a",
-        @"audio/ogg": @"ogg",
-        @"video/mp4": @"mp4",
-        @"video/quicktime": @"mov"
-    };
-    NSString *extension = mimeExtensions[mimeType];
-    if (extension.length != 0)
-        return [fileName stringByAppendingPathExtension:extension];
-    
-    bool genericMime = mimeType.length == 0 || [mimeType isEqualToString:@"application/octet-stream"];
-    if (genericMime && document.size > 1024 * 1024)
-        return [fileName stringByAppendingPathExtension:@"ipa"];
-    
-    return fileName;
-}
+extern NSString *OGCompatDocumentDisplayName(TGDocumentMediaAttachment *document);
 
 @implementation TGDocumentWebpageFooterModel
 
@@ -107,7 +60,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
                 else
                     [previewUri appendFormat:@"local-id=%" PRId64 "", document.localDocumentId];
                 
-                [previewUri appendFormat:@"&file-name=%@", [TGIOS6DisplayFileNameForDocument(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+                [previewUri appendFormat:@"&file-name=%@", [OGCompatDocumentDisplayName(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
                 
                 CGSize thumbnailSize = CGSizeMake(86.0f, 86.0f);
                 CGSize renderSize = CGSizeZero;
@@ -132,7 +85,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
                 filePreviewUri = previewUri;
             }
             
-            _titleText = TGIOS6DisplayFileNameForDocument(document);
+            _titleText = OGCompatDocumentDisplayName(document);
             
             _documentNameModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:incoming ? context.presentation.pallete.chatIncomingAccentColor : context.presentation.pallete.chatOutgoingAccentColor font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:145.0f truncateInTheMiddle:true];
             [self addSubmodel:_documentNameModel];

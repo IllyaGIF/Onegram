@@ -103,20 +103,21 @@ bool TGIOS6QRLoginFlowActive(void)
 
 #import <CommonCrypto/CommonKeyDerivation.h>
 
-#ifndef kCCSuccess
-#define kCCSuccess 0
+#if !defined(kCCSuccess)
+#   define kCCSuccess 0
 #endif
 
 #import "TGNetworkWorker.h"
 #import "../submodules/LegacyComponents/LegacyComponents/ASQueue.h"
 
-static bool TGIos6IsHexString(NSString *string)
+static NSData *OGCompatProxySecretFromHex(NSString *text)
 {
-    if (![string isKindOfClass:[NSString class]] || string.length == 0 || string.length % 2 != 0)
-        return false;
-    
-    NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
-    return [string rangeOfCharacterFromSet:[hexSet invertedSet]].location == NSNotFound;
+    if (![text isKindOfClass:[NSString class]] || (text.length & 1) != 0 || text.length == 0)
+        return nil;
+    NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"] invertedSet];
+    if ([text rangeOfCharacterFromSet:nonHex].location != NSNotFound)
+        return nil;
+    return [NSData dataWithHexString:text];
 }
 
 static MTSocksProxySettings *TGOnegramStoredProxySettings(void)
@@ -142,9 +143,7 @@ static MTSocksProxySettings *TGOnegramStoredProxySettings(void)
     if (![ip isKindOfClass:[NSString class]] || ip.length == 0 || ![port isKindOfClass:[NSNumber class]] || [port intValue] <= 0)
         return nil;
 
-    NSString *secretString = dict[@"secret"];
-    NSData *secret = TGIos6IsHexString(secretString) ? [NSData dataWithHexString:secretString] : nil;
-    return [[MTSocksProxySettings alloc] initWithIp:ip port:(uint16_t)[port intValue] username:dict[@"username"] password:dict[@"password"] secret:secret];
+    return [[MTSocksProxySettings alloc] initWithIp:ip port:(uint16_t)[port intValue] username:dict[@"username"] password:dict[@"password"] secret:OGCompatProxySecretFromHex(dict[@"secret"])];
 }
 
 static bool TGIOS6NtpUnixTime(const char *host, NSTimeInterval *unixTime)
@@ -332,63 +331,83 @@ static int TGMaxWorkerCount(void)
     return cpuCoreCount() > 1 ? 4 : 2;
 }
 
-static NSString *TGIOS6DescribeInputChannel(TLInputChannel *channel)
+static NSString *OGCompatTraceFormat(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+static NSString *OGCompatTraceFormat(NSString *format, ...)
 {
-    if ([channel isKindOfClass:[TLInputChannel$inputChannel class]])
-    {
-        TLInputChannel$inputChannel *inputChannel = (TLInputChannel$inputChannel *)channel;
-        return [[NSString alloc] initWithFormat:@"inputChannel id=%lld accessHash=%lld", inputChannel.channel_id, inputChannel.access_hash];
-    }
-    
-    return [[NSString alloc] initWithFormat:@"%@", channel];
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *result = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    return result;
 }
 
-static NSString *TGIOS6DescribeInputPeer(TLInputPeer *peer)
+static NSString *OGCompatTraceChannel(TLInputChannel *channel)
 {
+    if (![channel isKindOfClass:[TLInputChannel$inputChannel class]])
+        return OGCompatTraceFormat(@"%@", channel);
+    TLInputChannel$inputChannel *concrete = (TLInputChannel$inputChannel *)channel;
+    return OGCompatTraceFormat(@"inputChannel id=%lld accessHash=%lld", concrete.channel_id, concrete.access_hash);
+}
+
+static NSString *OGCompatTracePeer(TLInputPeer *peer)
+{
+    if ([peer isKindOfClass:[TLInputPeer$inputPeerChat class]])
+        return OGCompatTraceFormat(@"inputPeerChat id=%lld", ((TLInputPeer$inputPeerChat *)peer).chat_id);
     if ([peer isKindOfClass:[TLInputPeer$inputPeerChannel class]])
     {
-        TLInputPeer$inputPeerChannel *inputPeer = (TLInputPeer$inputPeerChannel *)peer;
-        return [[NSString alloc] initWithFormat:@"inputPeerChannel id=%lld accessHash=%lld", inputPeer.channel_id, inputPeer.access_hash];
+        TLInputPeer$inputPeerChannel *channelPeer = (TLInputPeer$inputPeerChannel *)peer;
+        return OGCompatTraceFormat(@"inputPeerChannel id=%lld accessHash=%lld", channelPeer.channel_id, channelPeer.access_hash);
     }
-    else if ([peer isKindOfClass:[TLInputPeer$inputPeerUser class]])
+    if ([peer isKindOfClass:[TLInputPeer$inputPeerUser class]])
     {
-        TLInputPeer$inputPeerUser *inputPeer = (TLInputPeer$inputPeerUser *)peer;
-        return [[NSString alloc] initWithFormat:@"inputPeerUser id=%lld accessHash=%lld", inputPeer.user_id, inputPeer.access_hash];
+        TLInputPeer$inputPeerUser *concrete = (TLInputPeer$inputPeerUser *)peer;
+        return OGCompatTraceFormat(@"inputPeerUser id=%lld accessHash=%lld", concrete.user_id, concrete.access_hash);
     }
-    else if ([peer isKindOfClass:[TLInputPeer$inputPeerChat class]])
-    {
-        return [[NSString alloc] initWithFormat:@"inputPeerChat id=%lld", ((TLInputPeer$inputPeerChat *)peer).chat_id];
-    }
-    
-    return [[NSString alloc] initWithFormat:@"%@", peer];
+    return OGCompatTraceFormat(@"%@", peer);
 }
 
-static NSString *TGIOS6DescribeRpcForError(TLMetaRpc *rpc)
+static NSString *OGCompatTraceRpc(TLMetaRpc *rpc)
 {
+    if ([rpc isKindOfClass:[TLRPCmessages_getHistory class]])
+    {
+        TLRPCmessages_getHistory *history = (TLRPCmessages_getHistory *)rpc;
+        return OGCompatTraceFormat(@"messages.getHistory %@ offset=%d add=%d limit=%d max=%d min=%d hash=%lld", OGCompatTracePeer(history.peer), history.offset_id, history.add_offset, history.limit, history.max_id, history.min_id, history.n_hash);
+    }
+    if ([rpc isKindOfClass:[TLRPCupdates_getChannelDifference class]])
+    {
+        TLRPCupdates_getChannelDifference *channelDifference = (TLRPCupdates_getChannelDifference *)rpc;
+        return OGCompatTraceFormat(@"updates.getChannelDifference %@ pts=%d limit=%d", OGCompatTraceChannel(channelDifference.channel), channelDifference.pts, channelDifference.limit);
+    }
+    if ([rpc isKindOfClass:[TLRPCchannels_getMessages class]])
+    {
+        TLRPCchannels_getMessages *messages = (TLRPCchannels_getMessages *)rpc;
+        return OGCompatTraceFormat(@"channels.getMessages %@ ids=%@", OGCompatTraceChannel(messages.channel), messages.n_id);
+    }
+    if ([rpc isKindOfClass:[TLRPCchannels_getParticipant class]])
+    {
+        TLRPCchannels_getParticipant *participant = (TLRPCchannels_getParticipant *)rpc;
+        return OGCompatTraceFormat(@"channels.getParticipant %@ %@", OGCompatTraceChannel(participant.channel), OGCompatTracePeer(participant.participant));
+    }
     if ([rpc isKindOfClass:[TLRPCchannels_getFullChannel class]])
-        return [[NSString alloc] initWithFormat:@"channels.getFullChannel %@", TGIOS6DescribeInputChannel(((TLRPCchannels_getFullChannel *)rpc).channel)];
-    else if ([rpc isKindOfClass:[TLRPCchannels_getParticipant class]])
     {
-        TLRPCchannels_getParticipant *getParticipant = (TLRPCchannels_getParticipant *)rpc;
-        return [[NSString alloc] initWithFormat:@"channels.getParticipant %@ %@", TGIOS6DescribeInputChannel(getParticipant.channel), TGIOS6DescribeInputPeer(getParticipant.participant)];
+        TLRPCchannels_getFullChannel *fullChannel = (TLRPCchannels_getFullChannel *)rpc;
+        return OGCompatTraceFormat(@"channels.getFullChannel %@", OGCompatTraceChannel(fullChannel.channel));
     }
-    else if ([rpc isKindOfClass:[TLRPCchannels_getMessages class]])
+    return OGCompatTraceFormat(@"%@", [rpc class]);
+}
+
+static void OGCompatTraceRpcFailure(NSString *path, TLMetaRpc *rpc, id error)
+{
+    TGLog(@"TRACE rpc error path=%@ rpc=%@ error=%@", path, OGCompatTraceRpc(rpc), error);
+    NSString *description = OGCompatTraceFormat(@"%@", error);
+    for (NSString *marker in @[@"CHANNEL_INVALID", @"PEER_ID_INVALID", @"FILE_REFERENCE", @"MEDIA"])
     {
-        TLRPCchannels_getMessages *getMessages = (TLRPCchannels_getMessages *)rpc;
-        return [[NSString alloc] initWithFormat:@"channels.getMessages %@ ids=%@", TGIOS6DescribeInputChannel(getMessages.channel), getMessages.n_id];
+        if ([description rangeOfString:marker].location != NSNotFound)
+        {
+            TGLog(@"RPC error rpc=%@ error=%@", OGCompatTraceRpc(rpc), error);
+            break;
+        }
     }
-    else if ([rpc isKindOfClass:[TLRPCupdates_getChannelDifference class]])
-    {
-        TLRPCupdates_getChannelDifference *getDifference = (TLRPCupdates_getChannelDifference *)rpc;
-        return [[NSString alloc] initWithFormat:@"updates.getChannelDifference %@ pts=%d limit=%d", TGIOS6DescribeInputChannel(getDifference.channel), getDifference.pts, getDifference.limit];
-    }
-    else if ([rpc isKindOfClass:[TLRPCmessages_getHistory class]])
-    {
-        TLRPCmessages_getHistory *getHistory = (TLRPCmessages_getHistory *)rpc;
-        return [[NSString alloc] initWithFormat:@"messages.getHistory %@ offset=%d add=%d limit=%d max=%d min=%d hash=%lld", TGIOS6DescribeInputPeer(getHistory.peer), getHistory.offset_id, getHistory.add_offset, getHistory.limit, getHistory.max_id, getHistory.min_id, getHistory.n_hash];
-    }
-    
-    return [[NSString alloc] initWithFormat:@"%@", [rpc class]];
 }
 
 MTInternalIdClass(TGDownloadWorker)
@@ -590,7 +609,7 @@ static int TGMaxUploadWorkerCount(void)
     bool _proxyHasConnectionIssues;
     bool _isUpdatingConnectionContext;
     bool _isPerformingServiceTasks;
-    int _serviceTasksWatchdogToken;
+    int _serviceTaskEpoch;
     
     bool _isPerformingGetDifference;
     
@@ -603,7 +622,7 @@ static int TGMaxUploadWorkerCount(void)
     MTQueue *_mediaNetworkQueue;
     MTQueue *_transferNetworkQueue;
     TGUploadWorkerPool *_uploadWorkerPool;
-    NSMutableDictionary *_cdnDatas;
+    NSMutableDictionary *_cdnDataByDatacenter;
     
     NSMutableArray *_currentWakeUpCompletions;
     
@@ -767,7 +786,7 @@ static TGTelegramNetworkingResources *TGTelegramNetworkingTakePreparedResources(
     [_context removeChangeListener:self];
 
     _dispatchNetworkStateToken++;
-    _serviceTasksWatchdogToken++;
+    _serviceTaskEpoch++;
 
     if (_requestService != nil)
     {
@@ -948,15 +967,12 @@ static TGTelegramNetworkingResources *TGTelegramNetworkingTakePreparedResources(
         _keychain = resources.keychain;
         OGStartupDiagnosticsMark("network.init.keychain");
 
-        _cdnDatas = [[NSMutableDictionary alloc] init];
+        _cdnDataByDatacenter = [[NSMutableDictionary alloc] init];
         
 #if TGUseModernNetworking
         NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
-        bool keychainImportedLegacyKeychain = [[_keychain objectForKey:@"importedLegacyKeychain" group:@"meta"] boolValue];
-
-        bool defaultsImportedLegacyKeychain = [userDefaults boolForKey:@"TGModernNetworkingImportedLegacyKeychain"];
-        bool importedLegacyKeychain = keychainImportedLegacyKeychain || defaultsImportedLegacyKeychain;
-        if (!importedLegacyKeychain)
+        bool alreadyImported = [userDefaults boolForKey:@"TGModernNetworkingImportedLegacyKeychain"] || [[_keychain objectForKey:@"importedLegacyKeychain" group:@"meta"] boolValue];
+        if (!alreadyImported)
         {
             TGLog(@"AUTH legacyKeychain.import.begin clientUserId=%lld", TGTelegraphInstance.clientUserId);
             [TGKeychainImport importKeychain:_keychain clientUserId:TGTelegraphInstance.clientUserId];
@@ -1014,9 +1030,10 @@ static TGTelegramNetworkingResources *TGTelegramNetworkingTakePreparedResources(
         if (socksProxyData != nil) {
             NSDictionary *socksProxyDict = [NSKeyedUnarchiver unarchiveObjectWithData:socksProxyData];
             if (socksProxyDict[@"ip"] != nil && socksProxyDict[@"port"] != nil && ![socksProxyDict[@"inactive"] boolValue]) {
-                NSString *secretString = socksProxyDict[@"secret"];
-                NSData *secret = TGIos6IsHexString(secretString) ? [NSData dataWithHexString:secretString] : nil;
-                if ([secretString isKindOfClass:[NSString class]] && secretString.length != 0 && secret == nil)
+                id rawSecret = [socksProxyDict objectForKey:@"secret"];
+                NSString *secretString = rawSecret;
+                NSData *secret = OGCompatProxySecretFromHex(secretString);
+                if (secret == nil && [rawSecret isKindOfClass:[NSString class]] && secretString.length != 0)
                     TGLog(@"AUTH ignoring non-hex proxy secret length=%d", (int)secretString.length);
                 apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:socksProxyDict[@"ip"] port:(uint16_t)[socksProxyDict[@"port"] intValue] username:socksProxyDict[@"username"] password:socksProxyDict[@"password"] secret:secret]];
             }
@@ -2330,7 +2347,7 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
             if (messageSend)
                 TGLog(@"SENDSTATE response rpc=%@ result=%@ error=%@ elapsed=%.0fms", rpcPerfClass, NSStringFromClass([result class]), error == nil ? @"none" : NSStringFromClass([error class]), (responseReceivedAt - rpcPerfStart) * 1000.0);
             if (error != nil)
-                TGLog(@"TRACE rpc error path=performRpc rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
+                TGLog(@"TRACE rpc error path=performRpc rpc=%@ error=%@", OGCompatTraceRpc(rpc), error);
             [ActionStageInstance() dispatchOnStageQueue:^
             {
                 if (completionBlock != nil)
@@ -2386,8 +2403,10 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
             }
         }
         
-        NSString *requestClassName = NSStringFromClass([request.body class]);
-        bool isAuthRequest = [request.body isKindOfClass:[TLRPCauth_sendCode class]] || [request.body isKindOfClass:[TLRPCauth_resendCode$auth_resendCode class]] || [requestClassName hasPrefix:@"TGIOS6Auth"] || [requestClassName hasPrefix:@"TLRPCauth_signIn"] || [requestClassName hasPrefix:@"TLRPCauth_signUp"];
+        NSString *bodyClassName = NSStringFromClass([request.body class]);
+        bool isCodeRequest = [request.body isKindOfClass:[TLRPCauth_sendCode class]] || [request.body isKindOfClass:[TLRPCauth_resendCode$auth_resendCode class]] || [bodyClassName isEqualToString:@"OGCompatSendCodeRpc"];
+        bool isOnegramAuthRpc = [bodyClassName isEqualToString:@"OGCompatSignInRpc"] || [bodyClassName isEqualToString:@"OGCompatExportLoginTokenRpc"] || [bodyClassName isEqualToString:@"OGCompatImportLoginTokenRpc"];
+        bool isAuthRequest = isCodeRequest || isOnegramAuthRpc || [bodyClassName hasPrefix:@"TLRPCauth_signIn"] || [bodyClassName hasPrefix:@"TLRPCauth_signUp"];
         if (isAuthRequest)
             request.dependsOnPasswordEntry = false;
         
@@ -2395,10 +2414,7 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
             request.hasHighPriority = true;
         }
         
-        bool continueOnFloodWait = true;
-        if ([request.body isKindOfClass:[TLRPCauth_sendCode class]] || [request.body isKindOfClass:[TLRPCauth_resendCode$auth_resendCode class]] || [requestClassName isEqualToString:@"TGIOS6AuthSendCode"]) {
-            continueOnFloodWait = false;
-        }
+        bool continueOnFloodWait = !isCodeRequest;
         
         [request setShouldContinueExecutionWithErrorContext:^bool(MTRequestErrorContext *errorContext)
         {
@@ -2584,19 +2600,20 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
     [ActionStageInstance() dispatchOnStageQueue:^
     {
         _isPerformingServiceTasks = isPerformingServiceTasks;
-        _serviceTasksWatchdogToken++;
+        _serviceTaskEpoch++;
         
-        if (isPerformingServiceTasks)
+        if (isPerformingServiceTasks == true)
         {
-            int token = _serviceTasksWatchdogToken;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC)), [ActionStageInstance() globalStageDispatchQueue], ^
+            int token = _serviceTaskEpoch;
+            const int64_t serviceTaskTimeout = 20 * NSEC_PER_SEC;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, serviceTaskTimeout), [ActionStageInstance() globalStageDispatchQueue], ^
             {
                 [ActionStageInstance() dispatchOnStageQueue:^
                 {
-                    if (token == _serviceTasksWatchdogToken && _isPerformingServiceTasks && !_isUpdatingConnectionContext)
+                    if (token == _serviceTaskEpoch && _isPerformingServiceTasks && !_isUpdatingConnectionContext)
                     {
+                        _serviceTaskEpoch++;
                         _isPerformingServiceTasks = false;
-                        _serviceTasksWatchdogToken++;
                         [self dispatchNetworkState];
                     }
                 }];
@@ -2723,15 +2740,7 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
             }
             else
             {
-                TGLog(@"TRACE rpc error path=requestSignal rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
-                NSString *errorText = [[NSString alloc] initWithFormat:@"%@", error];
-                if ([errorText rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound ||
-                    [errorText rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound ||
-                    [errorText rangeOfString:@"FILE_REFERENCE"].location != NSNotFound ||
-                    [errorText rangeOfString:@"MEDIA"].location != NSNotFound)
-                {
-                    TGLog(@"RPC error rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
-                }
+                OGCompatTraceRpcFailure(@"requestSignal", rpc, error);
                 [subscriber putError:error];
             }
         }];
@@ -2816,15 +2825,7 @@ static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationS
             }
             else
             {
-                TGLog(@"TRACE rpc error path=requestSignalTimestamp rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
-                NSString *errorText = [[NSString alloc] initWithFormat:@"%@", error];
-                if ([errorText rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound ||
-                    [errorText rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound ||
-                    [errorText rangeOfString:@"FILE_REFERENCE"].location != NSNotFound ||
-                    [errorText rangeOfString:@"MEDIA"].location != NSNotFound)
-                {
-                    TGLog(@"RPC error rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
-                }
+                OGCompatTraceRpcFailure(@"requestSignalTimestamp", rpc, error);
                 [subscriber putError:error];
             }
         }];

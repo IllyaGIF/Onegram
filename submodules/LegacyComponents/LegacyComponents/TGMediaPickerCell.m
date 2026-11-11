@@ -95,11 +95,12 @@
 
 - (void)checkButtonPressed
 {
-    if (![(id)self.item conformsToProtocol:@protocol(TGMediaSelectableItem)] || ((id<TGMediaSelectableItem>)self.item).uniqueIdentifier.length == 0)
+    id<TGMediaSelectableItem> selectableItem = (id<TGMediaSelectableItem>)self.item;
+    if (![(id)selectableItem conformsToProtocol:@protocol(TGMediaSelectableItem)] || selectableItem.uniqueIdentifier.length == 0)
         return;
     
     [_checkButton setSelected:!_checkButton.selected animated:true];
-    [self.selectionContext setItem:(id<TGMediaSelectableItem>)self.item selected:_checkButton.selected animated:false sender:_checkButton];
+    [self.selectionContext setItem:selectableItem selected:_checkButton.selected animated:false sender:_checkButton];
 }
 
 - (void)setChecked:(bool)checked animated:(bool)animated

@@ -1,20 +1,19 @@
-#ifndef TGIOS6_RTC_BASE_CHECKS_H
-#define TGIOS6_RTC_BASE_CHECKS_H
+#ifndef OG_COMPAT_RTC_BASE_CHECKS_H
+#define OG_COMPAT_RTC_BASE_CHECKS_H
 
 #include <sstream>
 
-namespace tgcalls_ios6_rtc {
+namespace og_compat_rtc {
 
-class LogSink {
-public:
-	template <class T>
-	LogSink &operator<<(const T &) {
+struct LogSink {
+	template <class Anything>
+	LogSink &operator<<(const Anything &) {
 		return *this;
 	}
 };
 
-} // namespace tgcalls_ios6_rtc
+} // namespace og_compat_rtc
 
-#define RTC_FATAL() tgcalls_ios6_rtc::LogSink()
+#define RTC_FATAL() og_compat_rtc::LogSink()
 
 #endif

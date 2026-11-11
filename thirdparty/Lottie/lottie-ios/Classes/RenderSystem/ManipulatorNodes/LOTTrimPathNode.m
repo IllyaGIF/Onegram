@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTTrimPathNode.m
 //  Lottie
@@ -24,8 +24,8 @@
   CGFloat _offsetT;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                   trimPath:(LOTShapeTrimPath *)trimPath {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                   trimPath:(LOTShapeTrimPath *_Nonnull)trimPath {
   self = [super initWithInputNode:inputNode keyName:trimPath.keyname];
   if (self) {
     inputNode.pathShouldCacheLengths = YES;
@@ -49,7 +49,7 @@
 }
 
 - (BOOL)updateWithFrame:(NSNumber *)frame
-      withModifierBlock:(void (^ )(LOTAnimatorNode * ))modifier
+      withModifierBlock:(void (^ _Nullable)(LOTAnimatorNode * _Nonnull))modifier
        forceLocalUpdate:(BOOL)forceUpdate {
   BOOL localUpdate = [self needsUpdateForFrame:frame];
   [self forceSetCurrentFrame:frame];
@@ -60,7 +60,7 @@
     return localUpdate;
   }
   
-  BOOL inputUpdated = [self.inputNode updateWithFrame:frame withModifierBlock:^(LOTAnimatorNode *  inputNode) {
+  BOOL inputUpdated = [self.inputNode updateWithFrame:frame withModifierBlock:^(LOTAnimatorNode * _Nonnull inputNode) {
     if ([inputNode isKindOfClass:[LOTPathAnimator class]] ||
         [inputNode isKindOfClass:[LOTCircleAnimator class]] ||
         [inputNode isKindOfClass:[LOTRoundedRectAnimator class]]) {

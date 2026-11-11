@@ -1,5 +1,5 @@
-#ifndef TGIOS6_ABSL_TYPES_OPTIONAL_H
-#define TGIOS6_ABSL_TYPES_OPTIONAL_H
+#ifndef OG_COMPAT_ABSL_OPTIONAL_H
+#define OG_COMPAT_ABSL_OPTIONAL_H
 
 #include <new>
 #include <utility>
@@ -16,29 +16,29 @@ static const nullopt_t nullopt(0);
 template <class T>
 class optional {
 public:
-	optional() : _has(false) {
+	optional() : _engaged(false) {
 	}
 
-	optional(nullopt_t) : _has(false) {
+	optional(nullopt_t) : _engaged(false) {
 	}
 
-	optional(const T &value) : _has(true) {
-		new (&_storage) T(value);
+	optional(const T &value) : _engaged(false) {
+		construct(value);
 	}
 
-	optional(T &&value) : _has(true) {
-		new (&_storage) T(std::move(value));
+	optional(T &&value) : _engaged(false) {
+		construct(std::move(value));
 	}
 
-	optional(const optional &other) : _has(other._has) {
-		if (_has) {
-			new (&_storage) T(other.value());
+	optional(const optional &other) : _engaged(false) {
+		if (other._engaged) {
+			construct(other.value());
 		}
 	}
 
-	optional(optional &&other) : _has(other._has) {
-		if (_has) {
-			new (&_storage) T(std::move(other.value()));
+	optional(optional &&other) : _engaged(false) {
+		if (other._engaged) {
+			construct(std::move(other.value()));
 		}
 	}
 
@@ -54,20 +54,19 @@ public:
 	optional &operator=(const optional &other) {
 		if (this != &other) {
 			reset();
-			_has = other._has;
-			if (_has) {
-				new (&_storage) T(other.value());
+			if (other._engaged) {
+				construct(other.value());
 			}
 		}
 		return *this;
 	}
 
 	explicit operator bool() const {
-		return _has;
+		return _engaged;
 	}
 
 	bool has_value() const {
-		return _has;
+		return _engaged;
 	}
 
 	T &value() {
@@ -95,14 +94,20 @@ public:
 	}
 
 private:
+	template <class Source>
+	void construct(Source &&source) {
+		new (&_storage) T(std::forward<Source>(source));
+		_engaged = true;
+	}
+
 	void reset() {
-		if (_has) {
+		if (_engaged) {
 			value().~T();
-			_has = false;
+			_engaged = false;
 		}
 	}
 
-	bool _has;
+	bool _engaged;
 	typename std::aligned_storage<sizeof(T), alignof(T)>::type _storage;
 };
 

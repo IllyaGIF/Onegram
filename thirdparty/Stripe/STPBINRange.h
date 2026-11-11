@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPCardBrand.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -16,9 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly)NSUInteger length;
 @property(nonatomic, readonly)STPCardBrand brand;
 
-+ (NSArray *)allRanges;
-+ (NSArray *)binRangesForNumber:(NSString *)number;
-+ (NSArray *)binRangesForBrand:(STPCardBrand)brand;
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)allRanges;
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)binRangesForNumber:(NSString *)number;
++ (OG_COMPAT_GENERIC(NSArray, STPBINRange *) *)binRangesForBrand:(STPCardBrand)brand;
 + (instancetype)mostSpecificBINRangeForNumber:(NSString *)number;
 
 @end

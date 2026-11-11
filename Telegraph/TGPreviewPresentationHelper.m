@@ -49,14 +49,13 @@
         if (presentation.pallete.isDark)
         {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-            Class effectViewClass = NSClassFromString(@"UIVisualEffectView");
-            Class blurEffectClass = NSClassFromString(@"UIBlurEffect");
-            if (effectViewClass != nil && blurEffectClass != nil)
+            Class blurClass = NSClassFromString(@"UIBlurEffect");
+            Class visualEffectClass = NSClassFromString(@"UIVisualEffectView");
+            if (blurClass != nil && visualEffectClass != nil)
             {
-                NSArray *effectViews = [self findViewsOfKind:effectViewClass inView:sheetView];
-                id blurEffect = [(id)blurEffectClass effectWithStyle:2];
-                for (id effectView in effectViews)
-                    [effectView setEffect:blurEffect];
+                id darkBlur = [(id)blurClass effectWithStyle:2];
+                for (id visualView in [self findViewsOfKind:visualEffectClass inView:sheetView])
+                    [visualView setEffect:darkBlur];
             }
 #endif
         }

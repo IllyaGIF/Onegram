@@ -7,50 +7,51 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPBlocks.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 @class STPVoidPromise;
 
-@interface STPPromise: NSObject
+@interface STPPromise OG_COMPAT_TYPE_PARAMETERS(T): NSObject
 
 typedef void (^STPPromiseErrorBlock)(NSError *error);
-typedef void (^STPPromiseValueBlock)(id value);
-typedef void (^STPPromiseCompletionBlock)(id value,  NSError * error);
-typedef id (^STPPromiseMapBlock)(id value);
-typedef STPPromise* (^STPPromiseFlatMapBlock)(id value);
+typedef void (^STPPromiseValueBlock)(OG_COMPAT_TYPE_PARAMETER(T, id) value);
+typedef void (^STPPromiseCompletionBlock)(__nullable OG_COMPAT_TYPE_PARAMETER(T, id) value,  NSError * _Nullable error);
+typedef id _Nonnull (^STPPromiseMapBlock)(OG_COMPAT_TYPE_PARAMETER(T, id) value);
+typedef STPPromise* _Nonnull (^STPPromiseFlatMapBlock)(OG_COMPAT_TYPE_PARAMETER(T, id) value);
 
 @property(atomic, readonly)BOOL completed;
-@property(atomic, readonly)id value;
+@property(atomic, readonly)OG_COMPAT_TYPE_PARAMETER(T, id) value;
 @property(atomic, readonly)NSError *error;
 
 + (instancetype)promiseWithError:(NSError *)error;
-+ (instancetype)promiseWithValue:(id)value;
++ (instancetype)promiseWithValue:(OG_COMPAT_TYPE_PARAMETER(T, id))value;
 
-- (void)succeed:(id)value;
+- (void)succeed:(OG_COMPAT_TYPE_PARAMETER(T, id))value;
 - (void)fail:(NSError *)error;
 
-- (void)completeWith:(STPPromise *)promise;
+- (void)completeWith:(OG_COMPAT_GENERIC(STPPromise, T) *)promise;
 
 - (instancetype)onSuccess:(STPPromiseValueBlock)callback;
 - (instancetype)onFailure:(STPPromiseErrorBlock)callback;
 - (instancetype)onCompletion:(STPPromiseCompletionBlock)callback;
 
-- (STPPromise *)map:(STPPromiseMapBlock)callback;
-- (STPPromise *)flatMap:(STPPromiseFlatMapBlock)callback;
+- (OG_COMPAT_GENERIC(STPPromise, id) *)map:(STPPromiseMapBlock)callback;
+- (OG_COMPAT_GENERIC(STPPromise, id) *)flatMap:(STPPromiseFlatMapBlock)callback;
 - (STPVoidPromise *)asVoid;
 
 @end
 
-typedef STPPromise* (^STPVoidPromiseFlatMapBlock)();
+typedef STPPromise* _Nonnull (^STPVoidPromiseFlatMapBlock)();
 
 @interface STPVoidPromise : STPPromise
 
 - (void)succeed;
 - (void)voidCompleteWith:(STPVoidPromise *)promise;
 - (instancetype)voidOnSuccess:(STPVoidBlock)block;
-- (STPPromise *)voidFlatMap:(STPVoidPromiseFlatMapBlock)block;
+- (OG_COMPAT_GENERIC(STPPromise, id) *)voidFlatMap:(STPVoidPromiseFlatMapBlock)block;
 
 @end
 

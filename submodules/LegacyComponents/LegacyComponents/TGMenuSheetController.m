@@ -52,7 +52,9 @@ typedef enum
 
 @end
 
-@interface TGMenuSheetController () <UIGestureRecognizerDelegate, UIPopoverPresentationControllerDelegate, UIPopoverControllerDelegate, UIViewControllerPreviewingDelegate, UIActionSheetDelegate>
+static char OGCompatSheetOwnerKey;
+
+@interface TGMenuSheetController () <UIActionSheetDelegate, UIViewControllerPreviewingDelegate, UIPopoverControllerDelegate, UIPopoverPresentationControllerDelegate, UIGestureRecognizerDelegate>
 {
     bool _dark;
     
@@ -87,13 +89,13 @@ typedef enum
     
     id<LegacyComponentsContext> _context;
 
-    UIActionSheet *_nativeActionSheet;
-    NSArray *_nativeButtonItems;
-    NSArray *_nativePendingItemViews;
-    bool _nativeHandlingSelection;
-    bool _nativePendingPresentation;
-    bool _nativeDismissalManual;
-    void (^_nativeDismissCompletion)(void);
+    UIActionSheet *_ogCompatSheet;
+    NSArray *_ogCompatSheetEntries;
+    NSArray *_ogCompatQueuedViews;
+    bool _ogCompatInSelection;
+    bool _ogCompatQueuedPresent;
+    bool _ogCompatManualClose;
+    void (^_ogCompatCloseCompletion)(void);
 }
 
 - (void)_updateLegacyPopoverContentSizeAnimated:(bool)animated;
@@ -102,158 +104,187 @@ typedef enum
 
 @implementation TGMenuSheetController
 
-- (bool)_nativeActionSheetsEnabled
+- (void)og_compat_notifyDismissed:(bool)manual completion:(void (^)(void))completion
 {
-    id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
-    return [provider respondsToSelector:@selector(useNativeActionSheets)] && [provider useNativeActionSheets];
-}
-
-- (bool)_canUseNativeActionSheetForItemViews:(NSArray *)itemViews
-{
-    if (![self _nativeActionSheetsEnabled] || itemViews.count == 0)
-        return false;
-
-    for (id itemView in itemViews)
-    {
-        if (![itemView isKindOfClass:[TGMenuSheetButtonItemView class]])
-            return false;
-
-        TGMenuSheetButtonItemView *buttonItem = (TGMenuSheetButtonItemView *)itemView;
-        if (buttonItem.collapsed || buttonItem.longPressAction != nil || buttonItem.title.length == 0)
-            return false;
-    }
-
-    return true;
-}
-
-- (void)_presentNativeActionSheetInViewController:(UIViewController *)viewController sourceView:(UIView *)sourceView
-{
-    if (_nativeActionSheet != nil)
-        return;
-
-    NSMutableArray *buttonItems = [[NSMutableArray alloc] init];
-    UIActionSheet *actionSheet = [[UIActionSheet alloc] initWithTitle:nil delegate:self cancelButtonTitle:nil destructiveButtonTitle:nil otherButtonTitles:nil];
-    bool hasCancelButton = false;
-
-    for (TGMenuSheetButtonItemView *itemView in _itemViews)
-    {
-        NSInteger buttonIndex = [actionSheet addButtonWithTitle:itemView.title];
-        [buttonItems addObject:itemView];
-
-        if (itemView.buttonType == TGMenuSheetButtonTypeCancel)
-        {
-            actionSheet.cancelButtonIndex = buttonIndex;
-            hasCancelButton = true;
-        }
-        else if (itemView.buttonType == TGMenuSheetButtonTypeDestructive)
-        {
-            actionSheet.destructiveButtonIndex = buttonIndex;
-        }
-    }
-
-    if (!hasCancelButton)
-    {
-        NSInteger cancelIndex = [actionSheet addButtonWithTitle:TGLocalized(@"Common.Cancel")];
-        actionSheet.cancelButtonIndex = cancelIndex;
-        [buttonItems addObject:[NSNull null]];
-    }
-
-    _nativeButtonItems = buttonItems;
-    _nativeActionSheet = actionSheet;
-    _nativeDismissalManual = false;
-    _presented = true;
-
-    objc_setAssociatedObject(actionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    if (self.willPresent != nil)
-        self.willPresent(0.0f);
-
-    UIView *presentationView = sourceView.window != nil ? sourceView : viewController.view;
-    if (presentationView == nil)
-        presentationView = [UIApplication sharedApplication].keyWindow;
-
-    if (TGIsPad())
-    {
-        CGRect sourceRect = sourceView != nil ? sourceView.bounds : presentationView.bounds;
-        if (self.sourceRect != nil)
-            sourceRect = self.sourceRect();
-        if (CGRectIsEmpty(sourceRect))
-            sourceRect = CGRectMake(CGRectGetMidX(presentationView.bounds), CGRectGetMidY(presentationView.bounds), 1.0f, 1.0f);
-        OGPlatformPresentActionSheet(actionSheet, self.barButtonItem, sourceView ?: presentationView, sourceRect, presentationView, true);
-    }
-    else
-    {
-        [actionSheet showInView:presentationView];
-    }
-}
-
-- (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex
-{
-    if (actionSheet != _nativeActionSheet || buttonIndex < 0 || buttonIndex >= (NSInteger)_nativeButtonItems.count)
-        return;
-
-    id item = _nativeButtonItems[buttonIndex];
-    if (item == [NSNull null])
-        return;
-
-    TGMenuSheetButtonItemView *buttonItem = (TGMenuSheetButtonItemView *)item;
-    _nativeHandlingSelection = true;
-    if (buttonItem.action != nil)
-        buttonItem.action();
-    _nativeHandlingSelection = false;
-}
-
-- (void)actionSheet:(UIActionSheet *)actionSheet willDismissWithButtonIndex:(NSInteger)buttonIndex
-{
-    if (actionSheet != _nativeActionSheet || _nativePendingPresentation)
-        return;
-
-    bool manual = _nativeDismissalManual || buttonIndex == actionSheet.cancelButtonIndex;
-    if (self.willDismiss != nil)
-        self.willDismiss(manual);
-}
-
-- (void)actionSheet:(UIActionSheet *)actionSheet didDismissWithButtonIndex:(NSInteger)buttonIndex
-{
-    if (actionSheet != _nativeActionSheet)
-        return;
-
-    bool pendingPresentation = _nativePendingPresentation;
-    NSArray *pendingItemViews = _nativePendingItemViews;
-    UIViewController *parentController = _parentController;
-    UIView *sourceView = _sourceView;
-    bool manual = _nativeDismissalManual || buttonIndex == actionSheet.cancelButtonIndex;
-    void (^completion)(void) = _nativeDismissCompletion;
-
-    actionSheet.delegate = nil;
-    _nativeActionSheet = nil;
-    _nativeButtonItems = nil;
-    _nativePendingItemViews = nil;
-    _nativePendingPresentation = false;
-    _nativeDismissalManual = false;
-    _nativeDismissCompletion = nil;
-    _presented = false;
-
-    if (pendingPresentation && pendingItemViews.count != 0 && parentController != nil)
-    {
-        [_sheetView removeFromSuperview];
-        _sheetView = nil;
-        [self setItemViews:pendingItemViews animated:false];
-        dispatch_async(dispatch_get_main_queue(), ^
-        {
-            [self presentInViewController:parentController sourceView:sourceView animated:true];
-        });
-
-        objc_setAssociatedObject(actionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        return;
-    }
-
     if (self.didDismiss != nil)
         self.didDismiss(manual);
     if (completion != nil)
         completion();
+}
 
-    objc_setAssociatedObject(actionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+- (bool)og_compat_nativeSheetsEnabled
+{
+    id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
+    if (![provider respondsToSelector:@selector(useNativeActionSheets)])
+        return false;
+    return [provider useNativeActionSheets];
+}
+
+- (bool)og_compat_canUseNativeSheetForItemViews:(NSArray *)itemViews
+{
+    if (itemViews.count == 0 || ![self og_compat_nativeSheetsEnabled])
+        return false;
+
+    id leading = itemViews.firstObject;
+    bool foundButton = false;
+    for (id candidate in itemViews)
+    {
+        if (candidate == leading && [candidate isKindOfClass:[TGMenuSheetTitleItemView class]])
+            continue;
+
+        if (![candidate isKindOfClass:[TGMenuSheetButtonItemView class]])
+            return false;
+        foundButton = true;
+
+        TGMenuSheetButtonItemView *button = candidate;
+        if (button.collapsed || button.longPressAction != nil || button.title.length == 0)
+            return false;
+    }
+
+    return foundButton;
+}
+
+- (NSString *)og_compat_nativeSheetTitle
+{
+    id leading = _itemViews.firstObject;
+    if (![leading isKindOfClass:[TGMenuSheetTitleItemView class]])
+        return nil;
+
+    TGMenuSheetTitleItemView *titleItem = leading;
+    NSMutableArray *lines = [[NSMutableArray alloc] init];
+    if (titleItem.title.length != 0)
+        [lines addObject:titleItem.title];
+    if (titleItem.subtitle.length != 0)
+        [lines addObject:titleItem.subtitle];
+    return lines.count != 0 ? [lines componentsJoinedByString:@"\n"] : nil;
+}
+
+- (void)og_compat_presentNativeSheetInViewController:(UIViewController *)viewController sourceView:(UIView *)sourceView
+{
+    if (_ogCompatSheet != nil)
+        return;
+
+    UIActionSheet *sheet = [[UIActionSheet alloc] initWithTitle:[self og_compat_nativeSheetTitle] delegate:self cancelButtonTitle:nil destructiveButtonTitle:nil otherButtonTitles:nil];
+    NSMutableArray *entries = [[NSMutableArray alloc] init];
+    bool cancelAdded = false;
+
+    for (TGMenuSheetButtonItemView *button in _itemViews)
+    {
+        if (![button isKindOfClass:[TGMenuSheetButtonItemView class]])
+            continue;
+
+        NSInteger position = [sheet addButtonWithTitle:button.title];
+        [entries addObject:button];
+
+        if (button.buttonType == TGMenuSheetButtonTypeCancel)
+        {
+            sheet.cancelButtonIndex = position;
+            cancelAdded = true;
+        }
+        else if (button.buttonType == TGMenuSheetButtonTypeDestructive)
+        {
+            sheet.destructiveButtonIndex = position;
+        }
+    }
+
+    if (!cancelAdded)
+    {
+        sheet.cancelButtonIndex = [sheet addButtonWithTitle:TGLocalized(@"Common.Cancel")];
+        [entries addObject:[NSNull null]];
+    }
+
+    _ogCompatSheetEntries = entries;
+    _ogCompatSheet = sheet;
+    _ogCompatManualClose = false;
+    _presented = true;
+
+    objc_setAssociatedObject(sheet, &OGCompatSheetOwnerKey, self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    if (self.willPresent != nil)
+        self.willPresent(0.0f);
+
+    UIView *anchorView = sourceView.window != nil ? sourceView : viewController.view;
+    if (anchorView == nil)
+        anchorView = [UIApplication sharedApplication].keyWindow;
+
+    if (!TGIsPad())
+    {
+        [sheet showInView:anchorView];
+        return;
+    }
+
+    CGRect anchorBounds = anchorView.bounds;
+    CGRect area = sourceView != nil ? sourceView.bounds : anchorBounds;
+    if (self.sourceRect != nil)
+        area = self.sourceRect();
+    if (CGRectIsEmpty(area))
+        area = CGRectMake(CGRectGetMidX(anchorBounds), CGRectGetMidY(anchorBounds), 1.0f, 1.0f);
+    OGPlatformPresentActionSheet(sheet, self.barButtonItem, sourceView ?: anchorView, area, anchorView, true);
+}
+
+- (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex
+{
+    if (actionSheet != _ogCompatSheet || buttonIndex < 0 || (NSUInteger)buttonIndex >= _ogCompatSheetEntries.count)
+        return;
+
+    id entry = [_ogCompatSheetEntries objectAtIndex:buttonIndex];
+    if ([entry isEqual:[NSNull null]])
+        return;
+
+    _ogCompatInSelection = true;
+    void (^handler)(void) = ((TGMenuSheetButtonItemView *)entry).action;
+    if (handler != nil)
+        handler();
+    _ogCompatInSelection = false;
+}
+
+- (void)actionSheet:(UIActionSheet *)actionSheet willDismissWithButtonIndex:(NSInteger)buttonIndex
+{
+    if (actionSheet != _ogCompatSheet || _ogCompatQueuedPresent)
+        return;
+
+    if (self.willDismiss != nil)
+        self.willDismiss(_ogCompatManualClose || buttonIndex == actionSheet.cancelButtonIndex);
+}
+
+- (void)actionSheet:(UIActionSheet *)actionSheet didDismissWithButtonIndex:(NSInteger)buttonIndex
+{
+    if (actionSheet != _ogCompatSheet)
+        return;
+
+    bool manual = _ogCompatManualClose || buttonIndex == actionSheet.cancelButtonIndex;
+    bool queued = _ogCompatQueuedPresent;
+    NSArray *queuedViews = _ogCompatQueuedViews;
+    UIViewController *host = _parentController;
+    UIView *anchor = _sourceView;
+    void (^completion)(void) = _ogCompatCloseCompletion;
+
+    actionSheet.delegate = nil;
+    _ogCompatSheet = nil;
+    _ogCompatSheetEntries = nil;
+    _ogCompatQueuedViews = nil;
+    _ogCompatQueuedPresent = false;
+    _ogCompatManualClose = false;
+    _ogCompatCloseCompletion = nil;
+    _presented = false;
+
+    if (queued && queuedViews.count != 0 && host != nil)
+    {
+        [_sheetView removeFromSuperview];
+        _sheetView = nil;
+        [self setItemViews:queuedViews animated:false];
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            [self presentInViewController:host sourceView:anchor animated:true];
+        });
+
+        objc_setAssociatedObject(actionSheet, &OGCompatSheetOwnerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return;
+    }
+
+    [self og_compat_notifyDismissed:manual completion:completion];
+
+    objc_setAssociatedObject(actionSheet, &OGCompatSheetOwnerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 - (void)_updateLegacyPopoverContentSizeAnimated:(bool)animated
@@ -310,9 +341,9 @@ typedef enum
     [_dimView removeTarget:self action:@selector(dimViewPressed) forControlEvents:UIControlEventTouchUpInside];
     _gestureRecognizer.delegate = nil;
     [_gestureRecognizer removeTarget:self action:NULL];
-    _nativeActionSheet.delegate = nil;
-    if (_nativeActionSheet != nil)
-        objc_setAssociatedObject(_nativeActionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    _ogCompatSheet.delegate = nil;
+    if (_ogCompatSheet != nil)
+        objc_setAssociatedObject(_ogCompatSheet, &OGCompatSheetOwnerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (iosMajorVersion() < 5)
     {
         [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillShowNotification object:nil];
@@ -427,14 +458,13 @@ typedef enum
 
 - (void)setItemViews:(NSArray *)itemViews animated:(bool)animated
 {
-    if (_nativeActionSheet != nil)
+    if (_ogCompatSheet != nil)
     {
-        for (TGMenuSheetItemView *itemView in itemViews)
-            itemView.menuController = self;
+        [itemViews makeObjectsPerformSelector:@selector(setMenuController:) withObject:self];
 
         _itemViews = itemViews;
-        _nativePendingItemViews = [itemViews copy];
-        _nativePendingPresentation = true;
+        _ogCompatQueuedViews = [itemViews copy];
+        _ogCompatQueuedPresent = true;
         return;
     }
 
@@ -708,9 +738,9 @@ typedef enum
     
     _parentController = viewController;
 
-    if ([self _canUseNativeActionSheetForItemViews:_itemViews])
+    if ([self og_compat_canUseNativeSheetForItemViews:_itemViews])
     {
-        [self _presentNativeActionSheetInViewController:viewController sourceView:sourceView];
+        [self og_compat_presentNativeSheetInViewController:viewController sourceView:sourceView];
         return;
     }
     
@@ -817,15 +847,14 @@ typedef enum
         return;
     }
 
-    if (_nativeActionSheet != nil)
+    if (_ogCompatSheet != nil)
     {
-        if (_nativeHandlingSelection)
+        if (_ogCompatInSelection)
             return;
 
-        _nativeDismissalManual = manual;
-        _nativeDismissCompletion = [completion copy];
-        NSInteger buttonIndex = _nativeActionSheet.cancelButtonIndex;
-        [_nativeActionSheet dismissWithClickedButtonIndex:buttonIndex animated:animated];
+        _ogCompatManualClose = manual;
+        _ogCompatCloseCompletion = [completion copy];
+        [_ogCompatSheet dismissWithClickedButtonIndex:_ogCompatSheet.cancelButtonIndex animated:animated];
         return;
     }
     
@@ -850,11 +879,7 @@ typedef enum
                 [self removeFromParentViewController];
                 [_sheetView menuDidDisappearAnimated:animated];
                 
-                if (self.didDismiss != nil)
-                    self.didDismiss(manual);
-                
-                if (completion != nil)
-                    completion();
+                [self og_compat_notifyDismissed:manual completion:completion];
             }];
         }
         else
@@ -863,11 +888,7 @@ typedef enum
             [self removeFromParentViewController];
             [_sheetView menuDidDisappearAnimated:animated];
             
-            if (self.didDismiss != nil)
-                self.didDismiss(manual);
-            
-            if (completion != nil)
-                completion();
+            [self og_compat_notifyDismissed:manual completion:completion];
         }
     }
     else
@@ -877,11 +898,7 @@ typedef enum
         void (^dismissedBlock)(void) = ^
         {
             [_sheetView menuDidDisappearAnimated:animated];
-            if (self.didDismiss != nil)
-                self.didDismiss(manual);
-            
-            if (completion != nil)
-                completion();
+            [self og_compat_notifyDismissed:manual completion:completion];
             
             if ([self.parentViewController isKindOfClass:[TGOverlayController class]]) {
                 TGOverlayControllerWindow *window = ((TGOverlayController *)self.parentViewController).overlayWindow;
@@ -1465,6 +1482,18 @@ typedef enum
     pallete->_badgeTextColor = badgeTextColor;
     pallete->_badgeImage = badgeImage;
     pallete->_cornersImage = cornersImage;
+    return pallete;
+}
+
+- (instancetype)palleteWithSurfaceImage:(UIImage *(^)(CGSize size))surfaceImage cornerRadius:(CGFloat)cornerRadius buttonFont:(UIFont *)buttonFont cancelButtonFont:(UIFont *)cancelButtonFont textShadowColor:(UIColor *)textShadowColor textShadowOffset:(CGSize)textShadowOffset
+{
+    TGMenuSheetPallete *pallete = [TGMenuSheetPallete palleteWithDark:_isDark backgroundColor:_backgroundColor selectionColor:_selectionColor separatorColor:_separatorColor accentColor:_accentColor destructiveColor:_destructiveColor textColor:_textColor secondaryTextColor:_secondaryTextColor spinnerColor:_spinnerColor badgeTextColor:_badgeTextColor badgeImage:_badgeImage cornersImage:_cornersImage];
+    pallete->_surfaceImage = [surfaceImage copy];
+    pallete->_surfaceCornerRadius = cornerRadius;
+    pallete->_buttonFont = buttonFont;
+    pallete->_cancelButtonFont = cancelButtonFont;
+    pallete->_textShadowColor = textShadowColor;
+    pallete->_textShadowOffset = textShadowOffset;
     return pallete;
 }
 

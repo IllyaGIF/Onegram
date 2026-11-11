@@ -1,4 +1,5 @@
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import "OGStripeCompat.h"
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 //
 //  PKPaymentAuthorizationViewController+Stripe_Blocks.m
 //  Stripe
@@ -28,7 +29,7 @@ typedef void (^STPPaymentAuthorizationStatusCallback)(PKPaymentAuthorizationStat
 @implementation STPBlockBasedApplePayDelegate
 
 - (void)paymentAuthorizationViewController:(__unused PKPaymentAuthorizationViewController *)controller didAuthorizePayment:(PKPayment *)payment completion:(STPPaymentAuthorizationStatusCallback)completion {
-    [self.apiClient createTokenWithPayment:payment completion:^(STPToken * token, NSError * error) {
+    [self.apiClient createTokenWithPayment:payment completion:^(STPToken * _Nullable token, NSError * _Nullable error) {
         if (error) {
             self.lastError = error;
             completion(PKPaymentAuthorizationStatusFailure);
@@ -82,8 +83,6 @@ typedef void (^STPPaymentAuthorizationStatusCallback)(PKPaymentAuthorizationStat
 
 @end
 
-void linkPKPaymentAuthorizationViewControllerBlocksCategory(void){}
-
-#else
-void linkPKPaymentAuthorizationViewControllerBlocksCategory(void) {}
 #endif
+
+void linkPKPaymentAuthorizationViewControllerBlocksCategory(void){}

@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTStrokeRenderer.h
 //  Lottie
@@ -12,8 +12,8 @@
 
 @interface LOTStrokeRenderer : LOTRenderNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                shapeStroke:(LOTShapeStroke *)stroke;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                shapeStroke:(LOTShapeStroke *_Nonnull)stroke;
 
 
 @end

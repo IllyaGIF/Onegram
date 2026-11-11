@@ -86,7 +86,7 @@
         _sliderView.alpha = 0.0f;
         _sliderView.hidden = true;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-        TGSetLayerRasterizationScale(_sliderView.layer, TGScreenScaling());
+        OGCompatLayerSetRasterizationScale(_sliderView.layer, TGScreenScaling());
 #endif
         _sliderView.minimumValue = editorItem.minimumValue;
         _sliderView.maximumValue = editorItem.maximumValue;
@@ -211,7 +211,7 @@
         
         _sliderView.hidden = false;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-        TGSetLayerShouldRasterize(_sliderView.layer, true);
+        OGCompatLayerSetShouldRasterize(_sliderView.layer, true);
 #endif
         [UIView animateWithDuration:sliderDuration delay:sliderDelay options:UIViewAnimationOptionCurveLinear animations:^
         {
@@ -219,7 +219,7 @@
         } completion:^(BOOL finished)
         {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-            TGSetLayerShouldRasterize(_sliderView.layer, false);
+            OGCompatLayerSetShouldRasterize(_sliderView.layer, false);
 #endif
             if (finished)
                 _sliderView.hidden = hidden;

@@ -45,118 +45,120 @@ static ASQueue *taskManagementQueue()
     return queue;
 }
 
-static NSMutableArray *TGStickerPendingLoadTasks()
+static const NSUInteger OGStickerLoadSlotLimit = 3;
+static NSUInteger OGStickerLoadSlotsInUse = 0;
+static NSMutableArray *OGStickerLoadWaitingList = nil;
+
+static NSString *OGStickerFilesDirectory()
 {
-    static NSMutableArray *tasks = nil;
+    static NSString *directory = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        tasks = [[NSMutableArray alloc] init];
+        directory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
     });
-    return tasks;
+    return directory;
 }
 
-static NSUInteger TGStickerActiveLoadTaskCount = 0;
-static const NSUInteger TGStickerMaximumConcurrentLoadTaskCount = 3;
-
-static void TGStickerScheduleLoadTask(void (^task)(void))
+static void OGStickerLoadGateSubmit(void (^work)(void))
 {
-    void (^taskCopy)(void) = [task copy];
+    void (^heldWork)(void) = [work copy];
     [taskManagementQueue() dispatchOnQueue:^
     {
-        if (TGStickerActiveLoadTaskCount < TGStickerMaximumConcurrentLoadTaskCount)
+        if (OGStickerLoadSlotsInUse >= OGStickerLoadSlotLimit)
         {
-            TGStickerActiveLoadTaskCount++;
-            taskCopy();
+            if (OGStickerLoadWaitingList == nil)
+                OGStickerLoadWaitingList = [[NSMutableArray alloc] init];
+            [OGStickerLoadWaitingList addObject:heldWork];
+            return;
         }
-        else
-        {
-            [TGStickerPendingLoadTasks() addObject:taskCopy];
-        }
+        OGStickerLoadSlotsInUse++;
+        heldWork();
     }];
 }
 
-static void TGStickerCompleteLoadTask()
+static void OGStickerLoadGateRelease()
 {
     [taskManagementQueue() dispatchOnQueue:^
     {
-        if (TGStickerActiveLoadTaskCount != 0)
-            TGStickerActiveLoadTaskCount--;
+        if (OGStickerLoadSlotsInUse > 0)
+            OGStickerLoadSlotsInUse--;
         
-        NSMutableArray *pendingTasks = TGStickerPendingLoadTasks();
-        if (pendingTasks.count != 0 && TGStickerActiveLoadTaskCount < TGStickerMaximumConcurrentLoadTaskCount)
+        if (OGStickerLoadWaitingList.count > 0 && OGStickerLoadSlotsInUse < OGStickerLoadSlotLimit)
         {
-            void (^nextTask)(void) = [pendingTasks[0] copy];
-            [pendingTasks removeObjectAtIndex:0];
-            TGStickerActiveLoadTaskCount++;
-            nextTask();
+            void (^nextWork)(void) = [OGStickerLoadWaitingList[0] copy];
+            [OGStickerLoadWaitingList removeObjectAtIndex:0];
+            OGStickerLoadSlotsInUse++;
+            nextWork();
         }
     }];
 }
 
-@interface TGStickerImageLoadTask : TGMediaPreviewTask
+enum
 {
-    bool _queueCancelled;
-    bool _queueSlotStarted;
-    bool _queueSlotCompleted;
-    pthread_mutex_t _queueMutex;
+    OGStickerTaskCancelled = 1 << 0,
+    OGStickerTaskSlotTaken = 1 << 1,
+    OGStickerTaskSlotReturned = 1 << 2
+};
+
+@interface OGThrottledStickerTask : TGMediaPreviewTask
+{
+    NSUInteger _gateFlags;
+    pthread_mutex_t _gateMutex;
 }
 
-- (bool)beginQueueSlot;
-- (void)completeQueueSlot;
+- (bool)claimSlot;
+- (void)returnSlot;
 
 @end
 
-@implementation TGStickerImageLoadTask
+@implementation OGThrottledStickerTask
 
 - (id)init
 {
     self = [super init];
     if (self != nil)
-        pthread_mutex_init(&_queueMutex, NULL);
+        pthread_mutex_init(&_gateMutex, NULL);
     return self;
 }
 
-- (bool)beginQueueSlot
+- (bool)claimSlot
 {
-    pthread_mutex_lock(&_queueMutex);
-    _queueSlotStarted = true;
-    bool shouldStart = !_queueCancelled;
-    pthread_mutex_unlock(&_queueMutex);
-    if (!shouldStart)
-        [self completeQueueSlot];
-    return shouldStart;
+    pthread_mutex_lock(&_gateMutex);
+    _gateFlags |= OGStickerTaskSlotTaken;
+    bool mayRun = (_gateFlags & OGStickerTaskCancelled) == 0;
+    pthread_mutex_unlock(&_gateMutex);
+    if (!mayRun)
+        [self returnSlot];
+    return mayRun;
 }
 
-- (void)completeQueueSlot
+- (void)returnSlot
 {
-    bool shouldComplete = false;
-    pthread_mutex_lock(&_queueMutex);
-    if (_queueSlotStarted && !_queueSlotCompleted)
-    {
-        _queueSlotCompleted = true;
-        shouldComplete = true;
-    }
-    pthread_mutex_unlock(&_queueMutex);
-    if (shouldComplete)
-        TGStickerCompleteLoadTask();
+    pthread_mutex_lock(&_gateMutex);
+    bool owesSlot = (_gateFlags & OGStickerTaskSlotTaken) && !(_gateFlags & OGStickerTaskSlotReturned);
+    if (owesSlot)
+        _gateFlags |= OGStickerTaskSlotReturned;
+    pthread_mutex_unlock(&_gateMutex);
+    if (owesSlot)
+        OGStickerLoadGateRelease();
 }
 
 - (void)cancel
 {
-    pthread_mutex_lock(&_queueMutex);
-    _queueCancelled = true;
-    bool slotStarted = _queueSlotStarted;
-    pthread_mutex_unlock(&_queueMutex);
+    pthread_mutex_lock(&_gateMutex);
+    _gateFlags |= OGStickerTaskCancelled;
+    bool holdsSlot = (_gateFlags & OGStickerTaskSlotTaken) != 0;
+    pthread_mutex_unlock(&_gateMutex);
     [super cancel];
-    if (slotStarted)
-        [self completeQueueSlot];
+    if (holdsSlot)
+        [self returnSlot];
 }
 
 - (void)dealloc
 {
-    [self completeQueueSlot];
-    pthread_mutex_destroy(&_queueMutex);
+    [self returnSlot];
+    pthread_mutex_destroy(&_gateMutex);
 }
 
 @end
@@ -188,13 +190,13 @@ static void TGStickerCompleteLoadTask()
 
 - (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))__unused partialCompletion completion:(void (^)(TGDataResource *))completion
 {
-    TGStickerImageLoadTask *previewTask = [[TGStickerImageLoadTask alloc] init];
+    OGThrottledStickerTask *previewTask = [[OGThrottledStickerTask alloc] init];
     
-    TGStickerScheduleLoadTask(^
+    OGStickerLoadGateSubmit(^
     {
-        if (![previewTask beginQueueSlot])
+        if (![previewTask claimSlot])
             return;
-        __weak TGStickerImageLoadTask *weakPreviewTask = previewTask;
+        __weak OGThrottledStickerTask *weakPreviewTask = previewTask;
         TGWorkerTask *workerTask = [[TGWorkerTask alloc] initWithBlock:^(bool (^isCancelled)())
         {
             TGDataResource *result = [TGStickerImageDataSource _performLoad:uri isCancelled:isCancelled];
@@ -204,14 +206,14 @@ static void TGStickerCompleteLoadTask()
             
             if (isCancelled != nil && isCancelled())
             {
-                [weakPreviewTask completeQueueSlot];
+                [weakPreviewTask returnSlot];
                 return;
             }
             
             if (completion != nil)
                 completion(result != nil ? result : [TGStickerImageDataSource resultForUnavailableImage]);
             
-            [weakPreviewTask completeQueueSlot];
+            [weakPreviewTask returnSlot];
         }];
         
         if ([TGStickerImageDataSource _isDataLocallyAvailableForUri:uri])
@@ -222,7 +224,7 @@ static void TGStickerCompleteLoadTask()
         {
             if (completion != nil)
                 completion([TGStickerImageDataSource resultForUnavailableImage]);
-            [previewTask completeQueueSlot];
+            [previewTask returnSlot];
         }
         else
         {
@@ -232,16 +234,11 @@ static void TGStickerCompleteLoadTask()
             {
                 if (completion != nil)
                     completion([TGStickerImageDataSource resultForUnavailableImage]);
-                [previewTask completeQueueSlot];
+                [previewTask returnSlot];
             }
             else
             {
-                static NSString *filesDirectory = nil;
-                static dispatch_once_t onceToken;
-                dispatch_once(&onceToken, ^
-                {
-                    filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-                });
+                NSString *filesDirectory = OGStickerFilesDirectory();
                 
                 NSString *fileDirectoryName = nil;
                 if (args[@"documentId"] != nil)
@@ -311,7 +308,7 @@ static void TGStickerCompleteLoadTask()
                     {
                         if (completion != nil)
                             completion([TGStickerImageDataSource resultForUnavailableImage]);
-                        [weakPreviewTask completeQueueSlot];
+                        [weakPreviewTask returnSlot];
                     }
                 } workerTask:nil];
             }
@@ -330,12 +327,7 @@ static void TGStickerCompleteLoadTask()
         return false;
     }
     
-    static NSString *filesDirectory = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-    });
+    NSString *filesDirectory = OGStickerFilesDirectory();
     
     NSString *fileDirectoryName = nil;
     if ([args[@"documentId"] longLongValue] != 0)
@@ -348,17 +340,11 @@ static void TGStickerCompleteLoadTask()
     if ([[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL])
         return true;
 
-    if ([[NSFileManager defaultManager] fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"cached.bin"] isDirectory:NULL])
-        return true;
-
-    if ([[NSFileManager defaultManager] fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"thumbnail.cached.bin"] isDirectory:NULL])
-        return true;
-
-    if ([[NSFileManager defaultManager] fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"thumbnail"] isDirectory:NULL])
-        return true;
-
-    if ([[NSFileManager defaultManager] fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"thumbnail-high"] isDirectory:NULL])
-        return true;
+    for (NSString *auxiliaryName in @[@"cached.bin", @"thumbnail.cached.bin", @"thumbnail", @"thumbnail-high"])
+    {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:auxiliaryName] isDirectory:NULL])
+            return true;
+    }
     
     return false;
 }
@@ -419,12 +405,7 @@ static void TGStickerCompleteLoadTask()
         return false;
     }
     
-    static NSString *filesDirectory = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-    });
+    NSString *filesDirectory = OGStickerFilesDirectory();
     
     NSString *fileDirectoryName = nil;
     if ([args[@"documentId"] longLongValue] != 0)

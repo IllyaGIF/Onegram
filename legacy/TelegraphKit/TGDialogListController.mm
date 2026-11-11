@@ -130,6 +130,7 @@
 #import "../../OnegramUI/Core/OGDialogListAppearance.h"
 #import "TGCommunitySheetView.h"
 #import "../../Telegraph/TLUser$modernUser.h"
+#import "../../Telegraph/TGEmojiStatusView.h"
 #import "TGDocumentMediaAttachment+Telegraph.h"
 #import "../../legacy/TL/TLMetaRpc.h"
 #import "../../legacy/TL/NSOutputStream+TL.h"
@@ -138,6 +139,10 @@
 #import "../TL/TLRPCmessages_getPeerDialogs.h"
 #import "../TL/TLmessages_PeerDialogs.h"
 #import "../../Telegraph/TGTelegraphDialogListCompanion.h"
+#import "../../Telegraph/TGDialogFilter.h"
+#import "../../Telegraph/TGDialogFilterSignals.h"
+#import "../../Telegraph/TGDialogFiltersController.h"
+#import "../../Telegraph/TGDialogFilterEditController.h"
 
 
 #include <mach/mach_time.h>
@@ -394,43 +399,19 @@ static CGFloat TGDialogListBrandedFolderButtonWidth(OGDialogListAppearance *appe
     return MAX(appearance.folderButtonMinimumWidth, (CGFloat)ceil([title sizeWithFont:appearance.folderButtonFont].width) + appearance.folderButtonHorizontalPadding * 2.0f);
 }
 
-@interface TGTelegraphDialogListCompanion (TGIOS6FoldersInternal)
+@interface TGTelegraphDialogListCompanion (OGCompatFoldersInternal)
 - (void)initializeDialogListData:(TGConversation *)conversation customUser:(TGUser *)customUser selfUser:(TGUser *)selfUser;
 - (void)ios6MarkFolderOnlyHydrationPeerIds:(NSArray *)peerIds;
 @end
 
-@interface TGGroupManagementSignals (TGIOS6FolderHydration)
+@interface TGGroupManagementSignals (OGCompatFolderHydration)
 + (SSignal *)processedDialogs:(TLmessages_PeerDialogs *)result peerId:(int64_t)peerId;
 @end
 
-static const int32_t TGIOS6VectorConstructor = (int32_t)0x1cb5c415;
-
-@interface TGIOS6GetCustomEmojiDocumentsRequest : TLMetaRpc
-@property (nonatomic, strong) NSArray *documentIds;
+@interface OGCompatGetDialogFiltersRequest : TLMetaRpc
 @end
 
-@implementation TGIOS6GetCustomEmojiDocumentsRequest
-- (Class)responseClass { return [NSArray class]; }
-- (int)impliedResponseSignature { return TGIOS6VectorConstructor; }
-- (int)layerVersion { return 144; }
-- (int32_t)TLconstructorSignature { return (int32_t)0xd9ab0f54; }
-- (int32_t)TLconstructorName { return -1; }
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values {}
-- (void)TLserialize:(NSOutputStream *)os
-{
-    [os writeInt32:TGIOS6VectorConstructor];
-    [os writeInt32:(int32_t)_documentIds.count];
-    for (NSNumber *documentId in _documentIds)
-        [os writeInt64:documentId.longLongValue];
-}
-- (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error { return nil; }
-@end
-
-@interface TGIOS6GetDialogFiltersRequest : TLMetaRpc
-@end
-
-@implementation TGIOS6GetDialogFiltersRequest
+@implementation OGCompatGetDialogFiltersRequest
 - (Class)responseClass { return [NSObject class]; }
 - (int)impliedResponseSignature { return 0; }
 - (int)layerVersion { return 181; }
@@ -442,122 +423,27 @@ static const int32_t TGIOS6VectorConstructor = (int32_t)0x1cb5c415;
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error { return nil; }
 @end
 
-extern "C" void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion)(NSString *thumbnailUri))
+static const CGFloat TGDialogListTitleEmojiStatusSize = 18.0f;
+
+static NSTimeInterval TGDialogListOwnUserRefreshInterval(TGUser *user)
 {
-    if (documentId == 0)
-    {
-        if (completion != nil)
-            completion(nil);
-        return;
-    }
-
-    static NSCache *cachedUris = nil;
-    static NSMutableDictionary *inFlightCompletions = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        cachedUris = [[NSCache alloc] init];
-        cachedUris.countLimit = 128;
-        inFlightCompletions = [[NSMutableDictionary alloc] init];
-    });
-
-    NSNumber *documentKey = @(documentId);
-    NSString *cachedUri = [cachedUris objectForKey:documentKey];
-    if (cachedUri.length != 0)
-    {
-        if (completion != nil)
-            completion(cachedUri);
-        return;
-    }
-
-    TGTelegramNetworking *networking = OGPlatformUsesConstrainedBackgroundExecution() ? [TGTelegramNetworking maybeInstance] : [TGTelegramNetworking instance];
-    if (networking == nil)
-    {
-        if (completion != nil)
-            completion(nil);
-        return;
-    }
-
-    @synchronized(inFlightCompletions)
-    {
-        if (completion != nil)
-        {
-            NSMutableArray *callbacks = inFlightCompletions[documentKey];
-            if (callbacks != nil)
-            {
-                [callbacks addObject:[completion copy]];
-                return;
-            }
-            inFlightCompletions[documentKey] = [NSMutableArray arrayWithObject:[completion copy]];
-        }
-        else if (inFlightCompletions[documentKey] != nil)
-            return;
-        else
-            inFlightCompletions[documentKey] = [[NSMutableArray alloc] init];
-    }
-
-    TGIOS6GetCustomEmojiDocumentsRequest *request = [[TGIOS6GetCustomEmojiDocumentsRequest alloc] init];
-    request.documentIds = @[ @(documentId) ];
-    [networking performRpc:request completionBlock:^(id result, __unused int64_t responseTime, MTRpcError *error)
-    {
-        NSString *thumbnailUri = nil;
-        if (error == nil && [result isKindOfClass:[NSArray class]])
-        {
-            for (id documentDesc in (NSArray *)result)
-            {
-                if (![documentDesc isKindOfClass:[TLDocument class]])
-                    continue;
-                TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:documentDesc];
-                if (document.documentId == documentId)
-                {
-                    NSMutableString *uri = [[NSMutableString alloc] initWithString:@"sticker-preview://?"];
-                    [uri appendFormat:@"documentId=%" PRId64, document.documentId];
-                    [uri appendFormat:@"&accessHash=%" PRId64, document.accessHash];
-                    [uri appendFormat:@"&datacenterId=%" PRId32, document.datacenterId];
-                    TGMediaOriginInfo *originInfo = document.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:document];
-                    if (originInfo != nil)
-                        [uri appendFormat:@"&origin_info=%@", [originInfo stringRepresentation]];
-                    NSString *legacyThumbnailUri = [document.thumbnailInfo imageUrlForLargestSize:NULL];
-                    if (legacyThumbnailUri.length != 0)
-                        [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-                    [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[document safeFileName]]];
-                    [uri appendFormat:@"&size=%d", document.size];
-                    if (document.mimeType.length != 0)
-                        [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:document.mimeType]];
-                    [uri appendString:@"&width=40&height=40&highQuality=1"];
-                    thumbnailUri = uri;
-                    break;
-                }
-            }
-        }
-
-        if (thumbnailUri.length != 0)
-            [cachedUris setObject:thumbnailUri forKey:documentKey];
-
-        __block NSArray *callbacks = nil;
-        @synchronized(inFlightCompletions)
-        {
-            callbacks = [inFlightCompletions[documentKey] copy];
-            [inFlightCompletions removeObjectForKey:documentKey];
-        }
-        dispatch_async(dispatch_get_main_queue(), ^
-        {
-            for (void (^callback)(NSString *) in callbacks)
-                callback(thumbnailUri);
-        });
-    } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
+    static const NSTimeInterval statusSetInterval = 5.0 * 60.0;
+    static const NSTimeInterval statusUnsetInterval = 30.0;
+    return user.emojiStatusDocumentId != 0 ? statusSetInterval : statusUnsetInterval;
 }
 
-static bool TGDialogListClassicIOS6DarkStyle(TGPresentation *presentation)
+static bool OGCompatDialogListClassicDarkStyle(TGPresentation *presentation)
 {
-    return [TGPresentation classicIOS6Style] && presentation.pallete.isDark;
+    return [TGPresentation classicThemeStyle] && presentation.pallete.isDark;
 }
 
-static UIColor *TGDialogListNavigationTitleColor(TGPresentation *presentation)
+static UIColor *OGDialogListHeaderTitleColor(TGPresentation *presentation)
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6NavigationTitleColor];
-    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationTitleColor;
+    if ([TGPresentation classicThemeStyle])
+        return [UIColor whiteColor];
+    return presentation.pallete.navigationTitleColor;
 }
 
 static UIFont *TGDialogListNavigationTitleFont(void)
@@ -565,20 +451,20 @@ static UIFont *TGDialogListNavigationTitleFont(void)
     return [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6NavigationTitleFont] : TGBoldSystemFontOfSize(17.0f);
 }
 
-static UIColor *TGDialogListNavigationSubtitleColor(TGPresentation *presentation)
+static UIColor *OGDialogListHeaderSubtitleColor(TGPresentation *presentation)
 {
-    if (![TGPresentation classicIOS6Style])
+    if (![TGPresentation classicThemeStyle])
         return presentation.pallete.navigationSubtitleColor;
     return presentation.pallete.isDark ? presentation.pallete.navigationSubtitleColor : UIColorRGB(0xdbe6ee);
 }
 
 static UIColor *TGDialogListNavigationShadowColor(TGPresentation *presentation, CGFloat alpha)
 {
-    if (![TGPresentation classicIOS6Style])
+    if (![TGPresentation classicThemeStyle])
         return [UIColor clearColor];
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6NavigationTitleShadowColor];
-    return TGDialogListClassicIOS6DarkStyle(presentation) ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
+    return OGCompatDialogListClassicDarkStyle(presentation) ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
 }
 #import "TGPreviewPresentationHelper.h"
 #import "../../OnegramRuntime/OGRemoteClock.h"
@@ -586,22 +472,24 @@ static UIColor *TGDialogListNavigationShadowColor(TGPresentation *presentation, 
 static bool _debugDoNotJump = false;
 
 static int64_t lastAppearedConversationId = 0;
-static NSString *const TGIOS6ArchiveHeaderItem = @"TGIOS6ArchiveHeaderItem";
-static NSString *const TGIOS6NewChatListGesturesKey = @"TGIOS6NewChatListGestures";
-static NSString *const TGIOS6NewChatListGesturesChangedNotification = @"TGIOS6NewChatListGesturesChanged";
+static NSString *const OGCompatArchiveHeaderItem = @"OGCompatArchiveHeaderItem";
+static NSString *const OGCompatNewChatListGesturesKey = @"TGIOS6NewChatListGestures";
+static NSString *const OGCompatNewChatListGesturesChangedNotification = @"TGIOS6NewChatListGesturesChanged";
 
-static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
+static UIImage *OGCompatCenteredScaledBarIcon(UIImage *image, CGFloat scale)
 {
     if (image == nil)
         return nil;
 
-    UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale);
-    CGSize size = CGSizeMake(floorf(image.size.width * scale), floorf(image.size.height * scale));
-    CGRect rect = CGRectMake(floorf((image.size.width - size.width) / 2.0f), floorf((image.size.height - size.height) / 2.0f), size.width, size.height);
-    [image drawInRect:rect];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    CGSize full = image.size;
+    CGSize shrunk = CGSizeMake(floorf(full.width * scale), floorf(full.height * scale));
+    CGPoint origin = CGPointMake(floorf((full.width - shrunk.width) / 2.0f), floorf((full.height - shrunk.height) / 2.0f));
+
+    UIGraphicsBeginImageContextWithOptions(full, false, image.scale);
+    [image drawInRect:(CGRect){origin, shrunk}];
+    UIImage *composed = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return result;
+    return composed;
 }
 
 #pragma mark -
@@ -719,7 +607,7 @@ typedef enum {
     
     bool _didSelectMessage;
     bool _didSelectGlobalResult;
-    bool _ios6SearchPullArmed;
+    bool _ogSearchPullArmed;
     
     TGMenuContainerView *_menuContainerView;
     
@@ -748,88 +636,90 @@ typedef enum {
     TGDialogListState _state;
     
     bool _needsUpdate;
-    TGDialogListControllerReference *_ios6LifetimeReference;
-    bool _ios6ArchiveExpanded;
-    bool _ios6ArchiveItemsLoadRequested;
-    UIView *_ios6RefreshContainerView;
-    UIView *_ios6RefreshBadgeView;
-    CAShapeLayer *_ios6RefreshProgressLayer;
-    UIActivityIndicatorView *_ios6RefreshActivityIndicator;
-    bool _ios6Refreshing;
-    bool _ios6RefreshSawActivity;
-    NSUInteger _ios6RefreshGeneration;
-    CFAbsoluteTime _ios6RefreshStartTime;
-    SMetaDisposable *_ios6RefreshDisposable;
-    NSArray *_ios6DialogFilters;
-    NSArray *_ios6SourceDialogFilters;
-    int32_t _ios6SelectedDialogFilterId;
-    SMetaDisposable *_ios6DialogFiltersDisposable;
-    SMetaDisposable *_ios6FolderPeerHydrationDisposable;
-    NSMutableArray *_ios6FolderPeerHydrationQueue;
-    bool _ios6FolderPeerHydrationActive;
-    bool _ios6FolderPeerHydrationReconcileScheduled;
-    int _ios6FolderPeerHydrationLoaded;
-    int _ios6FolderPeerHydrationFailed;
-    NSUInteger _ios6FolderPeerHydrationBatchSize;
-    NSMutableDictionary *_ios6FolderPeerHydrationRetryCounts;
-    NSTimeInterval _ios6DialogFiltersLastRefreshTime;
-    int _ios6DialogFiltersAuthorizationRetryCount;
-    bool _ios6DialogFiltersAuthorizationRetryScheduled;
-    int _ios6DialogFiltersNetworkRetryCount;
-    bool _ios6DialogFiltersNetworkRetryScheduled;
-    bool _ios6DialogFiltersRequestInFlight;
-    UIScrollView *_ios6FolderTabsScrollView;
-    UIView *_ios6FolderTabsView;
-    UIView *_ios6ListHeaderView;
-    UIView *_ios6PlayerHostView;
-    CGFloat _ios6PlayerHeight;
-    int64_t _ios6DialogFiltersAccountId;
-    NSUInteger _ios6DialogFiltersRestoreGeneration;
-    UIView *_ios6FolderTabsSeparatorView;
-    UILabel *_ios6FolderEmptyLabel;
-    UIPanGestureRecognizer *_ios6FolderPanGestureRecognizer;
-    UILongPressGestureRecognizer *_ios6ChatActionsLongPressRecognizer;
-    UIView *_ios6FolderSwipeContainerView;
-    UIImageView *_ios6FolderSwipeSourceView;
-    UIImageView *_ios6FolderSwipeTargetView;
-    UIView *_ios6FolderSwipeIndicatorView;
-    CGFloat _ios6FolderSwipeSourceTabsOffset;
-    CGFloat _ios6FolderSwipeTargetTabsOffset;
-    NSInteger _ios6FolderSwipeSourceIndex;
-    NSInteger _ios6FolderSwipeTargetIndex;
-    int32_t _ios6FolderSwipeSourceFilterId;
-    int32_t _ios6FolderSwipeTargetFilterId;
-    CGPoint _ios6FolderSwipeSourceContentOffset;
-    CGRect _ios6FolderSwipeContentFrame;
-    CGRect _ios6FolderSwipeSourceIndicatorFrame;
-    CGRect _ios6FolderSwipeTargetIndicatorFrame;
-    CGFloat _ios6FolderSwipeTargetOffset;
-    bool _ios6FolderSwipeActive;
-    bool _ios6FolderSwipeFinishing;
-    NSArray *_ios6AllDialogItems;
-    NSTimeInterval _ios6AllDialogItemsLastRefreshTime;
-    bool _ios6AllDialogItemsLoading;
-    bool _ios6FolderCanonicalCacheReady;
-    int32_t _ios6FolderLocalSourceCursorDate;
-    bool _ios6FolderLocalSourceExhausted;
-    bool _ios6FolderLocalSourceContinuationScheduled;
-    int32_t _ios6FolderLocalSourceGeneration;
-    bool _ios6FolderPeerLocalLookupInFlight;
-    NSMutableSet *_ios6FolderPeerLocalLookupAttempted;
-    bool _ios6LazyLoadScheduled;
-    NSArray *_ios6VisibleListCache;
-    int32_t _ios6VisibleListCacheFilterId;
+    TGDialogListControllerReference *_ogLifetimeReference;
+    bool _ogArchiveExpanded;
+    bool _ogArchiveItemsLoadRequested;
+    UIView *_ogRefreshContainerView;
+    UIView *_ogRefreshBadgeView;
+    CAShapeLayer *_ogRefreshProgressLayer;
+    UIActivityIndicatorView *_ogRefreshActivityIndicator;
+    bool _ogRefreshing;
+    bool _ogRefreshSawActivity;
+    NSUInteger _ogRefreshGeneration;
+    CFAbsoluteTime _ogRefreshStartTime;
+    SMetaDisposable *_ogRefreshDisposable;
+    NSArray *_ogDialogFilters;
+    NSArray *_ogSourceDialogFilters;
+    NSArray *_ogFolderTagFilters;
+    int32_t _ogSelectedDialogFilterId;
+    SMetaDisposable *_ogDialogFiltersDisposable;
+    SMetaDisposable *_ogDialogFilterActionDisposable;
+    SMetaDisposable *_ogFolderPeerHydrationDisposable;
+    NSMutableArray *_ogFolderPeerHydrationQueue;
+    bool _ogFolderPeerHydrationActive;
+    bool _ogFolderPeerHydrationReconcileScheduled;
+    int _ogFolderPeerHydrationLoaded;
+    int _ogFolderPeerHydrationFailed;
+    NSUInteger _ogFolderPeerHydrationBatchSize;
+    NSMutableDictionary *_ogFolderPeerHydrationRetryCounts;
+    NSTimeInterval _ogDialogFiltersLastRefreshTime;
+    int _ogDialogFiltersAuthorizationRetryCount;
+    bool _ogDialogFiltersAuthorizationRetryScheduled;
+    int _ogDialogFiltersNetworkRetryCount;
+    bool _ogDialogFiltersNetworkRetryScheduled;
+    bool _ogDialogFiltersRequestInFlight;
+    UIScrollView *_ogFolderTabsScrollView;
+    UIView *_ogFolderTabsView;
+    UIView *_ogListHeaderView;
+    UIView *_ogPlayerHostView;
+    CGFloat _ogPlayerHeight;
+    int64_t _ogDialogFiltersAccountId;
+    NSUInteger _ogDialogFiltersRestoreGeneration;
+    UIView *_ogFolderTabsSeparatorView;
+    UILabel *_ogFolderEmptyLabel;
+    UIPanGestureRecognizer *_ogFolderPanGestureRecognizer;
+    UILongPressGestureRecognizer *_ogChatActionsLongPressRecognizer;
+    UIView *_ogFolderSwipeContainerView;
+    UIImageView *_ogFolderSwipeSourceView;
+    UIImageView *_ogFolderSwipeTargetView;
+    UIView *_ogFolderSwipeIndicatorView;
+    CGFloat _ogFolderSwipeSourceTabsOffset;
+    CGFloat _ogFolderSwipeTargetTabsOffset;
+    NSInteger _ogFolderSwipeSourceIndex;
+    NSInteger _ogFolderSwipeTargetIndex;
+    int32_t _ogFolderSwipeSourceFilterId;
+    int32_t _ogFolderSwipeTargetFilterId;
+    CGPoint _ogFolderSwipeSourceContentOffset;
+    CGRect _ogFolderSwipeContentFrame;
+    CGRect _ogFolderSwipeSourceIndicatorFrame;
+    CGRect _ogFolderSwipeTargetIndicatorFrame;
+    CGFloat _ogFolderSwipeTargetOffset;
+    bool _ogFolderSwipeActive;
+    bool _ogFolderSwipeFinishing;
+    NSArray *_ogAllDialogItems;
+    NSTimeInterval _ogAllDialogItemsLastRefreshTime;
+    bool _ogAllDialogItemsLoading;
+    bool _ogFolderCanonicalCacheReady;
+    int32_t _ogFolderLocalSourceCursorDate;
+    bool _ogFolderLocalSourceExhausted;
+    bool _ogFolderLocalSourceContinuationScheduled;
+    int32_t _ogFolderLocalSourceGeneration;
+    bool _ogFolderPeerLocalLookupInFlight;
+    NSMutableSet *_ogFolderPeerLocalLookupAttempted;
+    bool _ogLazyLoadScheduled;
+    NSArray *_ogVisibleListCache;
+    int32_t _ogVisibleListCacheFilterId;
     NSArray *_dialogListDisplayedItems;
-    NSString *_ios6FolderTabsStateKey;
-    bool _ios6FolderTabsUpdatePending;
-    NSMutableDictionary *_ios6DialogSnapshotHydrationPending;
-    bool _ios6DialogSnapshotHydrationInFlight;
+    NSString *_ogFolderTabsStateKey;
+    bool _ogFolderTabsUpdatePending;
+    NSMutableDictionary *_ogDialogSnapshotHydrationPending;
+    bool _ogDialogSnapshotHydrationInFlight;
     TGUser *_dialogListSelfUserSnapshot;
     bool _dialogListSelfUserSnapshotResolved;
     bool _dialogListSelfUserSnapshotLoading;
     NSMutableArray *_dialogListSelfUserSnapshotWaiters;
-    NSTimeInterval _lastOwnEmojiStatusRefreshTime;
-    bool _ownEmojiStatusRefreshInFlight;
+    NSTimeInterval _ownUserRefreshTimestamp;
+    bool _ownUserRefreshPending;
     bool _titleEmojiStatusLoadScheduled;
     bool _dialogListFastScrolling;
     int _dialogListFastScrollDirection;
@@ -881,8 +771,7 @@ typedef enum {
 @property (nonatomic, strong) UILabel *titleStatusSubtitleLabel;
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) TGLockIconView *titleLockIconView;
-@property (nonatomic, strong) TGRemoteImageView *titleEmojiStatusView;
-@property (nonatomic) int64_t titleEmojiStatusDocumentId;
+@property (nonatomic, strong) TGEmojiStatusView *titleEmojiStatusView;
 
 @property (nonatomic, strong) TGActivityIndicatorView *titleStatusIndicator;
 
@@ -897,23 +786,24 @@ typedef enum {
 @property (nonatomic, copy) void (^togglePinConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleGroupConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleReadConversation)(int64_t, bool);
-@property (nonatomic, copy) void (^toggleArchiveConversation)(int64_t, bool);
+@property (nonatomic, copy) void (^archiveToggleHandler)(int64_t, bool);
 @property (nonatomic, copy) void (^openCommunity)(int64_t);
 
-- (void)ios6SynchronizeDialogStateForce:(bool)force;
-- (void)ios6ScheduleFolderPeerHydrationReconciliation;
-- (void)ios6AuthorizationReady:(NSNotification *)notification;
-- (void)ios6RestoreDialogFilters;
+- (void)og_synchronizeDialogStateForce:(bool)force;
+- (void)og_scheduleFolderPeerHydrationReconciliation;
+- (void)og_authorizationReady:(NSNotification *)notification;
+- (void)og_restoreDialogFilters;
 - (void)dialogListPresentationUpdated;
-- (void)ios6ApplyStoredDialogFilters:(NSData *)data accountId:(int64_t)accountId;
-- (void)ios6StoreDialogFilters;
-- (void)ios6SetDialogFilters:(NSArray *)filters;
+- (void)og_applyStoredDialogFilters:(NSData *)data accountId:(int64_t)accountId;
+- (void)og_storeDialogFilters;
+- (void)og_setDialogFilters:(NSArray *)filters;
+- (void)og_applyDialogFilters:(NSArray *)filters accountId:(int64_t)accountId;
 - (CGFloat)onegramSearchHeaderHeight;
 - (NSString *)onegramDialogListTitle;
-- (bool)ios6NewChatListGesturesEnabled;
-- (void)ios6UpdateNewChatListGesturesState;
-- (void)ios6NewChatListGesturesChanged:(NSNotification *)notification;
-- (NSInteger)ios6SelectedDialogFilterIndex;
+- (bool)og_newChatListGesturesEnabled;
+- (void)og_updateNewChatListGesturesState;
+- (void)og_newChatListGesturesChanged:(NSNotification *)notification;
+- (NSInteger)og_selectedDialogFilterIndex;
 - (bool)dialogListShouldCoalesceUIUpdates;
 - (void)dialogListBeginRateLimitedUIUpdate;
 - (NSArray *)dialogListDisplayedItems;
@@ -925,26 +815,29 @@ typedef enum {
 - (void)dialogListCoalesceItemsChanged:(NSArray *)insertedIndices insertedItems:(NSArray *)insertedItems updatedIndices:(NSArray *)updatedIndices updatedItems:(NSArray *)updatedItems removedIndices:(NSArray *)removedIndices;
 - (void)dialogListFlushCoalescedUpdates;
 - (void)dialogListApplyCoalescedUpdates;
-- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index;
-- (void)ios6StoreSelectedDialogFilterId;
-- (void)ios6CompleteDialogFilterSelectionAtIndex:(NSInteger)index;
-- (CGRect)ios6FolderSwipeTabsRect;
-- (CGRect)ios6FolderSwipeContentRect;
-- (UIImage *)ios6FolderSwipeSnapshotForRect:(CGRect)rect;
-- (void)ios6BeginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation;
-- (void)ios6UpdateFolderSwipeWithTranslation:(CGPoint)translation;
-- (void)ios6FinishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity;
-- (void)ios6CancelFolderSwipeImmediately;
-- (UIView *)ios6FolderSwipeIndicatorForButton:(UIButton *)button;
-- (CGFloat)ios6FolderTabsOffsetRevealingButton:(UIButton *)button fromOffset:(CGFloat)offset;
-- (CGFloat)ios6FolderSwipeTargetContentOffsetForSourceOffset:(CGFloat)sourceOffset;
-- (void)ios6ApplyFolderSwipeTranslation:(CGFloat)x;
-- (void)ios6RestoreFolderSwipeSource;
-- (void)ios6TeardownFolderSwipe;
-- (void)ios6FolderPanGesture:(UIPanGestureRecognizer *)recognizer;
-- (void)ios6ChatActionsLongPress:(UILongPressGestureRecognizer *)recognizer;
+- (void)og_selectDialogFilterAtIndex:(NSInteger)index;
+- (void)og_storeSelectedDialogFilterId;
+- (void)og_completeDialogFilterSelectionAtIndex:(NSInteger)index;
+- (CGRect)og_folderSwipeTabsRect;
+- (CGRect)og_folderSwipeContentRect;
+- (UIImage *)og_folderSwipeSnapshotForRect:(CGRect)rect;
+- (void)og_beginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation;
+- (void)og_updateFolderSwipeWithTranslation:(CGPoint)translation;
+- (void)og_finishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity;
+- (void)og_cancelFolderSwipeImmediately;
+- (UIView *)og_folderSwipeIndicatorForButton:(UIButton *)button;
+- (CGFloat)og_folderTabsOffsetRevealingButton:(UIButton *)button fromOffset:(CGFloat)offset;
+- (CGFloat)og_folderSwipeTargetContentOffsetForSourceOffset:(CGFloat)sourceOffset;
+- (void)og_applyFolderSwipeTranslation:(CGFloat)x;
+- (void)og_restoreFolderSwipeSource;
+- (void)og_teardownFolderSwipe;
+- (void)og_folderPanGesture:(UIPanGestureRecognizer *)recognizer;
+- (void)og_chatActionsLongPress:(UILongPressGestureRecognizer *)recognizer;
+- (void)og_folderTabLongPress:(UILongPressGestureRecognizer *)recognizer;
+- (void)og_presentAddToFolderForConversation:(TGConversation *)conversation fromRect:(CGRect)sourceRect;
+- (void)og_removeConversation:(TGConversation *)conversation fromDialogFilterId:(int32_t)filterId;
 - (NSString *)dialogListAvatarFilter;
-- (void)ios6ScheduleCompleteDialogHydrationAndAvatarPrefetch;
+- (void)og_scheduleCompleteDialogHydrationAndAvatarPrefetch;
 
 @end
 
@@ -1111,36 +1004,38 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         __weak TGDialogListController *weakSelf = self;
         
         _listModel = [[NSMutableArray alloc] init];
-        _ios6LifetimeReference = [[TGDialogListControllerReference alloc] init];
-        [_ios6LifetimeReference setValue:self];
-        _ios6DialogFilters = @[];
-        _ios6SourceDialogFilters = @[];
-        _ios6AllDialogItems = @[];
-        _ios6FolderLocalSourceCursorDate = INT32_MAX;
-        _ios6FolderPeerLocalLookupAttempted = [[NSMutableSet alloc] init];
-        _ios6VisibleListCacheFilterId = INT32_MIN;
+        _ogLifetimeReference = [[TGDialogListControllerReference alloc] init];
+        [_ogLifetimeReference setValue:self];
+        _ogDialogFilters = @[];
+        _ogSourceDialogFilters = @[];
+        _ogAllDialogItems = @[];
+        _ogFolderLocalSourceCursorDate = INT32_MAX;
+        _ogFolderPeerLocalLookupAttempted = [[NSMutableSet alloc] init];
+        _ogVisibleListCacheFilterId = INT32_MIN;
         _dialogListDisplayedItems = @[];
-        _ios6SelectedDialogFilterId = companion.forwardMode ? 0 : (int32_t)[[NSUserDefaults standardUserDefaults] integerForKey:@"TGIOS6SelectedDialogFilterId"];
-        _ios6DialogFiltersDisposable = [[SMetaDisposable alloc] init];
-        _ios6FolderPeerHydrationDisposable = [[SMetaDisposable alloc] init];
-        _ios6FolderPeerHydrationQueue = [[NSMutableArray alloc] init];
-        _ios6FolderPeerHydrationRetryCounts = [[NSMutableDictionary alloc] init];
-        _ios6DialogSnapshotHydrationPending = [[NSMutableDictionary alloc] init];
+        _ogSelectedDialogFilterId = companion.forwardMode ? 0 : (int32_t)[[NSUserDefaults standardUserDefaults] integerForKey:@"TGIOS6SelectedDialogFilterId"];
+        _ogDialogFiltersDisposable = [[SMetaDisposable alloc] init];
+        _ogDialogFilterActionDisposable = [[SMetaDisposable alloc] init];
+        _ogFolderPeerHydrationDisposable = [[SMetaDisposable alloc] init];
+        _ogFolderPeerHydrationQueue = [[NSMutableArray alloc] init];
+        _ogFolderPeerHydrationRetryCounts = [[NSMutableDictionary alloc] init];
+        _ogDialogSnapshotHydrationPending = [[NSMutableDictionary alloc] init];
         _dialogListSelfUserSnapshotWaiters = [[NSMutableArray alloc] init];
         
         _reusableSectionHeaders = [[NSArray alloc] initWithObjects:[[NSMutableArray alloc] init], [[NSMutableArray alloc] init], nil];
         
         _dialogListCompanion = companion;
-        [self ios6RestoreDialogFilters];
+        [self og_restoreDialogFilters];
         _dialogListCompanion.dialogListController = self;
         
         _significantTimeChangeProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(significantTimeChange:) name:UIApplicationSignificantTimeChangeNotification];
         _didEnterBackgroundProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(didEnterBackground:) name:UIApplicationDidEnterBackgroundNotification];
         _willEnterForegroundProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(willEnterForeground:) name:UIApplicationWillEnterForegroundNotification];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6ClearChatCacheRequested:) name:@"TGIOS6ClearChatListCacheRequested" object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6DialogFiltersUpdated:) name:@"TGIOS6DialogFiltersUpdated" object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6AuthorizationReady:) name:TGAuthorizationReadyNotification object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6NewChatListGesturesChanged:) name:TGIOS6NewChatListGesturesChangedNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(og_clearChatCacheRequested:) name:@"TGIOS6ClearChatListCacheRequested" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(og_dialogFiltersUpdated:) name:@"TGIOS6DialogFiltersUpdated" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dialogFiltersDidChange:) name:TGDialogFiltersDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(og_authorizationReady:) name:TGAuthorizationReadyNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(og_newChatListGesturesChanged:) name:OGCompatNewChatListGesturesChangedNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramSettingsChanged:) name:TGOnegramSettingsDidChangeNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(storiesStoreChanged:) name:TGStoriesStoreDidChangeNotification object:nil];
         
@@ -1161,7 +1056,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (strongSelf != nil) {
                 NSIndexPath *indexPath = [strongSelf indexPathForConversationId:peerId];
                 if (indexPath != nil) {
-                    TGConversation *conversation = (TGConversation *)[strongSelf ios6DialogListItemAtIndexPath:indexPath];
+                    TGConversation *conversation = (TGConversation *)[strongSelf og_dialogListItemAtIndexPath:indexPath];
                     NSDictionary *dialogListData = conversation.dialogListData;
                     [(TGDialogListCell *)[strongSelf->_tableView cellForRowAtIndexPath:indexPath] setEditingConrolsExpanded:false animated:true];
                     if ([[dialogListData objectForKey:@"mute"] boolValue] != mute) {
@@ -1177,7 +1072,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (strongSelf != nil) {
                 NSIndexPath *indexPath = [strongSelf indexPathForConversationId:peerId];
                 if (indexPath != nil) {
-                    TGConversation *conversation = (TGConversation *)[strongSelf ios6DialogListItemAtIndexPath:indexPath];
+                    TGConversation *conversation = (TGConversation *)[strongSelf og_dialogListItemAtIndexPath:indexPath];
                     if (conversation.pinnedToTop != pin) {
                         if (pin) {
                             int32_t maxPinnedChats = 5;
@@ -1224,13 +1119,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (strongSelf != nil)
                 [strongSelf openCommunityForConversationId:peerId];
         };
-        self.toggleArchiveConversation = ^(int64_t peerId, bool archived) {
+        self.archiveToggleHandler = ^(int64_t peerId, bool archived) {
             __strong TGDialogListController *strongSelf = weakSelf;
             if (strongSelf == nil)
                 return;
 
             NSIndexPath *indexPath = [strongSelf indexPathForConversationId:peerId];
-            TGConversation *conversation = indexPath == nil ? nil : (TGConversation *)[strongSelf ios6DialogListItemAtIndexPath:indexPath];
+            TGConversation *conversation = indexPath == nil ? nil : (TGConversation *)[strongSelf og_dialogListItemAtIndexPath:indexPath];
             if (![conversation isKindOfClass:[TGConversation class]] || conversation.isArchived == archived)
                 return;
 
@@ -1247,7 +1142,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (strongSelf != nil) {
                 NSIndexPath *indexPath = [strongSelf indexPathForConversationId:peerId];
                 if (indexPath != nil) {
-                    TGConversation *conversation = (TGConversation *)[strongSelf ios6DialogListItemAtIndexPath:indexPath];
+                    TGConversation *conversation = (TGConversation *)[strongSelf og_dialogListItemAtIndexPath:indexPath];
                     bool grouped = conversation.feedId.intValue != 0;
                     if (grouped != group) {
                         if ([TGDatabaseInstance() loadFeed:1] != nil)
@@ -1276,7 +1171,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (strongSelf != nil) {
                 NSIndexPath *indexPath = [strongSelf indexPathForConversationId:peerId];
                 if (indexPath != nil) {
-                    TGConversation *conversation = (TGConversation *)[strongSelf ios6DialogListItemAtIndexPath:indexPath];
+                    TGConversation *conversation = (TGConversation *)[strongSelf og_dialogListItemAtIndexPath:indexPath];
                     bool isRead = !conversation.unreadMark && conversation.unreadCount == 0 && conversation.serviceUnreadCount == 0 && conversation.unreadMentionCount == 0;
                     if (read != isRead)
                     {
@@ -1328,16 +1223,18 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         _dialogListFastScrolling = false;
         OGRuntimeEndInteraction();
     }
-    [_ios6LifetimeReference invalidate];
+    [_ogLifetimeReference invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6ClearChatListCacheRequested" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6DialogFiltersUpdated" object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGDialogFiltersDidChangeNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:TGAuthorizationReadyNotification object:nil];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGIOS6NewChatListGesturesChangedNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:OGCompatNewChatListGesturesChangedNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:TGOnegramSettingsDidChangeNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:TGStoriesStoreDidChangeNotification object:nil];
-    [_ios6DialogFiltersDisposable dispose];
-    [_ios6FolderPeerHydrationDisposable dispose];
-    [_ios6RefreshDisposable dispose];
+    [_ogDialogFiltersDisposable dispose];
+    [_ogDialogFilterActionDisposable dispose];
+    [_ogFolderPeerHydrationDisposable dispose];
+    [_ogRefreshDisposable dispose];
     [_actionHandle reset];
     [ActionStageInstance() removeWatcher:self];
     
@@ -1387,7 +1284,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     
     NSIndexPath *indexPath = [_tableView indexPathForRowAtPoint:[self.view convertPoint:CGPointMake(0.0f, CGRectGetMidY(_tableView.frame)) toView:_tableView]];
     TGConversation *conversation = nil;
-    id item = [self ios6DialogListItemAtIndexPath:indexPath];
+    id item = [self og_dialogListItemAtIndexPath:indexPath];
     if ([item isKindOfClass:[TGConversation class]])
         conversation = item;
     return conversation.conversationId;
@@ -1421,7 +1318,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (indexPath == nil)
         return;
 
-    TGConversation *conversation = (TGConversation *)[self ios6DialogListItemAtIndexPath:indexPath];
+    TGConversation *conversation = (TGConversation *)[self og_dialogListItemAtIndexPath:indexPath];
     if (![conversation isKindOfClass:[TGConversation class]] || conversation.linkedCommunityId == 0)
         return;
 
@@ -1448,7 +1345,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 - (void)applyConversationTableSeparators:(UITableView *)tableView
 {
     tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    if (iosMajorVersion() >= 7 && !TGDialogListClassicIOS6DarkStyle(_presentation))
+    if (iosMajorVersion() >= 7 && !OGCompatDialogListClassicDarkStyle(_presentation))
     {
         tableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
         tableView.separatorColor = _presentation.pallete.separatorColor;
@@ -1483,7 +1380,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return [SSignal single:conversations];
 
     NSMutableDictionary *listConversations = [[NSMutableDictionary alloc] init];
-    for (NSArray *items in @[_ios6AllDialogItems ?: @[], _listModel ?: @[]])
+    for (NSArray *items in @[_ogAllDialogItems ?: @[], _listModel ?: @[]])
     {
         for (id item in items)
         {
@@ -1576,7 +1473,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         _titleStatusLabel = [[UILabel alloc] init];
         _titleStatusLabel.clipsToBounds = false;
         _titleStatusLabel.backgroundColor = [UIColor clearColor];
-        _titleStatusLabel.textColor = TGDialogListNavigationTitleColor(_presentation);
+        _titleStatusLabel.textColor = OGDialogListHeaderTitleColor(_presentation);
         _titleStatusLabel.shadowColor = TGDialogListNavigationShadowColor(_presentation, 0.9f);
         _titleStatusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         _titleStatusLabel.font = TGBoldSystemFontOfSize(16.0f);
@@ -1585,7 +1482,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         _titleStatusSubtitleLabel = [[UILabel alloc] init];
         _titleStatusSubtitleLabel.clipsToBounds = false;
         _titleStatusSubtitleLabel.backgroundColor = [UIColor clearColor];
-        _titleStatusSubtitleLabel.textColor = TGDialogListNavigationSubtitleColor(_presentation);
+        _titleStatusSubtitleLabel.textColor = OGDialogListHeaderSubtitleColor(_presentation);
         _titleStatusSubtitleLabel.shadowColor = TGDialogListNavigationShadowColor(_presentation, 0.72f);
         _titleStatusSubtitleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         _titleStatusSubtitleLabel.font = TGSystemFontOfSize(12.0f);
@@ -1613,39 +1510,40 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
 }
 
-- (UIBarButtonItem *)ios6ArchiveBarButtonItem
+- (UIBarButtonItem *)og_archiveBarButtonItem
 {
-    if (_ios6SelectedDialogFilterId != 0)
+    if (_ogSelectedDialogFilterId != 0)
         return nil;
-    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralHideArchive] && !_ios6ArchiveExpanded)
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralHideArchive] && !_ogArchiveExpanded)
         return nil;
 
     if ([TGPresentation brandedIOS6Style])
-        return TGDialogListBrandedBarButtonItem(_ios6ArchiveExpanded ? @"Chats" : @"Archive", self, @selector(archiveButtonPressed:), true);
-    if ([TGPresentation classicIOS6Style])
-        return [[UIBarButtonItem alloc] initWithTitle:(_ios6ArchiveExpanded ? @"Chats" : @"Archive") style:UIBarButtonItemStyleBordered target:self action:@selector(archiveButtonPressed:)];
+        return TGDialogListBrandedBarButtonItem(_ogArchiveExpanded ? @"Chats" : @"Archive", self, @selector(archiveButtonPressed:), true);
+    if ([TGPresentation classicThemeStyle])
+        return [[UIBarButtonItem alloc] initWithTitle:(_ogArchiveExpanded ? @"Chats" : @"Archive") style:UIBarButtonItemStyleBordered target:self action:@selector(archiveButtonPressed:)];
 
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.frame = CGRectMake(0.0f, 0.0f, 70.0f, 44.0f);
-    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    button.titleLabel.font = TGSystemFontOfSize(17.0f);
-    [button setTitle:(_ios6ArchiveExpanded ? @"Chats" : @"Archive") forState:UIControlStateNormal];
-    [button setTitleColor:self.presentation.pallete.navigationButtonColor forState:UIControlStateNormal];
-    [button setTitleColor:[self.presentation.pallete.navigationButtonColor colorWithAlphaComponent:0.4f] forState:UIControlStateHighlighted];
-    [button addTarget:self action:@selector(archiveButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
-    return [[UIBarButtonItem alloc] initWithCustomView:button];
+    UIColor *tint = self.presentation.pallete.navigationButtonColor;
+    UIButton *toggle = [UIButton buttonWithType:UIButtonTypeCustom];
+    toggle.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    toggle.titleLabel.font = TGSystemFontOfSize(17.0f);
+    toggle.frame = CGRectMake(0.0f, 0.0f, 70.0f, 44.0f);
+    [toggle setTitle:(_ogArchiveExpanded ? @"Chats" : @"Archive") forState:UIControlStateNormal];
+    [toggle setTitleColor:tint forState:UIControlStateNormal];
+    [toggle setTitleColor:[tint colorWithAlphaComponent:0.4f] forState:UIControlStateHighlighted];
+    [toggle addTarget:self action:@selector(archiveButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
+    return [[UIBarButtonItem alloc] initWithCustomView:toggle];
 }
 
 - (UIBarButtonItem *)controllerLeftBarButtonItem
 {
-    return [self ios6ArchiveBarButtonItem];
+    return [self og_archiveBarButtonItem];
 }
 
 - (void)scrollToTopRequested
 {
-    if (_ios6ArchiveExpanded)
+    if (_ogArchiveExpanded)
     {
-        _ios6ArchiveExpanded = false;
+        _ogArchiveExpanded = false;
         [self updateBarButtonItemsAnimated:false];
         [self reloadData:false];
         if ([self dialogListDisplayedItems].count != 0)
@@ -1781,30 +1679,30 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     
     NSMutableArray *items = [[NSMutableArray alloc] init];
     UIBarButtonItem *compose = nil;
-    if ([TGPresentation classicIOS6Style])
+    if ([TGPresentation classicThemeStyle])
     {
-        UIImage *composeImage = TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], [UIColor whiteColor]);
-        composeImage = TGIOS6CenteredScaledBarIcon(composeImage, 0.70f);
-        compose = [[UIBarButtonItem alloc] initWithImage:composeImage style:UIBarButtonItemStyleBordered target:self action:@selector(composeMessageButtonPressed:)];
+        UIImage *composeGlyph = TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], [UIColor whiteColor]);
+        composeGlyph = OGCompatCenteredScaledBarIcon(composeGlyph, 0.70f);
+        compose = [[UIBarButtonItem alloc] initWithImage:composeGlyph style:UIBarButtonItemStyleBordered target:self action:@selector(composeMessageButtonPressed:)];
     }
     else if (iosMajorVersion() < 7)
     {
-        TGModernBarButton *composeButton = [[TGModernBarButton alloc] initWithImage:TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], self.presentation.pallete.navigationButtonColor)];
-        composeButton.portraitAdjustment = CGPointMake(-7, -5);
-        composeButton.landscapeAdjustment = CGPointMake(-7, -4);
-        [composeButton addTarget:self action:@selector(composeMessageButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
-        compose = [[UIBarButtonItem alloc] initWithCustomView:composeButton];
+        TGModernBarButton *composeControl = [[TGModernBarButton alloc] initWithImage:TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], self.presentation.pallete.navigationButtonColor)];
+        composeControl.portraitAdjustment = CGPointMake(-7, -5);
+        composeControl.landscapeAdjustment = CGPointMake(-7, -4);
+        [composeControl addTarget:self action:@selector(composeMessageButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
+        compose = [[UIBarButtonItem alloc] initWithCustomView:composeControl];
     }
     else
     {
-        UIButton *composeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        composeButton.frame = CGRectMake(0.0f, 0.0f, 44.0f, 44.0f);
-        composeButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
-        UIImage *composeImage = TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], self.presentation.pallete.navigationButtonColor);
-        [composeButton setImage:composeImage forState:UIControlStateNormal];
-        composeButton.imageEdgeInsets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, 2.0f);
-        [composeButton addTarget:self action:@selector(composeMessageButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
-        compose = [[UIBarButtonItem alloc] initWithCustomView:composeButton];
+        UIButton *composeControl = [UIButton buttonWithType:UIButtonTypeCustom];
+        composeControl.frame = CGRectMake(0.0f, 0.0f, 44.0f, 44.0f);
+        composeControl.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+        UIImage *composeGlyph = TGTintedImage([UIImage imageNamed:@"ModernNavigationComposeButtonIcon.png"], self.presentation.pallete.navigationButtonColor);
+        [composeControl setImage:composeGlyph forState:UIControlStateNormal];
+        composeControl.imageEdgeInsets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, 2.0f);
+        [composeControl addTarget:self action:@selector(composeMessageButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
+        compose = [[UIBarButtonItem alloc] initWithCustomView:composeControl];
     }
     
     [items addObject:compose];
@@ -1847,8 +1745,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         titleLabelFrame.origin.x -= 4.0f;
     _titleLockIconView.frame = CGRectMake(CGRectGetMaxX(titleLabelFrame) + 6.0f, titleLabelFrame.origin.y + 4.0f, _titleLockIconView.frame.size.width, _titleLockIconView.frame.size.height);
     _titleLabel.frame = titleLabelFrame;
-    if (!_titleEmojiStatusView.hidden)
-        _titleEmojiStatusView.frame = CGRectMake(CGRectGetMaxX(titleLabelFrame) + 4.0f, floorf((self->_titleContainer.frame.size.height - 18.0f) / 2.0f), 18.0f, 18.0f);
+    if (_titleEmojiStatusView.displaysStatus)
+        _titleEmojiStatusView.frame = CGRectMake(CGRectGetMaxX(titleLabelFrame) + 4.0f, CGFloor((_titleContainer.frame.size.height - TGDialogListTitleEmojiStatusSize) / 2.0f), TGDialogListTitleEmojiStatusSize, TGDialogListTitleEmojiStatusSize);
     
     if (_titleStatusLabel != nil)
     {
@@ -1894,7 +1792,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     
     _titleLabel = [[UILabel alloc] init];
     _titleLabel.backgroundColor = [UIColor clearColor];
-    _titleLabel.textColor = TGDialogListNavigationTitleColor(self.presentation);
+    _titleLabel.textColor = OGDialogListHeaderTitleColor(self.presentation);
     _titleLabel.shadowColor = TGDialogListNavigationShadowColor(self.presentation, 0.9f);
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     _titleLabel.font = TGDialogListNavigationTitleFont();
@@ -1902,11 +1800,15 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [_titleLabel sizeToFit];
     [_titleContainer addSubview:_titleLabel];
 
-    _titleEmojiStatusView = [[TGRemoteImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 18.0f, 18.0f)];
-    _titleEmojiStatusView.contentMode = UIViewContentModeScaleAspectFit;
-    _titleEmojiStatusView.hidden = true;
+    _titleEmojiStatusView = [[TGEmojiStatusView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, TGDialogListTitleEmojiStatusSize, TGDialogListTitleEmojiStatusSize)];
+    __weak TGDialogListController *weakController = self;
+    _titleEmojiStatusView.displayChanged = ^
+    {
+        __strong TGDialogListController *strongController = weakController;
+        [strongController _layoutTitleViews:strongController.interfaceOrientation];
+    };
     [_titleContainer addSubview:_titleEmojiStatusView];
-    [self updateTitleEmojiStatus];
+    [self loadCachedOwnEmojiStatus];
     
     _titleLockIconView = [[TGLockIconView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 2.0f, 2.0f)];
     _titleLockIconView.presentation = self.presentation;
@@ -2009,79 +1911,79 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     OGPluginUIChatListSurfacesUpdate(self, _tableView);
 #endif
 
-    _ios6FolderPanGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(ios6FolderPanGesture:)];
-    _ios6FolderPanGestureRecognizer.delegate = self;
-    _ios6FolderPanGestureRecognizer.maximumNumberOfTouches = 1;
-    _ios6FolderPanGestureRecognizer.cancelsTouchesInView = false;
-    [self.view addGestureRecognizer:_ios6FolderPanGestureRecognizer];
+    _ogFolderPanGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(og_folderPanGesture:)];
+    _ogFolderPanGestureRecognizer.delegate = self;
+    _ogFolderPanGestureRecognizer.maximumNumberOfTouches = 1;
+    _ogFolderPanGestureRecognizer.cancelsTouchesInView = false;
+    [self.view addGestureRecognizer:_ogFolderPanGestureRecognizer];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     if ([_tableView respondsToSelector:@selector(panGestureRecognizer)])
-        [_tableView.panGestureRecognizer requireGestureRecognizerToFail:_ios6FolderPanGestureRecognizer];
+        [_tableView.panGestureRecognizer requireGestureRecognizerToFail:_ogFolderPanGestureRecognizer];
 #endif
 
-    _ios6ChatActionsLongPressRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ios6ChatActionsLongPress:)];
-    _ios6ChatActionsLongPressRecognizer.minimumPressDuration = 0.45;
-    _ios6ChatActionsLongPressRecognizer.cancelsTouchesInView = true;
-    [_tableView addGestureRecognizer:_ios6ChatActionsLongPressRecognizer];
+    _ogChatActionsLongPressRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(og_chatActionsLongPress:)];
+    _ogChatActionsLongPressRecognizer.minimumPressDuration = 0.45;
+    _ogChatActionsLongPressRecognizer.cancelsTouchesInView = true;
+    [_tableView addGestureRecognizer:_ogChatActionsLongPressRecognizer];
 
-    [self ios6UpdateNewChatListGesturesState];
+    [self og_updateNewChatListGesturesState];
 
-    _ios6ListHeaderView = [[UIView alloc] initWithFrame:CGRectZero];
-    _ios6ListHeaderView.backgroundColor = [UIColor clearColor];
-    _ios6ListHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _ios6PlayerHostView = [[UIView alloc] initWithFrame:CGRectZero];
-    _ios6PlayerHostView.clipsToBounds = true;
-    [_ios6ListHeaderView addSubview:_ios6PlayerHostView];
-    _ios6FolderTabsView = [[UIView alloc] initWithFrame:CGRectZero];
-    [_ios6ListHeaderView addSubview:_ios6FolderTabsView];
-    _ios6FolderTabsView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _ios6FolderTabsView.backgroundColor = [self ios6FolderTabsBackgroundColor];
-    _ios6FolderTabsView.hidden = false;
-    _ios6FolderTabsScrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
-    _ios6FolderTabsScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _ios6FolderTabsScrollView.backgroundColor = [UIColor clearColor];
-    _ios6FolderTabsScrollView.showsHorizontalScrollIndicator = false;
-    _ios6FolderTabsScrollView.showsVerticalScrollIndicator = false;
-    _ios6FolderTabsScrollView.alwaysBounceHorizontal = false;
-    [_ios6FolderTabsView addSubview:_ios6FolderTabsScrollView];
+    _ogListHeaderView = [[UIView alloc] initWithFrame:CGRectZero];
+    _ogListHeaderView.backgroundColor = [UIColor clearColor];
+    _ogListHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _ogPlayerHostView = [[UIView alloc] initWithFrame:CGRectZero];
+    _ogPlayerHostView.clipsToBounds = true;
+    [_ogListHeaderView addSubview:_ogPlayerHostView];
+    _ogFolderTabsView = [[UIView alloc] initWithFrame:CGRectZero];
+    [_ogListHeaderView addSubview:_ogFolderTabsView];
+    _ogFolderTabsView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _ogFolderTabsView.backgroundColor = [self og_folderTabsBackgroundColor];
+    _ogFolderTabsView.hidden = false;
+    _ogFolderTabsScrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    _ogFolderTabsScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _ogFolderTabsScrollView.backgroundColor = [UIColor clearColor];
+    _ogFolderTabsScrollView.showsHorizontalScrollIndicator = false;
+    _ogFolderTabsScrollView.showsVerticalScrollIndicator = false;
+    _ogFolderTabsScrollView.alwaysBounceHorizontal = false;
+    [_ogFolderTabsView addSubview:_ogFolderTabsScrollView];
 
-    _ios6FolderTabsSeparatorView = [[UIView alloc] initWithFrame:CGRectZero];
-    _ios6FolderTabsSeparatorView.backgroundColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6DialogListAppearance].folderTabsSeparatorColor : ([TGPresentation classicIOS6Style] ? (TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
-    [_ios6FolderTabsView addSubview:_ios6FolderTabsSeparatorView];
+    _ogFolderTabsSeparatorView = [[UIView alloc] initWithFrame:CGRectZero];
+    _ogFolderTabsSeparatorView.backgroundColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6DialogListAppearance].folderTabsSeparatorColor : ([TGPresentation classicThemeStyle] ? (OGCompatDialogListClassicDarkStyle(self.presentation) ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
+    [_ogFolderTabsView addSubview:_ogFolderTabsSeparatorView];
 
-    _ios6FolderEmptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _ios6FolderEmptyLabel.backgroundColor = [UIColor clearColor];
-    _ios6FolderEmptyLabel.textAlignment = NSTextAlignmentCenter;
-    _ios6FolderEmptyLabel.textColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6DialogListAppearance].folderEmptyColor : ([TGPresentation classicIOS6Style] ? (TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
-    _ios6FolderEmptyLabel.font = TGSystemFontOfSize(15.0f);
-    _ios6FolderEmptyLabel.text = @"Нет чатов";
-    _ios6FolderEmptyLabel.hidden = true;
-    _ios6FolderEmptyLabel.userInteractionEnabled = false;
-    [self.view addSubview:_ios6FolderEmptyLabel];
+    _ogFolderEmptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _ogFolderEmptyLabel.backgroundColor = [UIColor clearColor];
+    _ogFolderEmptyLabel.textAlignment = NSTextAlignmentCenter;
+    _ogFolderEmptyLabel.textColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6DialogListAppearance].folderEmptyColor : ([TGPresentation classicThemeStyle] ? (OGCompatDialogListClassicDarkStyle(self.presentation) ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
+    _ogFolderEmptyLabel.font = TGSystemFontOfSize(15.0f);
+    _ogFolderEmptyLabel.text = @"Нет чатов";
+    _ogFolderEmptyLabel.hidden = true;
+    _ogFolderEmptyLabel.userInteractionEnabled = false;
+    [self.view addSubview:_ogFolderEmptyLabel];
     
     if (![self _updateControllerInset:false])
         [self controllerInsetUpdated:UIEdgeInsetsZero];
 
-    _ios6FolderTabsStateKey = nil;
-    _ios6FolderTabsUpdatePending = false;
-    [self ios6UpdateFolderTabs];
-    [self ios6LayoutFolderTabs];
+    _ogFolderTabsStateKey = nil;
+    _ogFolderTabsUpdatePending = false;
+    [self og_updateFolderTabs];
+    [self og_layoutFolderTabs];
 }
 
 - (void)doUnloadView
 {
-    [self ios6CancelFolderSwipeImmediately];
-    [self ios6EndRefreshAnimated:false];
-    _ios6RefreshContainerView = nil;
-    _ios6RefreshBadgeView = nil;
-    _ios6RefreshProgressLayer = nil;
-    _ios6RefreshActivityIndicator = nil;
+    [self og_cancelFolderSwipeImmediately];
+    [self og_endRefreshAnimated:false];
+    _ogRefreshContainerView = nil;
+    _ogRefreshBadgeView = nil;
+    _ogRefreshProgressLayer = nil;
+    _ogRefreshActivityIndicator = nil;
 
-    if (_ios6FolderPanGestureRecognizer != nil)
+    if (_ogFolderPanGestureRecognizer != nil)
     {
-        _ios6FolderPanGestureRecognizer.delegate = nil;
-        [_ios6FolderPanGestureRecognizer.view removeGestureRecognizer:_ios6FolderPanGestureRecognizer];
-        _ios6FolderPanGestureRecognizer = nil;
+        _ogFolderPanGestureRecognizer.delegate = nil;
+        [_ogFolderPanGestureRecognizer.view removeGestureRecognizer:_ogFolderPanGestureRecognizer];
+        _ogFolderPanGestureRecognizer = nil;
     }
 
     _tableView.delegate = nil;
@@ -2089,13 +1991,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     _tableView = nil;
     
     _searchBar = nil;
-    _ios6FolderTabsScrollView = nil;
-    _ios6FolderTabsView = nil;
-    _ios6FolderTabsSeparatorView = nil;
-    _ios6FolderEmptyLabel = nil;
-    _ios6FolderTabsStateKey = nil;
-    _ios6FolderTabsUpdatePending = false;
-    _ios6ChatActionsLongPressRecognizer = nil;
+    _ogFolderTabsScrollView = nil;
+    _ogFolderTabsView = nil;
+    _ogFolderTabsSeparatorView = nil;
+    _ogFolderEmptyLabel = nil;
+    _ogFolderTabsStateKey = nil;
+    _ogFolderTabsUpdatePending = false;
+    _ogChatActionsLongPressRecognizer = nil;
     
     _searchMixin.delegate = nil;
     [_searchMixin unload];
@@ -2113,48 +2015,21 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (!_doNotHideSearchAutomatically)
     {
         _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + [self onegramSearchHeaderHeight] + self.explicitTableInset.top);
-        _ios6SearchPullArmed = false;
+        _ogSearchPullArmed = false;
     }
 }
 
-- (void)applyTitleEmojiStatusDocumentId:(int64_t)documentId
-{
-    if (documentId == 0)
-    {
-        _titleEmojiStatusDocumentId = 0;
-        [_titleEmojiStatusView cancelLoading];
-        _titleEmojiStatusView.hidden = true;
-        [self _layoutTitleViews:self.interfaceOrientation];
-        return;
-    }
-    _titleEmojiStatusDocumentId = documentId;
-    [_titleEmojiStatusView cancelLoading];
-    _titleEmojiStatusView.hidden = true;
-    [self _layoutTitleViews:self.interfaceOrientation];
-    __weak TGDialogListController *weakSelf = self;
-    TGIOS6LoadCustomEmojiThumbnail(documentId, ^(NSString *thumbnailUri)
-    {
-        TGDialogListController *strongSelf = weakSelf;
-        if (strongSelf == nil || strongSelf->_titleEmojiStatusDocumentId != documentId || thumbnailUri.length == 0)
-            return;
-        [strongSelf->_titleEmojiStatusView loadImage:thumbnailUri filter:nil placeholder:nil];
-        strongSelf->_titleEmojiStatusView.hidden = false;
-        [strongSelf _layoutTitleViews:strongSelf.interfaceOrientation];
-    });
-}
-
-- (void)updateTitleEmojiStatus
+- (void)loadCachedOwnEmojiStatus
 {
     int64_t clientUserId = TGTelegraphInstance.clientUserId;
     if (clientUserId == 0 || _titleEmojiStatusLoadScheduled)
         return;
 
     _titleEmojiStatusLoadScheduled = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     OGRuntimeDispatch(OGRuntimePriorityUtility, ^
     {
         TGUser *user = [TGDatabaseInstance() loadUser:clientUserId];
-        int64_t documentId = user.emojiStatusDocumentId;
         OGPlatformDispatchOnMainThread(^
         {
             [reference withValue:^(void *value)
@@ -2166,31 +2041,30 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     controller->_dialogListSelfUserSnapshot = user;
                     controller->_dialogListSelfUserSnapshotResolved = true;
                 }
-                [controller applyTitleEmojiStatusDocumentId:documentId];
+                controller->_titleEmojiStatusView.documentId = user.emojiStatusDocumentId;
             }];
         });
     });
 }
 
-- (void)refreshOwnEmojiStatusIfNeeded
+- (void)refreshOwnUserIfStale
 {
     int64_t clientUserId = TGTelegraphInstance.clientUserId;
-    if (clientUserId == 0 || _ownEmojiStatusRefreshInFlight)
+    if (clientUserId == 0 || _ownUserRefreshPending)
         return;
 
     TGTelegramNetworking *networking = OGPlatformUsesConstrainedBackgroundExecution() ? [TGTelegramNetworking maybeInstance] : [TGTelegramNetworking instance];
     if (networking == nil)
         return;
 
-    _ownEmojiStatusRefreshInFlight = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
-    NSTimeInterval lastRefreshTime = _lastOwnEmojiStatusRefreshTime;
+    _ownUserRefreshPending = true;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
+    NSTimeInterval lastRefreshTime = _ownUserRefreshTimestamp;
     OGRuntimeDispatch(OGRuntimePriorityUtility, ^
     {
         TGUser *cachedUser = [TGDatabaseInstance() loadUser:clientUserId];
-        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-        NSTimeInterval refreshInterval = cachedUser.emojiStatusDocumentId == 0 ? 30.0 : 300.0;
-        bool shouldRefresh = lastRefreshTime <= 0.0 || now - lastRefreshTime >= refreshInterval;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        bool shouldRefresh = lastRefreshTime <= 0.0 || now - lastRefreshTime >= TGDialogListOwnUserRefreshInterval(cachedUser);
         OGPlatformDispatchOnMainThread(^
         {
             [reference withValue:^(void *value)
@@ -2201,36 +2075,43 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     controller->_dialogListSelfUserSnapshot = cachedUser;
                     controller->_dialogListSelfUserSnapshotResolved = true;
                 }
-                if (!shouldRefresh)
+
+                TLInputUser *inputUser = shouldRefresh ? [TGTelegraphInstance createInputUserForUid:clientUserId] : nil;
+                if (inputUser == nil)
                 {
-                    controller->_ownEmojiStatusRefreshInFlight = false;
+                    controller->_ownUserRefreshPending = false;
                     return;
                 }
 
-                controller->_lastOwnEmojiStatusRefreshTime = now;
-                TLRPCusers_getUsers$users_getUsers *request = [[TLRPCusers_getUsers$users_getUsers alloc] init];
-                request.n_id = @[ [TGTelegraphInstance createInputUserForUid:clientUserId] ];
-                TGDialogListControllerReference *completionReference = controller->_ios6LifetimeReference;
-                [networking performRpc:request completionBlock:^(id result, __unused int64_t responseTime, MTRpcError *error)
-                {
-                    if (error == nil && [result isKindOfClass:[NSArray class]])
-                        [TGUserDataRequestBuilder executeUserDataUpdate:(NSArray *)result];
-
-                    OGPlatformDispatchOnMainThread(^
-                    {
-                        [completionReference withValue:^(void *completionValue)
-                        {
-                            TGDialogListController *completionController = (__bridge TGDialogListController *)completionValue;
-                            completionController->_ownEmojiStatusRefreshInFlight = false;
-                            completionController->_dialogListSelfUserSnapshot = nil;
-                            completionController->_dialogListSelfUserSnapshotResolved = false;
-                            [completionController updateTitleEmojiStatus];
-                        }];
-                    });
-                } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
+                controller->_ownUserRefreshTimestamp = now;
+                [controller requestOwnUser:inputUser networking:networking];
             }];
         });
     });
+}
+
+- (void)requestOwnUser:(TLInputUser *)inputUser networking:(TGTelegramNetworking *)networking
+{
+    TLRPCusers_getUsers$users_getUsers *getUsers = [[TLRPCusers_getUsers$users_getUsers alloc] init];
+    getUsers.n_id = @[ inputUser ];
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
+    [networking performRpc:getUsers completionBlock:^(id response, __unused int64_t responseTime, MTRpcError *error)
+    {
+        if (error == nil && [response isKindOfClass:[NSArray class]])
+            [TGUserDataRequestBuilder executeUserDataUpdate:response];
+
+        OGPlatformDispatchOnMainThread(^
+        {
+            [reference withValue:^(void *value)
+            {
+                TGDialogListController *controller = (__bridge TGDialogListController *)value;
+                controller->_ownUserRefreshPending = false;
+                controller->_dialogListSelfUserSnapshot = nil;
+                controller->_dialogListSelfUserSnapshotResolved = false;
+                [controller loadCachedOwnEmojiStatus];
+            }];
+        });
+    } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
 - (bool)storiesEnabledInList
@@ -2298,12 +2179,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     {
         TGNavigationBar *navigationBar = (TGNavigationBar *)self.navigationController.navigationBar;
         navigationBar.musicPlayerLayout = TGNavigationBarMusicPlayerLayoutStandard;
-        navigationBar.musicPlayerHostView = _ios6PlayerHostView;
+        navigationBar.musicPlayerHostView = _ogPlayerHostView;
     }
-    [self ios6LayoutFolderTabs];
-    [self refreshOwnEmojiStatusIfNeeded];
-    [self updateTitleEmojiStatus];
-    [self ios6SynchronizeDialogStateForce:false];
+    [self og_layoutFolderTabs];
+    [self refreshOwnUserIfStale];
+    [self loadCachedOwnEmojiStatus];
+    [self og_synchronizeDialogStateForce:false];
     
     
     [self check3DTouch];
@@ -2320,8 +2201,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 bool found = false;
                 
                 int index = -1;
-                NSArray *visibleItems = [self dialogListDisplayedItems];
-                for (TGConversation *conversation in visibleItems)
+                NSArray *displayedRows = [self dialogListDisplayedItems];
+                for (TGConversation *conversation in displayedRows)
                 {
                     index++;
                     
@@ -2335,10 +2216,10 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                         NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:1];
                         if (index >= 0 && index < [_tableView numberOfRowsInSection:1])
                         {
-                            CGRect convertRect = [_tableView convertRect:[_tableView rectForRowAtIndexPath:indexPath] toView:self.view];
-                            if (convertRect.origin.y + convertRect.size.height > self.view.frame.size.height - self.controllerInset.bottom)
+                            CGRect rowRectInView = [_tableView convertRect:[_tableView rectForRowAtIndexPath:indexPath] toView:self.view];
+                            if (rowRectInView.origin.y + rowRectInView.size.height > self.view.frame.size.height - self.controllerInset.bottom)
                                 scrollPosition = UITableViewScrollPositionBottom;
-                            else if (convertRect.origin.y < self.controllerInset.top)
+                            else if (rowRectInView.origin.y < self.controllerInset.top)
                                 scrollPosition = UITableViewScrollPositionTop;
                         }
                         else
@@ -2387,7 +2268,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     _dialogListOffscreenReloadPending = false;
     [_tableView layoutIfNeeded];
-    if ([self ios6VisibleListModel].count != 0 && _tableView.indexPathsForVisibleRows.count == 0)
+    if ([self og_visibleListModel].count != 0 && _tableView.indexPathsForVisibleRows.count == 0)
         [_tableView setContentOffset:CGPointMake(0.0f, -_tableView.contentInset.top) animated:false];
     [self dialogListPrimeVisibleRenderCache];
 }
@@ -2401,7 +2282,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         for (UITableViewCell *cell in _tableView.visibleCells)
         {
             NSIndexPath *indexPath = [_tableView indexPathForCell:cell];
-            id item = indexPath != nil ? [self ios6DialogListItemAtIndexPath:indexPath] : nil;
+            id item = indexPath != nil ? [self og_dialogListItemAtIndexPath:indexPath] : nil;
             NSString *itemDescription = item == nil ? @"nil" : ([item isKindOfClass:[TGConversation class]] ? [[NSString alloc] initWithFormat:@"conv:%lld:%d", ((TGConversation *)item).conversationId, (int)((TGConversation *)item).dialogListData.count] : NSStringFromClass([item class]));
             if ([cell isKindOfClass:[TGDialogListCell class]])
                 OGPlatformDiagnosticLog(@"DIALOGVIEW row=%d item=%@ %@", indexPath != nil ? (int)indexPath.row : -1, itemDescription, [(TGDialogListCell *)cell diagnosticState]);
@@ -2517,7 +2398,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if ([self.navigationController.navigationBar isKindOfClass:[TGNavigationBar class]])
     {
         TGNavigationBar *navigationBar = (TGNavigationBar *)self.navigationController.navigationBar;
-        if (navigationBar.musicPlayerHostView == _ios6PlayerHostView)
+        if (navigationBar.musicPlayerHostView == _ogPlayerHostView)
             navigationBar.musicPlayerHostView = nil;
     }
     [super viewWillDisappear:animated];
@@ -2571,10 +2452,10 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         [super setAdditionalNavigationBarHeight:height];
         return;
     }
-    bool changed = ABS(_ios6PlayerHeight - height) > FLT_EPSILON;
-    _ios6PlayerHeight = height;
+    bool changed = ABS(_ogPlayerHeight - height) > FLT_EPSILON;
+    _ogPlayerHeight = height;
     [super setAdditionalNavigationBarHeight:0.0f];
-    [self ios6LayoutFolderTabs];
+    [self og_layoutFolderTabs];
     if (changed && _tableView != nil)
     {
         CGPoint offset = _tableView.contentOffset;
@@ -2607,7 +2488,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
     
     [super controllerInsetUpdated:previousInset];
-    [self ios6LayoutFolderTabs];
+    [self og_layoutFolderTabs];
     
     [self _performSizeChangesWithDuration:0.0 size:_tableView.frame.size];
 }
@@ -2658,7 +2539,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)willEnterForeground:(NSNotification *)__unused notification
 {
-    [self ios6SynchronizeDialogStateForce:true];
+    [self og_synchronizeDialogStateForce:true];
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
         if ([cell isKindOfClass:[TGDialogListCell class]])
@@ -2684,15 +2565,15 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
 
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
     [self dialogListCommitDisplayedItems];
     NSMutableDictionary *temporaryImageCache = [[NSMutableDictionary alloc] init];
     int64_t peerIdWithActiveEditingControls = 0;
     bool activeEditingControlsToLeft = false;
-    NSMutableDictionary *previousFrames = nil;
+    NSMutableDictionary *framesBeforeUpdate = nil;
     if (animateFrameTransitions) {
-        previousFrames = [[NSMutableDictionary alloc] init];
+        framesBeforeUpdate = [[NSMutableDictionary alloc] init];
     }
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
@@ -2700,7 +2581,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         {
             TGDialogListCell *dialogCell = (TGDialogListCell *)cell;
             
-            previousFrames[@(dialogCell.conversationId)] = [NSValue valueWithCGRect:dialogCell.frame];
+            framesBeforeUpdate[@(dialogCell.conversationId)] = [NSValue valueWithCGRect:dialogCell.frame];
             if ([dialogCell isEditingControlsExpanded]) {
                 peerIdWithActiveEditingControls = dialogCell.conversationId;
                 activeEditingControlsToLeft = [dialogCell isEditingControlsExpandedToLeft];
@@ -2721,7 +2602,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     [dialogCell setEditingConrolsExpanded:true toLeft:activeEditingControlsToLeft animated:false];
                 }
                 if (animateFrameTransitions) {
-                    NSValue *nFrame = previousFrames[@(dialogCell.conversationId)];
+                    NSValue *nFrame = framesBeforeUpdate[@(dialogCell.conversationId)];
                     if (nFrame != nil) {
                         CGFloat offset = dialogCell.frame.origin.y - [nFrame CGRectValue].origin.y;
                         if (ABS(offset) > FLT_EPSILON) {
@@ -2758,9 +2639,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
     }
     
-    [self ios6LayoutFolderTabs];
-    [self ios6UpdateFolderTabs];
-    [self ios6UpdateFolderEmptyLabel];
+    [self og_layoutFolderTabs];
+    [self og_updateFolderTabs];
+    [self og_updateFolderEmptyLabel];
     _visibleConversationsPipe.sink(@true);
 }
 
@@ -2773,17 +2654,17 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     _emptyListContainer = nil;
 }
 
-- (void)ios6ScheduleLazyLoadMoreItems:(int)limit
+- (void)og_scheduleLazyLoadMoreItems:(int)limit
 {
-    if (_ios6LazyLoadScheduled || _isLoading || !_canLoadMore || _ios6ArchiveExpanded)
+    if (_ogLazyLoadScheduled || _isLoading || !_canLoadMore || _ogArchiveExpanded)
         return;
 
-    _ios6LazyLoadScheduled = true;
+    _ogLazyLoadScheduled = true;
     _isLoading = true;
     OGPlatformDispatchOnMainThread(^
     {
-        _ios6LazyLoadScheduled = false;
-        if (!_canLoadMore || _ios6ArchiveExpanded || _dialogListCompanion == nil)
+        _ogLazyLoadScheduled = false;
+        if (!_canLoadMore || _ogArchiveExpanded || _dialogListCompanion == nil)
         {
             _isLoading = false;
             return;
@@ -2816,7 +2697,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     NSIndexPath *selectedIndexPath = [_tableView indexPathForSelectedRow];
     if (selectedIndexPath != nil)
     {
-        TGConversation *conversation = (TGConversation *)[self ios6DialogListItemAtIndexPath:selectedIndexPath];
+        TGConversation *conversation = (TGConversation *)[self og_dialogListItemAtIndexPath:selectedIndexPath];
         if ([conversation isKindOfClass:[TGConversation class]])
             selectedConversation = conversation.conversationId;
     }
@@ -2824,36 +2705,36 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [_listModel removeAllObjects];
     [_listModel addObjectsFromArray:items];
 
-    [self ios6ScheduleCompleteDialogHydrationAndAvatarPrefetch];
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
-    [self ios6ScheduleFolderPeerHydrationReconciliation];
-    if (_ios6ArchiveExpanded && [self ios6ArchivedConversationCount] == 0)
-        _ios6ArchiveExpanded = false;
-    [self ios6LogArchiveDiagnostics:@"reload"];
+    [self og_scheduleCompleteDialogHydrationAndAvatarPrefetch];
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
+    [self og_scheduleFolderPeerHydrationReconciliation];
+    if (_ogArchiveExpanded && [self og_archivedConversationCount] == 0)
+        _ogArchiveExpanded = false;
+    [self og_logArchiveDiagnostics:@"reload"];
 
-    if (_ios6SelectedDialogFilterId != 0 && [self ios6SelectedDialogFilter] == nil && _ios6DialogFilters.count == 0)
+    if (_ogSelectedDialogFilterId != 0 && [self og_selectedDialogFilter] == nil && _ogDialogFilters.count == 0)
     {
-        _ios6SelectedDialogFilterId = 0;
-        [self ios6StoreSelectedDialogFilterId];
-        _ios6VisibleListCache = nil;
-        _ios6VisibleListCacheFilterId = INT32_MIN;
+        _ogSelectedDialogFilterId = 0;
+        [self og_storeSelectedDialogFilterId];
+        _ogVisibleListCache = nil;
+        _ogVisibleListCacheFilterId = INT32_MIN;
     }
 
-    NSArray *onegramVisibleItems = [self ios6VisibleListModel];
-    if (onegramVisibleItems.count == 0 && _listModel.count != 0 && _ios6SelectedDialogFilterId == 0)
+    NSArray *onegramVisibleItems = [self og_visibleListModel];
+    if (onegramVisibleItems.count == 0 && _listModel.count != 0 && _ogSelectedDialogFilterId == 0)
     {
-        _ios6ArchiveExpanded = false;
-        _ios6VisibleListCache = nil;
-        _ios6VisibleListCacheFilterId = INT32_MIN;
-        onegramVisibleItems = [self ios6VisibleListModel];
+        _ogArchiveExpanded = false;
+        _ogVisibleListCache = nil;
+        _ogVisibleListCacheFilterId = INT32_MIN;
+        onegramVisibleItems = [self og_visibleListModel];
     }
 
     bool appliedIncrementally = !_reloadWithAnimations && _dialogListDisplayedItems.count != 0 && [self dialogListApplyDisplayedItems:onegramVisibleItems animated:false];
     if (appliedIncrementally)
     {
-        [self ios6LayoutFolderTabs];
-        [self ios6UpdateFolderTabs];
+        [self og_layoutFolderTabs];
+        [self og_updateFolderTabs];
     }
     else
         [self reloadData:_reloadWithAnimations];
@@ -2872,9 +2753,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
     }
     _dialogListLastFullReloadDuration = CFAbsoluteTimeGetCurrent() - fullReloadStart;
-    if ([self ios6FoldersAllowed] && _ios6DialogFilters.count == 0 && TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
-        [self ios6SynchronizeDialogStateForce:false];
-    TGDialogListControllerReference *renderReference = _ios6LifetimeReference;
+    if ([self og_foldersAllowed] && _ogDialogFilters.count == 0 && TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
+        [self og_synchronizeDialogStateForce:false];
+    TGDialogListControllerReference *renderReference = _ogLifetimeReference;
     TGDispatchAfter(0.01, dispatch_get_main_queue(), ^
     {
         [renderReference withValue:^(void *value)
@@ -2882,8 +2763,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
             if (!controller->_dialogListOffscreenReloadPending)
                 [controller dialogListPrimeVisibleRenderCache];
-            if (OGPlatformUsesConstrainedBackgroundExecution() && controller->_listModel.count != 0 && controller->_ios6AllDialogItems.count == 0 && !controller->_ios6AllDialogItemsLoading)
-                [controller ios6RefreshAllDialogItems:false];
+            if (OGPlatformUsesConstrainedBackgroundExecution() && controller->_listModel.count != 0 && controller->_ogAllDialogItems.count == 0 && !controller->_ogAllDialogItemsLoading)
+                [controller og_refreshAllDialogItems:false];
         }];
     });
     [self updateBarButtonItemsAnimated:false];
@@ -2892,8 +2773,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (selectedConversation != INT64_MAX && selectedConversation != 0)
     {
         int index = -1;
-        NSArray *visibleItems = [self dialogListDisplayedItems];
-        for (id item in visibleItems)
+        NSArray *displayedRows = [self dialogListDisplayedItems];
+        for (id item in displayedRows)
         {
             index++;
             
@@ -2920,16 +2801,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     
     [self updateEmptyListContainer];
     
-    bool ios6FolderPreloadActive = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] && [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6FolderPreloadActive];
+    bool folderPreloadActive = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] && [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6FolderPreloadActive];
     NSUInteger visibleFolderItems = [self dialogListDisplayedItems].count;
-    bool selectedFilterNeedsHistory = _ios6SelectedDialogFilterId == 0 || [self ios6SelectedDialogFilterNeedsHistoryScan];
-    if (_ios6SelectedDialogFilterId != 0 && selectedFilterNeedsHistory && !_ios6FolderLocalSourceExhausted && !_ios6AllDialogItemsLoading && visibleFolderItems < 8)
+    bool selectedFilterNeedsHistory = _ogSelectedDialogFilterId == 0 || [self og_selectedDialogFilterNeedsHistoryScan];
+    if (_ogSelectedDialogFilterId != 0 && selectedFilterNeedsHistory && !_ogFolderLocalSourceExhausted && !_ogAllDialogItemsLoading && visibleFolderItems < 8)
     {
-        [self ios6RefreshAllDialogItems:false];
+        [self og_refreshAllDialogItems:false];
     }
-    else if (selectedFilterNeedsHistory && !ios6FolderPreloadActive && !_ios6ArchiveExpanded && _canLoadMore && !_isLoading && visibleFolderItems < 8 && _listModel.count != 0)
+    else if (selectedFilterNeedsHistory && !folderPreloadActive && !_ogArchiveExpanded && _canLoadMore && !_isLoading && visibleFolderItems < 8 && _listModel.count != 0)
     {
-        [self ios6ScheduleLazyLoadMoreItems:15];
+        [self og_scheduleLazyLoadMoreItems:15];
     }
     
     if (_scheduledScrollToConversationId != 0)
@@ -3003,9 +2884,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
 
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
-    NSUInteger archivedCountBefore = [self ios6ArchivedConversationCount];
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
+    NSUInteger archivedTotalPrior = [self og_archivedConversationCount];
     for (NSUInteger i = 0; i < _listModel.count; i++) {
         TGConversation *conv = ((TGConversation *)_listModel[i]);
         TGConversation *conversation = dict[@(conv.conversationId)];
@@ -3013,9 +2894,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [_listModel replaceObjectAtIndex:i withObject:conversation];
         }
     }
-    if (_ios6AllDialogItems.count != 0)
+    if (_ogAllDialogItems.count != 0)
     {
-        NSMutableArray *allDialogItems = [_ios6AllDialogItems mutableCopy];
+        NSMutableArray *allDialogItems = [_ogAllDialogItems mutableCopy];
         for (NSInteger i = (NSInteger)allDialogItems.count - 1; i >= 0; i--)
         {
             id item = allDialogItems[(NSUInteger)i];
@@ -3029,13 +2910,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             else
                 [allDialogItems replaceObjectAtIndex:(NSUInteger)i withObject:conversation];
         }
-        _ios6AllDialogItems = allDialogItems;
+        _ogAllDialogItems = allDialogItems;
     }
-    NSUInteger archivedCountAfter = [self ios6ArchivedConversationCount];
-    if (archivedCountBefore != archivedCountAfter)
+    NSUInteger archivedTotalNow = [self og_archivedConversationCount];
+    if (archivedTotalPrior != archivedTotalNow)
     {
-        if (_ios6ArchiveExpanded && archivedCountAfter == 0)
-            _ios6ArchiveExpanded = false;
+        if (_ogArchiveExpanded && archivedTotalNow == 0)
+            _ogArchiveExpanded = false;
         [self updateBarButtonItemsAnimated:false];
         [self reloadData:false];
         _visibleConversationsPipe.sink(@true);
@@ -3044,12 +2925,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
     
-    if (_ios6SelectedDialogFilterId != 0)
+    if (_ogSelectedDialogFilterId != 0)
     {
-        _ios6VisibleListCache = nil;
-        _ios6VisibleListCacheFilterId = INT32_MIN;
+        _ogVisibleListCache = nil;
+        _ogVisibleListCacheFilterId = INT32_MIN;
         [self reloadData:false];
-        [self ios6UpdateFolderTabs];
+        [self og_updateFolderTabs];
     }
     else
     {
@@ -3063,10 +2944,10 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 }
             }
         }
-        [self ios6UpdateFolderTabs];
+        [self og_updateFolderTabs];
     }
     
-    [self ios6ScheduleFolderPeerHydrationReconciliation];
+    [self og_scheduleFolderPeerHydrationReconciliation];
     _visibleConversationsPipe.sink(@true);
     [self dialogListPresentationUpdated];
 
@@ -3084,7 +2965,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
 
-    NSArray *previousVisibleItems = [[self ios6VisibleListModel] copy];
+    NSArray *previousVisibleItems = [[self og_visibleListModel] copy];
     int countBefore = (int)_listModel.count;
     NSMutableSet *removedPeerIds = [[NSMutableSet alloc] init];
 
@@ -3160,9 +3041,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (insertionObjects.count != 0)
         [_listModel insertObjects:insertionObjects atIndexes:insertionPositions];
 
-    if (_ios6AllDialogItems.count != 0 && (removedPeerIds.count != 0 || updatedItems.count != 0 || insertedItems.count != 0))
+    if (_ogAllDialogItems.count != 0 && (removedPeerIds.count != 0 || updatedItems.count != 0 || insertedItems.count != 0))
     {
-        NSMutableArray *allDialogItems = [_ios6AllDialogItems mutableCopy];
+        NSMutableArray *allDialogItems = [_ogAllDialogItems mutableCopy];
         NSMutableDictionary *updatesByPeerId = [[NSMutableDictionary alloc] initWithCapacity:updatedItems.count];
         for (id updatedItem in updatedItems)
         {
@@ -3208,12 +3089,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 [allDialogItems addObject:insertedConversation];
             }
         }
-        _ios6AllDialogItems = allDialogItems;
+        _ogAllDialogItems = allDialogItems;
     }
 
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
-    NSArray *currentVisibleItems = [self ios6VisibleListModel];
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
+    NSArray *currentVisibleItems = [self og_visibleListModel];
 
     bool stableVisibleOrder = insertedIndices.count == 0 && removedIndices.count == 0 && previousVisibleItems.count == currentVisibleItems.count;
     if (stableVisibleOrder)
@@ -3253,16 +3134,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         {
             [self dialogListRefreshVisibleCellsAnimated:true];
         }
-        [self ios6UpdateFolderTabs];
+        [self og_updateFolderTabs];
     }
     else
     {
         if (![self dialogListApplyDisplayedItems:currentVisibleItems animated:false])
             [self reloadData:false];
-        [self ios6UpdateFolderTabs];
+        [self og_updateFolderTabs];
     }
 
-    [self ios6ScheduleFolderPeerHydrationReconciliation];
+    [self og_scheduleFolderPeerHydrationReconciliation];
     _visibleConversationsPipe.sink(@true);
 
     if ((countBefore == 0) != (_listModel.count == 0))
@@ -3278,27 +3159,27 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 }
 
 - (void)updateSearchBarBackground {
-    bool topIsPinned = false;
-    NSArray *visibleItems = [self dialogListDisplayedItems];
-    if (visibleItems.count != 0 && [visibleItems[0] isKindOfClass:[TGConversation class]]) {
-        TGConversation *topConversation = visibleItems[0];
-        topIsPinned = topConversation.pinnedToTop || topConversation.isAd || (_dialogListCompanion.forwardMode && topConversation.conversationId == TGTelegraphInstance.clientUserId);
+    bool firstRowPinned = false;
+    NSArray *displayedRows = [self dialogListDisplayedItems];
+    if (displayedRows.count != 0 && [displayedRows[0] isKindOfClass:[TGConversation class]]) {
+        TGConversation *firstDialog = displayedRows[0];
+        firstRowPinned = firstDialog.pinnedToTop || firstDialog.isAd || (_dialogListCompanion.forwardMode && firstDialog.conversationId == TGTelegraphInstance.clientUserId);
     }
-    UIColor *backgroundColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6SearchBarBackdropColorForSize:_searchBar.bounds.size] : (topIsPinned ? _presentation.pallete.barBackgroundColor : _presentation.pallete.backgroundColor);
+    UIColor *backgroundColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6SearchBarBackdropColorForSize:_searchBar.bounds.size] : (firstRowPinned ? _presentation.pallete.barBackgroundColor : _presentation.pallete.backgroundColor);
     if (!TGObjectCompare(_searchBar.backgroundColor, backgroundColor)) {
         _searchBar.backgroundColor = backgroundColor;
         _searchTopBackgroundView.backgroundColor = backgroundColor;
     }
-    _searchBar.highContrast = topIsPinned;
+    _searchBar.highContrast = firstRowPinned;
 }
 
 - (void)selectConversationWithId:(int64_t)conversationId
 {
     bool found = false;
     
-    NSArray *visibleItems = [self dialogListDisplayedItems];
+    NSArray *displayedRows = [self dialogListDisplayedItems];
     int index = -1;
-    for (TGConversation *conversation in visibleItems)
+    for (TGConversation *conversation in displayedRows)
     {
         index++;
         if (![conversation isKindOfClass:[TGConversation class]])
@@ -3309,16 +3190,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:1];
             if (indexPath.section >= [_tableView numberOfSections] || indexPath.row >= [_tableView numberOfRowsInSection:indexPath.section])
             {
-                TGLog(@"DIALOGS select.skip invalid index peer=%lld row=%d visible=%d rows=%d", conversationId, index, (int)visibleItems.count, indexPath.section < [_tableView numberOfSections] ? (int)[_tableView numberOfRowsInSection:indexPath.section] : -1);
+                TGLog(@"DIALOGS select.skip invalid index peer=%lld row=%d visible=%d rows=%d", conversationId, index, (int)displayedRows.count, indexPath.section < [_tableView numberOfSections] ? (int)[_tableView numberOfRowsInSection:indexPath.section] : -1);
                 break;
             }
             
             UITableViewScrollPosition scrollPosition = UITableViewScrollPositionNone;
             
-            CGRect convertRect = [_tableView convertRect:[_tableView rectForRowAtIndexPath:indexPath] toView:self.view];
-            if (convertRect.origin.y + convertRect.size.height > self.view.frame.size.height - self.controllerInset.bottom)
+            CGRect rowRectInView = [_tableView convertRect:[_tableView rectForRowAtIndexPath:indexPath] toView:self.view];
+            if (rowRectInView.origin.y + rowRectInView.size.height > self.view.frame.size.height - self.controllerInset.bottom)
                 scrollPosition = UITableViewScrollPositionBottom;
-            else if (convertRect.origin.y < self.controllerInset.top)
+            else if (rowRectInView.origin.y < self.controllerInset.top)
                 scrollPosition = UITableViewScrollPositionTop;
             
             if (_searchMixin.isActive)
@@ -3362,7 +3243,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
 
     _dialogListSelfUserSnapshotLoading = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     OGRuntimeDispatch(OGRuntimePriorityUtility, ^
     {
         TGUser *user = [TGDatabaseInstance() loadUser:clientUserId];
@@ -3466,7 +3347,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)updateBarButtonItemsAnimated:(bool)animated
 {
-    NSUInteger state = ([TGPresentation brandedIOS6Style] ? 1u : 0u) | ([TGPresentation classicIOS6Style] ? 2u : 0u) | (_editingMode ? 4u : 0u) | (_ios6ArchiveExpanded ? 8u : 0u) | (_ios6SelectedDialogFilterId != 0 ? 16u : 0u);
+    NSUInteger state = ([TGPresentation brandedIOS6Style] ? 1u : 0u) | ([TGPresentation classicThemeStyle] ? 2u : 0u) | (_editingMode ? 4u : 0u) | (_ogArchiveExpanded ? 8u : 0u) | (_ogSelectedDialogFilterId != 0 ? 16u : 0u);
     TGPresentationPallete *pallete = self.presentation.pallete;
     if (_barButtonItemsApplied && _barButtonItemsState == state && _barButtonItemsPallete == pallete)
     {
@@ -3561,30 +3442,30 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:nil];
     
-    _ios6ArchiveExpanded = false;
-    _ios6ArchiveItemsLoadRequested = false;
+    _ogArchiveExpanded = false;
+    _ogArchiveItemsLoadRequested = false;
     
     [self updateBarButtonItemsAnimated:false];
     [_dialogListCompanion clearChatListCacheAndReload];
 }
 
-- (void)ios6ClearChatCacheRequested:(NSNotification *)__unused notification
+- (void)og_clearChatCacheRequested:(NSNotification *)__unused notification
 {
     [self clearChatCacheButtonPressed];
 }
 
 - (void)archiveButtonPressed:(id)__unused sender
 {
-    _ios6ArchiveExpanded = !_ios6ArchiveExpanded;
-    if (_ios6ArchiveExpanded && (!_ios6ArchiveItemsLoadRequested || [self ios6ArchivedConversationCount] == 0))
+    _ogArchiveExpanded = !_ogArchiveExpanded;
+    if (_ogArchiveExpanded && (!_ogArchiveItemsLoadRequested || [self og_archivedConversationCount] == 0))
     {
-        _ios6ArchiveItemsLoadRequested = true;
+        _ogArchiveItemsLoadRequested = true;
         [_dialogListCompanion loadArchiveItems];
     }
-    [self ios6LogArchiveDiagnostics:@"nav.tap"];
+    [self og_logArchiveDiagnostics:@"nav.tap"];
     [self updateBarButtonItemsAnimated:false];
-    [self ios6LayoutFolderTabs];
-    [self ios6UpdateFolderTabs];
+    [self og_layoutFolderTabs];
+    [self og_updateFolderTabs];
     [self reloadData:false];
     if ([self dialogListDisplayedItems].count != 0)
         [_tableView setContentOffset:CGPointMake(0.0f, -_tableView.contentInset.top) animated:false];
@@ -3613,7 +3494,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (cell.selectionStyle != UITableViewCellSelectionStyleNone)
         {
             TGConversation *conversation = nil;
-            id item = [self ios6DialogListItemAtIndexPath:indexPath];
+            id item = [self og_dialogListItemAtIndexPath:indexPath];
             if ([item isKindOfClass:[TGConversation class]] || [item isKindOfClass:[TGFeed class]])
                 conversation = item;
             
@@ -3710,12 +3591,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return _searchResultsSections.count;
 }
 
-- (bool)ios6IsArchiveHeaderItem:(id)item
+- (bool)og_isArchiveHeaderItem:(id)item
 {
-    return [item isKindOfClass:[NSString class]] && [(NSString *)item isEqualToString:TGIOS6ArchiveHeaderItem];
+    return [item isKindOfClass:[NSString class]] && [(NSString *)item isEqualToString:OGCompatArchiveHeaderItem];
 }
 
-- (NSString *)ios6ArchiveSampleForConversation:(TGConversation *)conversation
+- (NSString *)og_archiveSampleForConversation:(TGConversation *)conversation
 {
     NSString *title = conversation.chatTitle.length == 0 ? conversation.dialogListData[@"title"] : conversation.chatTitle;
     if (title.length > 32)
@@ -3724,24 +3605,24 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return [[NSString alloc] initWithFormat:@"%lld%@:%@", conversation.conversationId, conversation.isArchived ? @"F" : @"", title ?: @""];
 }
 
-- (NSArray *)ios6ArchiveLimitedSamples:(NSArray *)samples
+- (NSArray *)og_archiveLimitedSamples:(NSArray *)samples
 {
     if (samples.count <= 20)
         return samples;
     
-    NSMutableArray *limitedSamples = [[NSMutableArray alloc] initWithCapacity:21];
+    NSMutableArray *cappedSamples = [[NSMutableArray alloc] initWithCapacity:21];
     for (NSUInteger i = 0; i < 20; i++)
-        [limitedSamples addObject:samples[i]];
-    [limitedSamples addObject:[[NSString alloc] initWithFormat:@"...+%d", (int)(samples.count - 20)]];
-    return limitedSamples;
+        [cappedSamples addObject:samples[i]];
+    [cappedSamples addObject:[[NSString alloc] initWithFormat:@"...+%d", (int)(samples.count - 20)]];
+    return cappedSamples;
 }
 
-- (void)ios6LogArchiveDiagnostics:(NSString *)reason
+- (void)og_logArchiveDiagnostics:(NSString *)reason
 {
     (void)reason;
 }
 
-- (bool)ios6IsArchivedConversation:(id)item
+- (bool)og_isArchivedConversation:(id)item
 {
     if (![item isKindOfClass:[TGConversation class]])
         return false;
@@ -3750,19 +3631,19 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return conversation.pinnedDate == 0 && conversation.isArchived;
 }
 
-- (bool)ios6NewChatListGesturesEnabled
+- (bool)og_newChatListGesturesEnabled
 {
-    if (!OGPlatformCachedBoolDefault(TGIOS6NewChatListGesturesKey))
+    if (!OGPlatformCachedBoolDefault(OGCompatNewChatListGesturesKey))
         return false;
 
-    return [self ios6FoldersAllowed] && !_dialogListCompanion.forwardMode && !_dialogListCompanion.feedChannels;
+    return [self og_foldersAllowed] && !_dialogListCompanion.forwardMode && !_dialogListCompanion.feedChannels;
 }
 
-- (void)ios6UpdateNewChatListGesturesState
+- (void)og_updateNewChatListGesturesState
 {
-    bool enabled = [self ios6NewChatListGesturesEnabled];
-    _ios6FolderPanGestureRecognizer.enabled = enabled;
-    _ios6ChatActionsLongPressRecognizer.enabled = enabled;
+    bool enabled = [self og_newChatListGesturesEnabled];
+    _ogFolderPanGestureRecognizer.enabled = enabled;
+    _ogChatActionsLongPressRecognizer.enabled = enabled;
 
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
@@ -3852,9 +3733,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
     else if ([key isEqualToString:TGOnegramSettingChatListHideAllChatsTab])
     {
-        [self ios6SetDialogFilters:_ios6SourceDialogFilters];
-        [self ios6UpdateFolderTabs];
-        [self ios6LayoutFolderTabs];
+        [self og_setDialogFilters:_ogSourceDialogFilters];
+        [self og_updateFolderTabs];
+        [self og_layoutFolderTabs];
         [self reloadData:false];
     }
     else if ([key isEqualToString:TGOnegramSettingChatListCompact] || [key isEqualToString:TGOnegramSettingGeneralFilterZalgo] || [key isEqualToString:TGOnegramSettingGeneralExactNumbers] || [key isEqualToString:TGOnegramSettingAppearanceAvatarRoundness] || [key isEqualToString:TGOnegramSettingGeneralShowSeconds] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneManual] || [key isEqualToString:TGOnegramSettingGeneralTimeZoneOffset] || [key isEqualToString:TGOnegramSettingGeneralDisableUnarchiveSwipe])
@@ -3863,107 +3744,107 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
 }
 
-- (void)ios6NewChatListGesturesChanged:(NSNotification *)__unused notification
+- (void)og_newChatListGesturesChanged:(NSNotification *)__unused notification
 {
-    [self ios6UpdateNewChatListGesturesState];
+    [self og_updateNewChatListGesturesState];
     [self reloadData:false];
 }
 
-- (NSInteger)ios6SelectedDialogFilterIndex
+- (NSInteger)og_selectedDialogFilterIndex
 {
     NSInteger index = 0;
-    for (NSDictionary *filter in _ios6DialogFilters)
+    for (NSDictionary *filter in _ogDialogFilters)
     {
-        if ([filter[@"id"] intValue] == _ios6SelectedDialogFilterId)
+        if ([filter[@"id"] intValue] == _ogSelectedDialogFilterId)
             return index;
         index++;
     }
     return NSNotFound;
 }
 
-- (void)ios6CompleteDialogFilterSelectionAtIndex:(NSInteger)index
+- (void)og_completeDialogFilterSelectionAtIndex:(NSInteger)index
 {
-    if (index < 0 || index >= (NSInteger)_ios6DialogFilters.count)
+    if (index < 0 || index >= (NSInteger)_ogDialogFilters.count)
         return;
 
-    NSDictionary *filter = _ios6DialogFilters[index];
+    NSDictionary *filter = _ogDialogFilters[index];
     int32_t filterId = [filter[@"id"] intValue];
-    if (filterId != _ios6SelectedDialogFilterId)
+    if (filterId != _ogSelectedDialogFilterId)
         return;
 
-    [self ios6StoreSelectedDialogFilterId];
+    [self og_storeSelectedDialogFilterId];
 
     if (filterId != 0 && [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
     {
         TGDialogListController *controller = self;
         if (cpuCoreCount() > 1)
         {
-            [self ios6RefreshAllDialogItems:false];
+            [self og_refreshAllDialogItems:false];
         }
         else
         {
             int32_t selectedFilterId = filterId;
             OGPlatformDispatchOnMainThreadAfter(0.25, ^
             {
-                if (controller->_ios6SelectedDialogFilterId == selectedFilterId)
-                    [controller ios6RefreshAllDialogItems:false];
+                if (controller->_ogSelectedDialogFilterId == selectedFilterId)
+                    [controller og_refreshAllDialogItems:false];
             });
         }
         OGPlatformDispatchOnMainThreadAfter(0.75, ^
         {
-            if (controller->_ios6SelectedDialogFilterId == 0)
+            if (controller->_ogSelectedDialogFilterId == 0)
                 return;
 
-            [controller ios6HydrateExplicitFolderPeers];
+            [controller og_hydrateExplicitFolderPeers];
             if ([controller->_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
                 [(TGTelegraphDialogListCompanion *)controller->_dialogListCompanion ios6PreloadAllDialogsForFolders];
         });
     }
 }
 
-- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index
+- (void)og_selectDialogFilterAtIndex:(NSInteger)index
 {
-    if (index < 0 || index >= (NSInteger)_ios6DialogFilters.count || _ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+    if (index < 0 || index >= (NSInteger)_ogDialogFilters.count || _ogFolderSwipeActive || _ogFolderSwipeFinishing)
         return;
 
-    NSDictionary *filter = _ios6DialogFilters[index];
+    NSDictionary *filter = _ogDialogFilters[index];
     int32_t filterId = [filter[@"id"] intValue];
-    if (filterId == _ios6SelectedDialogFilterId)
+    if (filterId == _ogSelectedDialogFilterId)
         return;
 
-    _ios6ArchiveExpanded = false;
-    _ios6SelectedDialogFilterId = filterId;
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogArchiveExpanded = false;
+    _ogSelectedDialogFilterId = filterId;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
 
     [self reloadData:false];
     [self updateBarButtonItemsAnimated:false];
     [self resetInitialOffset];
-    [self ios6CompleteDialogFilterSelectionAtIndex:index];
+    [self og_completeDialogFilterSelectionAtIndex:index];
 }
 
-- (CGRect)ios6FolderSwipeTabsRect
+- (CGRect)og_folderSwipeTabsRect
 {
-    if (_ios6FolderTabsView == nil || _ios6FolderTabsView.hidden || _ios6FolderTabsView.bounds.size.height < FLT_EPSILON)
+    if (_ogFolderTabsView == nil || _ogFolderTabsView.hidden || _ogFolderTabsView.bounds.size.height < FLT_EPSILON)
         return CGRectZero;
 
-    CGRect rect = [_ios6FolderTabsView convertRect:_ios6FolderTabsView.bounds toView:self.view];
+    CGRect rect = [_ogFolderTabsView convertRect:_ogFolderTabsView.bounds toView:self.view];
     return CGRectIntersection(rect, self.view.bounds);
 }
 
-- (CGRect)ios6FolderSwipeContentRect
+- (CGRect)og_folderSwipeContentRect
 {
     if (_tableView == nil)
         return CGRectZero;
 
     CGRect tableRect = [_tableView.superview convertRect:_tableView.frame toView:self.view];
-    CGRect tabsRect = [self ios6FolderSwipeTabsRect];
+    CGRect tabsRect = [self og_folderSwipeTabsRect];
     CGFloat top = CGRectGetMinY(tableRect);
     if (!CGRectIsEmpty(tabsRect))
         top = MAX(top, CGRectGetMaxY(tabsRect));
-    if ([TGPresentation brandedIOS6Style] && _ios6PlayerHeight > FLT_EPSILON && _ios6ListHeaderView.superview != nil)
+    if ([TGPresentation brandedIOS6Style] && _ogPlayerHeight > FLT_EPSILON && _ogListHeaderView.superview != nil)
     {
-        CGRect playerRect = CGRectIntersection([_ios6PlayerHostView convertRect:_ios6PlayerHostView.bounds toView:self.view], self.view.bounds);
+        CGRect playerRect = CGRectIntersection([_ogPlayerHostView convertRect:_ogPlayerHostView.bounds toView:self.view], self.view.bounds);
         if (!CGRectIsEmpty(playerRect))
             top = MAX(top, CGRectGetMaxY(playerRect));
     }
@@ -3972,7 +3853,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return CGRectIntersection(rect, self.view.bounds);
 }
 
-- (UIImage *)ios6FolderSwipeSnapshotForRect:(CGRect)rect
+- (UIImage *)og_folderSwipeSnapshotForRect:(CGRect)rect
 {
     if (CGRectIsEmpty(rect) || rect.size.width < 1.0f || rect.size.height < 1.0f)
         return nil;
@@ -3986,26 +3867,26 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return image;
 }
 
-- (UIView *)ios6FolderSwipeIndicatorForButton:(UIButton *)button
+- (UIView *)og_folderSwipeIndicatorForButton:(UIButton *)button
 {
     UIView *indicator = [button viewWithTag:6199];
     return indicator.superview == button ? indicator : nil;
 }
 
-- (CGFloat)ios6FolderTabsOffsetRevealingButton:(UIButton *)button fromOffset:(CGFloat)offset
+- (CGFloat)og_folderTabsOffsetRevealingButton:(UIButton *)button fromOffset:(CGFloat)offset
 {
     CGFloat inset = [TGPresentation brandedIOS6Style] ? 13.0f : 16.0f;
     CGRect rect = CGRectInset(button.frame, -inset, 0.0f);
-    CGFloat visibleWidth = _ios6FolderTabsScrollView.bounds.size.width;
+    CGFloat visibleWidth = _ogFolderTabsScrollView.bounds.size.width;
     if (CGRectGetMinX(rect) < offset)
         offset = CGRectGetMinX(rect);
     else if (CGRectGetMaxX(rect) > offset + visibleWidth)
         offset = CGRectGetMaxX(rect) - visibleWidth;
-    CGFloat maxOffset = MAX(0.0f, _ios6FolderTabsScrollView.contentSize.width - visibleWidth);
+    CGFloat maxOffset = MAX(0.0f, _ogFolderTabsScrollView.contentSize.width - visibleWidth);
     return MAX(0.0f, MIN(maxOffset, offset));
 }
 
-- (CGFloat)ios6FolderSwipeTargetContentOffsetForSourceOffset:(CGFloat)sourceOffset
+- (CGFloat)og_folderSwipeTargetContentOffsetForSourceOffset:(CGFloat)sourceOffset
 {
     CGFloat minOffset = -_tableView.contentInset.top;
     if ([_tableView numberOfSections] < 2)
@@ -4014,26 +3895,26 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return MAX(minOffset, MIN(sourceOffset, pinnedHeaderOffset));
 }
 
-- (void)ios6BeginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation
+- (void)og_beginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation
 {
-    if (_ios6FolderSwipeActive || _ios6FolderSwipeFinishing || targetIndex < 0 || targetIndex >= (NSInteger)_ios6DialogFilters.count)
+    if (_ogFolderSwipeActive || _ogFolderSwipeFinishing || targetIndex < 0 || targetIndex >= (NSInteger)_ogDialogFilters.count)
         return;
 
-    NSInteger sourceIndex = [self ios6SelectedDialogFilterIndex];
+    NSInteger sourceIndex = [self og_selectedDialogFilterIndex];
     if (sourceIndex == NSNotFound || sourceIndex == targetIndex)
         return;
 
-    int32_t sourceFilterId = [_ios6DialogFilters[sourceIndex][@"id"] intValue];
-    int32_t targetFilterId = [_ios6DialogFilters[targetIndex][@"id"] intValue];
+    int32_t sourceFilterId = [_ogDialogFilters[sourceIndex][@"id"] intValue];
+    int32_t targetFilterId = [_ogDialogFilters[targetIndex][@"id"] intValue];
     if (sourceFilterId == targetFilterId)
         return;
 
-    UIButton *sourceButton = (UIButton *)[_ios6FolderTabsScrollView viewWithTag:6100 + sourceIndex];
-    UIButton *targetButton = (UIButton *)[_ios6FolderTabsScrollView viewWithTag:6100 + targetIndex];
+    UIButton *sourceButton = (UIButton *)[_ogFolderTabsScrollView viewWithTag:6100 + sourceIndex];
+    UIButton *targetButton = (UIButton *)[_ogFolderTabsScrollView viewWithTag:6100 + targetIndex];
     if (![sourceButton isKindOfClass:[UIButton class]] || ![targetButton isKindOfClass:[UIButton class]])
         return;
 
-    CGRect contentRect = [self ios6FolderSwipeContentRect];
+    CGRect contentRect = [self og_folderSwipeContentRect];
     if (CGRectIsEmpty(contentRect))
         return;
 
@@ -4043,143 +3924,143 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [(TGDialogListCell *)cell setEditingConrolsExpanded:false animated:false];
     }
 
-    UIImage *sourceImage = [self ios6FolderSwipeSnapshotForRect:contentRect];
+    UIImage *sourceImage = [self og_folderSwipeSnapshotForRect:contentRect];
     if (sourceImage == nil)
         return;
 
-    _ios6FolderSwipeActive = true;
-    _ios6FolderSwipeSourceIndex = sourceIndex;
-    _ios6FolderSwipeTargetIndex = targetIndex;
-    _ios6FolderSwipeSourceFilterId = sourceFilterId;
-    _ios6FolderSwipeTargetFilterId = targetFilterId;
-    _ios6FolderSwipeSourceContentOffset = _tableView.contentOffset;
-    _ios6FolderSwipeContentFrame = contentRect;
-    _ios6FolderSwipeSourceTabsOffset = _ios6FolderTabsScrollView.contentOffset.x;
-    _ios6FolderSwipeTargetTabsOffset = [self ios6FolderTabsOffsetRevealingButton:targetButton fromOffset:_ios6FolderSwipeSourceTabsOffset];
+    _ogFolderSwipeActive = true;
+    _ogFolderSwipeSourceIndex = sourceIndex;
+    _ogFolderSwipeTargetIndex = targetIndex;
+    _ogFolderSwipeSourceFilterId = sourceFilterId;
+    _ogFolderSwipeTargetFilterId = targetFilterId;
+    _ogFolderSwipeSourceContentOffset = _tableView.contentOffset;
+    _ogFolderSwipeContentFrame = contentRect;
+    _ogFolderSwipeSourceTabsOffset = _ogFolderTabsScrollView.contentOffset.x;
+    _ogFolderSwipeTargetTabsOffset = [self og_folderTabsOffsetRevealingButton:targetButton fromOffset:_ogFolderSwipeSourceTabsOffset];
 
     _tableView.scrollEnabled = false;
-    _ios6ChatActionsLongPressRecognizer.enabled = false;
-    _ios6ArchiveExpanded = false;
+    _ogChatActionsLongPressRecognizer.enabled = false;
+    _ogArchiveExpanded = false;
 
-    _ios6SelectedDialogFilterId = targetFilterId;
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogSelectedDialogFilterId = targetFilterId;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
     [self reloadData:false];
     [_tableView layoutIfNeeded];
-    [_tableView setContentOffset:CGPointMake(_ios6FolderSwipeSourceContentOffset.x, [self ios6FolderSwipeTargetContentOffsetForSourceOffset:_ios6FolderSwipeSourceContentOffset.y]) animated:false];
+    [_tableView setContentOffset:CGPointMake(_ogFolderSwipeSourceContentOffset.x, [self og_folderSwipeTargetContentOffsetForSourceOffset:_ogFolderSwipeSourceContentOffset.y]) animated:false];
     [_tableView layoutIfNeeded];
-    [self ios6UpdateFolderEmptyLabel];
-    UIImage *targetImage = [self ios6FolderSwipeSnapshotForRect:contentRect];
+    [self og_updateFolderEmptyLabel];
+    UIImage *targetImage = [self og_folderSwipeSnapshotForRect:contentRect];
 
-    _ios6FolderSwipeContainerView = [[UIView alloc] initWithFrame:contentRect];
-    _ios6FolderSwipeContainerView.clipsToBounds = true;
-    _ios6FolderSwipeContainerView.userInteractionEnabled = false;
-    _ios6FolderSwipeContainerView.backgroundColor = _tableView.backgroundColor;
+    _ogFolderSwipeContainerView = [[UIView alloc] initWithFrame:contentRect];
+    _ogFolderSwipeContainerView.clipsToBounds = true;
+    _ogFolderSwipeContainerView.userInteractionEnabled = false;
+    _ogFolderSwipeContainerView.backgroundColor = _tableView.backgroundColor;
 
-    _ios6FolderSwipeSourceView = [[UIImageView alloc] initWithImage:sourceImage];
-    _ios6FolderSwipeSourceView.frame = _ios6FolderSwipeContainerView.bounds;
-    [_ios6FolderSwipeContainerView addSubview:_ios6FolderSwipeSourceView];
+    _ogFolderSwipeSourceView = [[UIImageView alloc] initWithImage:sourceImage];
+    _ogFolderSwipeSourceView.frame = _ogFolderSwipeContainerView.bounds;
+    [_ogFolderSwipeContainerView addSubview:_ogFolderSwipeSourceView];
 
-    _ios6FolderSwipeTargetView = [[UIImageView alloc] initWithImage:targetImage];
-    _ios6FolderSwipeTargetView.frame = _ios6FolderSwipeContainerView.bounds;
-    [_ios6FolderSwipeContainerView addSubview:_ios6FolderSwipeTargetView];
+    _ogFolderSwipeTargetView = [[UIImageView alloc] initWithImage:targetImage];
+    _ogFolderSwipeTargetView.frame = _ogFolderSwipeContainerView.bounds;
+    [_ogFolderSwipeContainerView addSubview:_ogFolderSwipeTargetView];
 
-    [self.view addSubview:_ios6FolderSwipeContainerView];
+    [self.view addSubview:_ogFolderSwipeContainerView];
 
-    UIView *sourceIndicator = [self ios6FolderSwipeIndicatorForButton:sourceButton];
+    UIView *sourceIndicator = [self og_folderSwipeIndicatorForButton:sourceButton];
     if (sourceIndicator != nil)
     {
-        _ios6FolderSwipeSourceIndicatorFrame = [sourceButton convertRect:sourceIndicator.frame toView:_ios6FolderTabsScrollView];
-        _ios6FolderSwipeTargetIndicatorFrame = [targetButton convertRect:CGRectMake(sourceIndicator.frame.origin.x, sourceIndicator.frame.origin.y, MAX(0.0f, targetButton.bounds.size.width - sourceIndicator.frame.origin.x * 2.0f), sourceIndicator.frame.size.height) toView:_ios6FolderTabsScrollView];
-        _ios6FolderSwipeIndicatorView = [[UIView alloc] initWithFrame:_ios6FolderSwipeSourceIndicatorFrame];
-        _ios6FolderSwipeIndicatorView.backgroundColor = sourceIndicator.backgroundColor;
-        _ios6FolderSwipeIndicatorView.userInteractionEnabled = false;
+        _ogFolderSwipeSourceIndicatorFrame = [sourceButton convertRect:sourceIndicator.frame toView:_ogFolderTabsScrollView];
+        _ogFolderSwipeTargetIndicatorFrame = [targetButton convertRect:CGRectMake(sourceIndicator.frame.origin.x, sourceIndicator.frame.origin.y, MAX(0.0f, targetButton.bounds.size.width - sourceIndicator.frame.origin.x * 2.0f), sourceIndicator.frame.size.height) toView:_ogFolderTabsScrollView];
+        _ogFolderSwipeIndicatorView = [[UIView alloc] initWithFrame:_ogFolderSwipeSourceIndicatorFrame];
+        _ogFolderSwipeIndicatorView.backgroundColor = sourceIndicator.backgroundColor;
+        _ogFolderSwipeIndicatorView.userInteractionEnabled = false;
         sourceIndicator.hidden = true;
-        [_ios6FolderTabsScrollView addSubview:_ios6FolderSwipeIndicatorView];
+        [_ogFolderTabsScrollView addSubview:_ogFolderSwipeIndicatorView];
     }
 
     CGFloat direction = targetIndex > sourceIndex ? 1.0f : -1.0f;
     if (TGIsRTL())
         direction = -direction;
-    _ios6FolderSwipeTargetOffset = direction * contentRect.size.width;
+    _ogFolderSwipeTargetOffset = direction * contentRect.size.width;
 
-    [self ios6UpdateFolderSwipeWithTranslation:translation];
+    [self og_updateFolderSwipeWithTranslation:translation];
 }
 
-- (void)ios6ApplyFolderSwipeTranslation:(CGFloat)x
+- (void)og_applyFolderSwipeTranslation:(CGFloat)x
 {
-    CGFloat width = _ios6FolderSwipeContentFrame.size.width;
-    CGRect bounds = _ios6FolderSwipeContainerView.bounds;
-    _ios6FolderSwipeSourceView.frame = CGRectOffset(bounds, x, 0.0f);
-    _ios6FolderSwipeTargetView.frame = CGRectOffset(bounds, _ios6FolderSwipeTargetOffset + x, 0.0f);
+    CGFloat width = _ogFolderSwipeContentFrame.size.width;
+    CGRect bounds = _ogFolderSwipeContainerView.bounds;
+    _ogFolderSwipeSourceView.frame = CGRectOffset(bounds, x, 0.0f);
+    _ogFolderSwipeTargetView.frame = CGRectOffset(bounds, _ogFolderSwipeTargetOffset + x, 0.0f);
 
-    CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+    CGFloat expectedTranslation = -_ogFolderSwipeTargetOffset;
     CGFloat progress = width < 1.0f ? 0.0f : MAX(0.0f, MIN(1.0f, x / expectedTranslation));
-    CGRect fromFrame = _ios6FolderSwipeSourceIndicatorFrame;
-    CGRect toFrame = _ios6FolderSwipeTargetIndicatorFrame;
-    _ios6FolderSwipeIndicatorView.frame = CGRectMake(fromFrame.origin.x + (toFrame.origin.x - fromFrame.origin.x) * progress,
+    CGRect fromFrame = _ogFolderSwipeSourceIndicatorFrame;
+    CGRect toFrame = _ogFolderSwipeTargetIndicatorFrame;
+    _ogFolderSwipeIndicatorView.frame = CGRectMake(fromFrame.origin.x + (toFrame.origin.x - fromFrame.origin.x) * progress,
                                                      fromFrame.origin.y + (toFrame.origin.y - fromFrame.origin.y) * progress,
                                                      fromFrame.size.width + (toFrame.size.width - fromFrame.size.width) * progress,
                                                      fromFrame.size.height + (toFrame.size.height - fromFrame.size.height) * progress);
-    _ios6FolderTabsScrollView.contentOffset = CGPointMake(_ios6FolderSwipeSourceTabsOffset + (_ios6FolderSwipeTargetTabsOffset - _ios6FolderSwipeSourceTabsOffset) * progress, _ios6FolderTabsScrollView.contentOffset.y);
+    _ogFolderTabsScrollView.contentOffset = CGPointMake(_ogFolderSwipeSourceTabsOffset + (_ogFolderSwipeTargetTabsOffset - _ogFolderSwipeSourceTabsOffset) * progress, _ogFolderTabsScrollView.contentOffset.y);
 }
 
-- (void)ios6UpdateFolderSwipeWithTranslation:(CGPoint)translation
+- (void)og_updateFolderSwipeWithTranslation:(CGPoint)translation
 {
-    if (!_ios6FolderSwipeActive || _ios6FolderSwipeFinishing || _ios6FolderSwipeContainerView == nil)
+    if (!_ogFolderSwipeActive || _ogFolderSwipeFinishing || _ogFolderSwipeContainerView == nil)
         return;
 
-    CGFloat width = _ios6FolderSwipeContentFrame.size.width;
+    CGFloat width = _ogFolderSwipeContentFrame.size.width;
     if (width < 1.0f)
         return;
 
-    CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+    CGFloat expectedTranslation = -_ogFolderSwipeTargetOffset;
     CGFloat x = translation.x;
     if (x * expectedTranslation < 0.0f)
         x *= 0.22f;
     x = MAX(-width, MIN(width, x));
 
-    [self ios6ApplyFolderSwipeTranslation:x];
+    [self og_applyFolderSwipeTranslation:x];
 }
 
-- (void)ios6RestoreFolderSwipeSource
+- (void)og_restoreFolderSwipeSource
 {
-    _ios6SelectedDialogFilterId = _ios6FolderSwipeSourceFilterId;
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogSelectedDialogFilterId = _ogFolderSwipeSourceFilterId;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
     [self reloadData:false];
     [_tableView layoutIfNeeded];
-    [_tableView setContentOffset:_ios6FolderSwipeSourceContentOffset animated:false];
+    [_tableView setContentOffset:_ogFolderSwipeSourceContentOffset animated:false];
 }
 
-- (void)ios6TeardownFolderSwipe
+- (void)og_teardownFolderSwipe
 {
-    [_ios6FolderSwipeContainerView removeFromSuperview];
-    _ios6FolderSwipeContainerView = nil;
-    _ios6FolderSwipeSourceView = nil;
-    _ios6FolderSwipeTargetView = nil;
-    [_ios6FolderSwipeIndicatorView removeFromSuperview];
-    _ios6FolderSwipeIndicatorView = nil;
+    [_ogFolderSwipeContainerView removeFromSuperview];
+    _ogFolderSwipeContainerView = nil;
+    _ogFolderSwipeSourceView = nil;
+    _ogFolderSwipeTargetView = nil;
+    [_ogFolderSwipeIndicatorView removeFromSuperview];
+    _ogFolderSwipeIndicatorView = nil;
 
-    _ios6FolderSwipeActive = false;
-    _ios6FolderSwipeFinishing = false;
+    _ogFolderSwipeActive = false;
+    _ogFolderSwipeFinishing = false;
     _tableView.scrollEnabled = true;
-    [self ios6UpdateNewChatListGesturesState];
-    _ios6FolderTabsStateKey = nil;
-    [self ios6UpdateFolderTabs];
-    [self ios6UpdateFolderEmptyLabel];
+    [self og_updateNewChatListGesturesState];
+    _ogFolderTabsStateKey = nil;
+    [self og_updateFolderTabs];
+    [self og_updateFolderEmptyLabel];
 }
 
-- (void)ios6FinishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity
+- (void)og_finishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity
 {
-    if (!_ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+    if (!_ogFolderSwipeActive || _ogFolderSwipeFinishing)
         return;
 
-    _ios6FolderSwipeFinishing = true;
+    _ogFolderSwipeFinishing = true;
 
-    CGFloat width = _ios6FolderSwipeContentFrame.size.width;
-    CGFloat currentTranslation = _ios6FolderSwipeSourceView.frame.origin.x;
-    CGFloat finalTranslation = commit ? -_ios6FolderSwipeTargetOffset : 0.0f;
+    CGFloat width = _ogFolderSwipeContentFrame.size.width;
+    CGFloat currentTranslation = _ogFolderSwipeSourceView.frame.origin.x;
+    CGFloat finalTranslation = commit ? -_ogFolderSwipeTargetOffset : 0.0f;
     CGFloat distance = ABS(finalTranslation - currentTranslation);
     CGFloat velocityMagnitude = ABS(velocity.x);
     NSTimeInterval duration = width < 1.0f ? 0.0 : MAX(0.08, MIN(0.20, 0.08 + 0.12 * distance / width));
@@ -4189,49 +4070,49 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     TGDialogListController *controller = self;
     [UIView animateWithDuration:duration delay:0.0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^
     {
-        [controller ios6ApplyFolderSwipeTranslation:finalTranslation];
+        [controller og_applyFolderSwipeTranslation:finalTranslation];
     } completion:^(__unused BOOL finished)
     {
-        if (!controller->_ios6FolderSwipeFinishing)
+        if (!controller->_ogFolderSwipeFinishing)
             return;
 
-        NSInteger targetIndex = controller->_ios6FolderSwipeTargetIndex;
-        bool targetStillValid = targetIndex >= 0 && targetIndex < (NSInteger)controller->_ios6DialogFilters.count && [controller->_ios6DialogFilters[targetIndex][@"id"] intValue] == controller->_ios6FolderSwipeTargetFilterId && controller->_ios6SelectedDialogFilterId == controller->_ios6FolderSwipeTargetFilterId;
+        NSInteger targetIndex = controller->_ogFolderSwipeTargetIndex;
+        bool targetStillValid = targetIndex >= 0 && targetIndex < (NSInteger)controller->_ogDialogFilters.count && [controller->_ogDialogFilters[targetIndex][@"id"] intValue] == controller->_ogFolderSwipeTargetFilterId && controller->_ogSelectedDialogFilterId == controller->_ogFolderSwipeTargetFilterId;
 
         if (commit && targetStillValid)
         {
-            [controller ios6TeardownFolderSwipe];
+            [controller og_teardownFolderSwipe];
             [controller updateBarButtonItemsAnimated:false];
-            [controller ios6CompleteDialogFilterSelectionAtIndex:targetIndex];
+            [controller og_completeDialogFilterSelectionAtIndex:targetIndex];
         }
         else
         {
-            [controller ios6RestoreFolderSwipeSource];
-            [controller ios6TeardownFolderSwipe];
+            [controller og_restoreFolderSwipeSource];
+            [controller og_teardownFolderSwipe];
         }
     }];
 }
 
-- (void)ios6CancelFolderSwipeImmediately
+- (void)og_cancelFolderSwipeImmediately
 {
-    if (!_ios6FolderSwipeActive && !_ios6FolderSwipeFinishing)
+    if (!_ogFolderSwipeActive && !_ogFolderSwipeFinishing)
         return;
 
-    [_ios6FolderSwipeSourceView.layer removeAllAnimations];
-    [_ios6FolderSwipeTargetView.layer removeAllAnimations];
-    [_ios6FolderSwipeIndicatorView.layer removeAllAnimations];
-    [_ios6FolderTabsScrollView.layer removeAllAnimations];
+    [_ogFolderSwipeSourceView.layer removeAllAnimations];
+    [_ogFolderSwipeTargetView.layer removeAllAnimations];
+    [_ogFolderSwipeIndicatorView.layer removeAllAnimations];
+    [_ogFolderTabsScrollView.layer removeAllAnimations];
 
-    [self ios6RestoreFolderSwipeSource];
-    [self ios6TeardownFolderSwipe];
+    [self og_restoreFolderSwipeSource];
+    [self og_teardownFolderSwipe];
 }
 
-- (void)ios6FolderPanGesture:(UIPanGestureRecognizer *)recognizer
+- (void)og_folderPanGesture:(UIPanGestureRecognizer *)recognizer
 {
-    if (![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1)
+    if (![self og_newChatListGesturesEnabled] || _isDisplayingSearch || _ogArchiveExpanded || _ogDialogFilters.count <= 1)
     {
-        if (_ios6FolderSwipeActive)
-            [self ios6FinishFolderSwipeCommit:false velocity:CGPointZero];
+        if (_ogFolderSwipeActive)
+            [self og_finishFolderSwipeCommit:false velocity:CGPointZero];
         return;
     }
 
@@ -4239,44 +4120,44 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     {
         CGPoint velocity = [recognizer velocityInView:self.view];
         CGFloat logicalVelocityX = TGIsRTL() ? -velocity.x : velocity.x;
-        NSInteger currentIndex = [self ios6SelectedDialogFilterIndex];
+        NSInteger currentIndex = [self og_selectedDialogFilterIndex];
         if (currentIndex == NSNotFound)
             currentIndex = 0;
         NSInteger targetIndex = currentIndex + (logicalVelocityX < 0.0f ? 1 : -1);
-        [self ios6BeginFolderSwipeToIndex:targetIndex translation:[recognizer translationInView:self.view]];
+        [self og_beginFolderSwipeToIndex:targetIndex translation:[recognizer translationInView:self.view]];
         return;
     }
 
     if (recognizer.state == UIGestureRecognizerStateChanged)
     {
-        [self ios6UpdateFolderSwipeWithTranslation:[recognizer translationInView:self.view]];
+        [self og_updateFolderSwipeWithTranslation:[recognizer translationInView:self.view]];
         return;
     }
 
     if (recognizer.state == UIGestureRecognizerStateEnded)
     {
-        if (!_ios6FolderSwipeActive)
+        if (!_ogFolderSwipeActive)
             return;
 
         CGPoint translation = [recognizer translationInView:self.view];
         CGPoint velocity = [recognizer velocityInView:self.view];
-        CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+        CGFloat expectedTranslation = -_ogFolderSwipeTargetOffset;
         bool movingTowardTarget = translation.x * expectedTranslation > 0.0f;
         bool velocityTowardTarget = velocity.x * expectedTranslation > 0.0f;
-        CGFloat width = MAX(1.0f, _ios6FolderSwipeContentFrame.size.width);
+        CGFloat width = MAX(1.0f, _ogFolderSwipeContentFrame.size.width);
         CGFloat progress = ABS(translation.x) / width;
         CGFloat projectedProgress = ABS(translation.x + velocity.x * 0.16f) / width;
         bool commit = movingTowardTarget && (progress >= 0.30f || projectedProgress >= 0.48f || (velocityTowardTarget && ABS(velocity.x) >= 520.0f));
 
-        [self ios6FinishFolderSwipeCommit:commit velocity:velocity];
+        [self og_finishFolderSwipeCommit:commit velocity:velocity];
         return;
     }
 
     if (recognizer.state == UIGestureRecognizerStateCancelled || recognizer.state == UIGestureRecognizerStateFailed)
-        [self ios6FinishFolderSwipeCommit:false velocity:CGPointZero];
+        [self og_finishFolderSwipeCommit:false velocity:CGPointZero];
 }
 
-- (void)ios6PresentActionsForConversation:(TGConversation *)conversation fromRect:(CGRect)sourceRect
+- (void)og_presentActionsForConversation:(TGConversation *)conversation fromRect:(CGRect)sourceRect
 {
     if (![conversation isKindOfClass:[TGConversation class]] || conversation.conversationId == 0)
         return;
@@ -4304,33 +4185,21 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (!isEncrypted && !isSavedMessages)
         [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(muted ? @"Conversation.Unmute" : @"Conversation.Mute") action:@"mute" type:TGActionSheetActionTypeGeneric]];
 
+    int32_t removeFilterId = 0;
+    if ([self canAddPeerIdToDialogFilter:peerId] && !isEncrypted && ![conversation isEncrypted])
+    {
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.AddToFolder") action:@"addToFolder" type:TGActionSheetActionTypeGeneric]];
+        NSDictionary *selectedFilter = _ogSelectedDialogFilterId == 0 ? nil : [self og_selectedDialogFilter];
+        if (selectedFilter != nil && ![selectedFilter[@"default"] boolValue] && [self og_conversation:conversation matchesDialogFilter:selectedFilter])
+        {
+            removeFilterId = [selectedFilter[@"id"] intValue];
+            [actions addObject:[[TGActionSheetAction alloc] initWithTitle:[NSString stringWithFormat:TGLocalized(@"DialogFilters.RemoveFromFolder"), selectedFilter[@"title"]] action:@"removeFromFolder" type:TGActionSheetActionTypeGeneric]];
+        }
+    }
+
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(archived ? @"DialogList.Unarchive" : @"DialogList.Archive") action:@"archive" type:TGActionSheetActionTypeGeneric]];
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Delete") action:@"delete" type:TGActionSheetActionTypeDestructive]];
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]];
-
-    if (iosMajorVersion() < 5)
-    {
-        TGActionSheet *sheet = [[TGActionSheet alloc] initWithTitle:nil actions:actions actionBlock:^(TGDialogListController *controller, NSString *action)
-        {
-            if (controller == nil)
-                return;
-
-            if ([action isEqualToString:@"read"] && controller.toggleReadConversation != nil)
-                controller.toggleReadConversation(peerId, !read);
-            else if ([action isEqualToString:@"pin"] && controller.togglePinConversation != nil)
-                controller.togglePinConversation(peerId, !pinned);
-            else if ([action isEqualToString:@"mute"] && controller.toggleMuteConversation != nil)
-                controller.toggleMuteConversation(peerId, !muted);
-            else if ([action isEqualToString:@"archive"] && controller.toggleArchiveConversation != nil)
-                controller.toggleArchiveConversation(peerId, !archived);
-            else if ([action isEqualToString:@"delete"] && controller.deleteConversation != nil)
-                controller.deleteConversation(peerId);
-        } target:self];
-
-        UIView *view = self.navigationController.view != nil ? self.navigationController.view : self.view;
-        [sheet showInView:view];
-        return;
-    }
 
     __weak TGDialogListController *weakSelf = self;
     TGCustomActionSheet *sheet = [[TGCustomActionSheet alloc] initWithTitle:nil actions:actions actionBlock:^(__unused id target, NSString *action)
@@ -4345,10 +4214,14 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             strongSelf.togglePinConversation(peerId, !pinned);
         else if ([action isEqualToString:@"mute"] && strongSelf.toggleMuteConversation != nil)
             strongSelf.toggleMuteConversation(peerId, !muted);
-        else if ([action isEqualToString:@"archive"] && strongSelf.toggleArchiveConversation != nil)
-            strongSelf.toggleArchiveConversation(peerId, !archived);
+        else if ([action isEqualToString:@"archive"] && strongSelf.archiveToggleHandler != nil)
+            strongSelf.archiveToggleHandler(peerId, !archived);
         else if ([action isEqualToString:@"delete"] && strongSelf.deleteConversation != nil)
             strongSelf.deleteConversation(peerId);
+        else if ([action isEqualToString:@"addToFolder"])
+            [strongSelf og_presentAddToFolderForConversation:conversation fromRect:sourceRect];
+        else if ([action isEqualToString:@"removeFromFolder"])
+            [strongSelf og_removeConversation:conversation fromDialogFilterId:removeFilterId];
     } target:self];
 
     if (!TGIsPad())
@@ -4357,9 +4230,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         [sheet showFromRect:sourceRect inView:self.view animated:true];
 }
 
-- (void)ios6ChatActionsLongPress:(UILongPressGestureRecognizer *)recognizer
+- (void)og_chatActionsLongPress:(UILongPressGestureRecognizer *)recognizer
 {
-    if (recognizer.state != UIGestureRecognizerStateBegan || ![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch)
+    if (recognizer.state != UIGestureRecognizerStateBegan || ![self og_newChatListGesturesEnabled] || _isDisplayingSearch)
         return;
 
     CGPoint point = [recognizer locationInView:_tableView];
@@ -4367,20 +4240,20 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (indexPath == nil || indexPath.section != 1)
         return;
 
-    id item = [self ios6DialogListItemAtIndexPath:indexPath];
-    if (![item isKindOfClass:[TGConversation class]] || [self ios6IsArchiveHeaderItem:item])
+    id item = [self og_dialogListItemAtIndexPath:indexPath];
+    if (![item isKindOfClass:[TGConversation class]] || [self og_isArchiveHeaderItem:item])
         return;
 
     UITableViewCell *cell = [_tableView cellForRowAtIndexPath:indexPath];
     CGRect sourceRect = cell == nil ? CGRectMake(point.x, point.y, 1.0f, 1.0f) : [_tableView convertRect:cell.frame toView:self.view];
-    [self ios6PresentActionsForConversation:(TGConversation *)item fromRect:sourceRect];
+    [self og_presentActionsForConversation:(TGConversation *)item fromRect:sourceRect];
 }
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
 {
-    if (gestureRecognizer == _ios6FolderPanGestureRecognizer)
+    if (gestureRecognizer == _ogFolderPanGestureRecognizer)
     {
-        if (![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1 || _ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+        if (![self og_newChatListGesturesEnabled] || _isDisplayingSearch || _ogArchiveExpanded || _ogDialogFilters.count <= 1 || _ogFolderSwipeActive || _ogFolderSwipeFinishing)
             return NO;
 
         CGPoint velocity = [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:self.view];
@@ -4399,11 +4272,11 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
 
         CGFloat logicalVelocityX = TGIsRTL() ? -velocity.x : velocity.x;
-        NSInteger currentIndex = [self ios6SelectedDialogFilterIndex];
+        NSInteger currentIndex = [self og_selectedDialogFilterIndex];
         if (currentIndex == NSNotFound)
             currentIndex = 0;
         NSInteger targetIndex = currentIndex + (logicalVelocityX < 0.0f ? 1 : -1);
-        if (targetIndex < 0 || targetIndex >= (NSInteger)_ios6DialogFilters.count)
+        if (targetIndex < 0 || targetIndex >= (NSInteger)_ogDialogFilters.count)
             return NO;
     }
 
@@ -4412,9 +4285,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
 {
-    if (gestureRecognizer == _ios6FolderPanGestureRecognizer)
+    if (gestureRecognizer == _ogFolderPanGestureRecognizer)
     {
-        if (![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1)
+        if (![self og_newChatListGesturesEnabled] || _isDisplayingSearch || _ogArchiveExpanded || _ogDialogFilters.count <= 1)
             return NO;
 
         CGPoint point = [touch locationInView:self.view];
@@ -4427,13 +4300,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
 {
-    if (gestureRecognizer == _ios6FolderPanGestureRecognizer || otherGestureRecognizer == _ios6FolderPanGestureRecognizer)
+    if (gestureRecognizer == _ogFolderPanGestureRecognizer || otherGestureRecognizer == _ogFolderPanGestureRecognizer)
         return NO;
 
     return NO;
 }
 
-- (bool)ios6FoldersAllowed
+- (bool)og_foldersAllowed
 {
     return !_dialogListCompanion.privacyMode &&
         !_dialogListCompanion.showPrivateOnly &&
@@ -4442,14 +4315,14 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         !_dialogListCompanion.botStartMode;
 }
 
-- (CGFloat)ios6FolderTabsHeight
+- (CGFloat)og_folderTabsHeight
 {
-    if (![self ios6FoldersAllowed] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1)
+    if (![self og_foldersAllowed] || _isDisplayingSearch || _ogArchiveExpanded || _ogDialogFilters.count <= 1)
         return 0.0f;
     return [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6DialogListAppearance].folderTabsHeight : 38.0f;
 }
 
-- (int64_t)ios6PeerIdForInputPeer:(id)peer
+- (int64_t)og_peerIdForInputPeer:(id)peer
 {
     if ([peer isKindOfClass:[TLInputPeer$inputPeerSelf class]])
         return TGTelegraphInstance.clientUserId;
@@ -4462,61 +4335,61 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return 0;
 }
 
-- (NSSet *)ios6PeerIdSetForInputPeers:(NSArray *)peers
+- (NSSet *)og_peerIdSetForInputPeers:(NSArray *)peers
 {
     NSMutableSet *result = [[NSMutableSet alloc] init];
     for (id peer in peers)
     {
-        int64_t peerId = [self ios6PeerIdForInputPeer:peer];
+        int64_t peerId = [self og_peerIdForInputPeer:peer];
         if (peerId != 0)
             [result addObject:@(peerId)];
     }
     return result;
 }
 
-- (NSArray *)ios6PeerIdArrayForInputPeers:(NSArray *)peers
+- (NSArray *)og_peerIdArrayForInputPeers:(NSArray *)peers
 {
     NSMutableArray *result = [[NSMutableArray alloc] init];
     for (id peer in peers)
     {
-        int64_t peerId = [self ios6PeerIdForInputPeer:peer];
+        int64_t peerId = [self og_peerIdForInputPeer:peer];
         if (peerId != 0)
             [result addObject:@(peerId)];
     }
     return result;
 }
 
-- (void)ios6ContinueDialogListDataHydration
+- (void)og_continueDialogListDataHydration
 {
     TG_DIALOG_LIST_COST(TGDialogListCostHydration);
-    if (_ios6DialogSnapshotHydrationInFlight || _ios6DialogSnapshotHydrationPending.count == 0)
+    if (_ogDialogSnapshotHydrationInFlight || _ogDialogSnapshotHydrationPending.count == 0)
         return;
     if ([self dialogListShouldCoalesceUIUpdates])
         return;
     if (![_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
     {
-        [_ios6DialogSnapshotHydrationPending removeAllObjects];
+        [_ogDialogSnapshotHydrationPending removeAllObjects];
         return;
     }
 
     NSUInteger batchLimit = MIN((NSUInteger)24, TGDialogListHydrationBatchLimit());
-    NSArray *keys = _ios6DialogSnapshotHydrationPending.allKeys;
+    NSArray *keys = _ogDialogSnapshotHydrationPending.allKeys;
     NSUInteger count = MIN(batchLimit, keys.count);
     NSMutableArray *batch = [[NSMutableArray alloc] initWithCapacity:count];
     for (NSUInteger i = 0; i < count; i++)
     {
         NSNumber *key = keys[i];
-        NSDictionary *entry = _ios6DialogSnapshotHydrationPending[key];
+        NSDictionary *entry = _ogDialogSnapshotHydrationPending[key];
         if (entry != nil)
             [batch addObject:entry];
-        [_ios6DialogSnapshotHydrationPending removeObjectForKey:key];
+        [_ogDialogSnapshotHydrationPending removeObjectForKey:key];
     }
     if (batch.count == 0)
         return;
 
-    _ios6DialogSnapshotHydrationInFlight = true;
+    _ogDialogSnapshotHydrationInFlight = true;
     TGTelegraphDialogListCompanion *dialogListCompanion = (TGTelegraphDialogListCompanion *)_dialogListCompanion;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     int64_t clientUserId = TGTelegraphInstance.clientUserId;
     OGRuntimeDispatch(OGRuntimePriorityUtility, ^
     {
@@ -4536,7 +4409,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                controller->_ios6DialogSnapshotHydrationInFlight = false;
+                controller->_ogDialogSnapshotHydrationInFlight = false;
                 if (!controller->_dialogListSelfUserSnapshotResolved && selfUser != nil)
                 {
                     controller->_dialogListSelfUserSnapshot = selfUser;
@@ -4544,10 +4417,10 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 }
 
                 bool updated = false;
-                NSMutableSet *currentSources = [[NSMutableSet alloc] initWithCapacity:controller->_listModel.count + controller->_ios6AllDialogItems.count];
+                NSMutableSet *currentSources = [[NSMutableSet alloc] initWithCapacity:controller->_listModel.count + controller->_ogAllDialogItems.count];
                 for (id item in controller->_listModel)
                     [currentSources addObject:[NSValue valueWithNonretainedObject:item]];
-                for (id item in controller->_ios6AllDialogItems)
+                for (id item in controller->_ogAllDialogItems)
                     [currentSources addObject:[NSValue valueWithNonretainedObject:item]];
                 for (NSDictionary *entry in hydratedEntries)
                 {
@@ -4570,31 +4443,31 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                         TGConversation *source = entry[@"source"];
                         [controller dialogListPrefetchAvatarUrl:source.dialogListData[@"avatarUrl"] filter:avatarFilter];
                     }
-                    controller->_ios6VisibleListCache = nil;
-                    controller->_ios6VisibleListCacheFilterId = INT32_MIN;
+                    controller->_ogVisibleListCache = nil;
+                    controller->_ogVisibleListCacheFilterId = INT32_MIN;
                     if ([controller dialogListShouldCoalesceUIUpdates])
                         controller->_dialogListVisibleRefreshPending = true;
                     else
                         [controller dialogListRefreshVisibleCells];
-                    [controller ios6UpdateFolderTabs];
+                    [controller og_updateFolderTabs];
                 }
 
-                [controller ios6ContinueDialogListDataHydration];
+                [controller og_continueDialogListDataHydration];
             }];
         });
     });
 }
 
-- (void)ios6EnsureDialogListDataForConversation:(TGConversation *)conversation
+- (void)og_ensureDialogListDataForConversation:(TGConversation *)conversation
 {
     if (conversation == nil || conversation.dialogListData.count != 0)
         return;
 
     NSNumber *peerKey = @(conversation.conversationId);
-    NSDictionary *pendingEntry = _ios6DialogSnapshotHydrationPending[peerKey];
+    NSDictionary *pendingEntry = _ogDialogSnapshotHydrationPending[peerKey];
     if (pendingEntry == nil || pendingEntry[@"source"] != conversation)
-        _ios6DialogSnapshotHydrationPending[peerKey] = @{@"source": conversation, @"snapshot": [conversation copy]};
-    [self ios6ContinueDialogListDataHydration];
+        _ogDialogSnapshotHydrationPending[peerKey] = @{@"source": conversation, @"snapshot": [conversation copy]};
+    [self og_continueDialogListDataHydration];
 }
 
 - (int)dialogListSnapshotUnreadCountForPeerId:(int64_t)peerId
@@ -4604,7 +4477,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if ([item isKindOfClass:[TGConversation class]] && ((TGConversation *)item).conversationId == peerId)
             return ((TGConversation *)item).unreadCount;
     }
-    for (id item in _ios6AllDialogItems)
+    for (id item in _ogAllDialogItems)
     {
         if ([item isKindOfClass:[TGConversation class]] && ((TGConversation *)item).conversationId == peerId)
             return ((TGConversation *)item).unreadCount;
@@ -4612,7 +4485,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return 0;
 }
 
-- (void)ios6PreloadRuntimeStateForConversations:(NSArray *)items
+- (void)og_preloadRuntimeStateForConversations:(NSArray *)items
 {
     if (items.count == 0)
         return;
@@ -4667,52 +4540,52 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [TGDatabaseInstance() preloadConversationCustomProperties:customPropertyPeerIds.allObjects];
 }
 
-- (bool)ios6SelectedDialogFilterNeedsHistoryScan
+- (bool)og_selectedDialogFilterNeedsHistoryScan
 {
-    NSDictionary *filter = [self ios6SelectedDialogFilter];
+    NSDictionary *filter = [self og_selectedDialogFilter];
     if (filter == nil || [filter[@"id"] intValue] == 0)
         return false;
     return ([filter[@"flags"] intValue] & 0x1f) != 0;
 }
 
-- (void)ios6ScheduleFolderLocalSourceContinuation
+- (void)og_scheduleFolderLocalSourceContinuation
 {
-    if (_ios6FolderLocalSourceContinuationScheduled || _ios6FolderLocalSourceExhausted || _ios6AllDialogItemsLoading || _ios6SelectedDialogFilterId == 0)
+    if (_ogFolderLocalSourceContinuationScheduled || _ogFolderLocalSourceExhausted || _ogAllDialogItemsLoading || _ogSelectedDialogFilterId == 0)
         return;
 
-    _ios6FolderLocalSourceContinuationScheduled = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    _ogFolderLocalSourceContinuationScheduled = true;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     NSTimeInterval delay = OGPlatformUsesConstrainedBackgroundExecution() ? 0.18 : 0.06;
     OGPlatformDispatchOnMainThreadAfter(delay, ^
     {
         [reference withValue:^(void *value)
         {
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
-            controller->_ios6FolderLocalSourceContinuationScheduled = false;
+            controller->_ogFolderLocalSourceContinuationScheduled = false;
             if (controller->_dialogListFastScrolling)
             {
-                [controller ios6ScheduleFolderLocalSourceContinuation];
+                [controller og_scheduleFolderLocalSourceContinuation];
                 return;
             }
-            NSDictionary *filter = [controller ios6SelectedDialogFilter];
+            NSDictionary *filter = [controller og_selectedDialogFilter];
             if (filter == nil || [filter[@"id"] intValue] == 0)
                 return;
-            if (!controller->_ios6FolderLocalSourceExhausted)
-                [controller ios6RefreshAllDialogItems:false];
+            if (!controller->_ogFolderLocalSourceExhausted)
+                [controller og_refreshAllDialogItems:false];
         }];
     });
 }
 
-- (void)ios6RefreshAllDialogItems:(bool)force
+- (void)og_refreshAllDialogItems:(bool)force
 {
-    if (![self ios6FoldersAllowed] || _ios6AllDialogItemsLoading)
+    if (![self og_foldersAllowed] || _ogAllDialogItemsLoading)
         return;
 
-    if (_ios6SelectedDialogFilterId == 0)
+    if (_ogSelectedDialogFilterId == 0)
         return;
-    if (![self ios6SelectedDialogFilterNeedsHistoryScan])
+    if (![self og_selectedDialogFilterNeedsHistoryScan])
     {
-        _ios6FolderLocalSourceExhausted = true;
+        _ogFolderLocalSourceExhausted = true;
         return;
     }
 
@@ -4721,40 +4594,40 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     bool canonicalCacheReady = mainCacheReady && archiveCacheReady;
     if (!canonicalCacheReady)
     {
-        _ios6FolderCanonicalCacheReady = false;
-        _ios6FolderLocalSourceExhausted = true;
-        _ios6FolderLocalSourceContinuationScheduled = false;
+        _ogFolderCanonicalCacheReady = false;
+        _ogFolderLocalSourceExhausted = true;
+        _ogFolderLocalSourceContinuationScheduled = false;
         return;
     }
 
-    if (!_ios6FolderCanonicalCacheReady)
+    if (!_ogFolderCanonicalCacheReady)
     {
-        _ios6FolderCanonicalCacheReady = true;
-        _ios6FolderLocalSourceGeneration++;
-        _ios6FolderLocalSourceCursorDate = INT32_MAX;
-        _ios6FolderLocalSourceExhausted = false;
-        _ios6FolderLocalSourceContinuationScheduled = false;
+        _ogFolderCanonicalCacheReady = true;
+        _ogFolderLocalSourceGeneration++;
+        _ogFolderLocalSourceCursorDate = INT32_MAX;
+        _ogFolderLocalSourceExhausted = false;
+        _ogFolderLocalSourceContinuationScheduled = false;
     }
 
     if (force)
     {
-        _ios6FolderLocalSourceGeneration++;
-        _ios6FolderLocalSourceCursorDate = INT32_MAX;
-        _ios6FolderLocalSourceExhausted = false;
-        _ios6FolderLocalSourceContinuationScheduled = false;
+        _ogFolderLocalSourceGeneration++;
+        _ogFolderLocalSourceCursorDate = INT32_MAX;
+        _ogFolderLocalSourceExhausted = false;
+        _ogFolderLocalSourceContinuationScheduled = false;
     }
 
     if (cpuCoreCount() == 1 && !_isOnScreen && self.navigationController != nil && self.navigationController.topViewController != self)
         return;
 
-    if (!force && _ios6FolderLocalSourceExhausted)
+    if (!force && _ogFolderLocalSourceExhausted)
     {
         return;
     }
 
     if (_dialogListFastScrolling)
     {
-        [self ios6ScheduleFolderLocalSourceContinuation];
+        [self og_scheduleFolderLocalSourceContinuation];
         return;
     }
 
@@ -4771,7 +4644,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [excludePeerIds addObject:peerId];
         }
     }
-    for (id item in _ios6AllDialogItems)
+    for (id item in _ogAllDialogItems)
     {
         if (![item isKindOfClass:[TGConversation class]])
             continue;
@@ -4784,19 +4657,19 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
 
     int pageLimit = OGPlatformUsesConstrainedBackgroundExecution() ? 32 : 128;
-    int32_t requestDate = _ios6FolderLocalSourceCursorDate;
-    int32_t generation = _ios6FolderLocalSourceGeneration;
-    _ios6AllDialogItemsLoading = true;
-    _ios6AllDialogItemsLastRefreshTime = CFAbsoluteTimeGetCurrent();
+    int32_t requestDate = _ogFolderLocalSourceCursorDate;
+    int32_t generation = _ogFolderLocalSourceGeneration;
+    _ogAllDialogItemsLoading = true;
+    _ogAllDialogItemsLastRefreshTime = CFAbsoluteTimeGetCurrent();
 
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     TGTelegraphDialogListCompanion *dialogListCompanion = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] ? (TGTelegraphDialogListCompanion *)_dialogListCompanion : nil;
     [TGDatabaseInstance() loadConversationListFromDate:requestDate limit:pageLimit excludeConversationIds:excludePeerIds folderId:-1 completion:^(NSArray *result, bool loadedAllRegular)
     {
         NSArray *page = [result isKindOfClass:[NSArray class]] ? result : @[];
         if (dialogListCompanion != nil && page.count != 0)
         {
-            [self ios6PreloadRuntimeStateForConversations:page];
+            [self og_preloadRuntimeStateForConversations:page];
             TGUser *selfUser = [TGDatabaseInstance() loadUser:TGTelegraphInstance.clientUserId];
             for (TGConversation *conversation in page)
             {
@@ -4824,16 +4697,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                if (generation != controller->_ios6FolderLocalSourceGeneration)
+                if (generation != controller->_ogFolderLocalSourceGeneration)
                     return;
 
-                controller->_ios6AllDialogItemsLoading = false;
-                if (nextCursor < controller->_ios6FolderLocalSourceCursorDate || controller->_ios6FolderLocalSourceCursorDate == INT32_MAX)
-                    controller->_ios6FolderLocalSourceCursorDate = nextCursor;
-                controller->_ios6FolderLocalSourceExhausted = exhausted;
+                controller->_ogAllDialogItemsLoading = false;
+                if (nextCursor < controller->_ogFolderLocalSourceCursorDate || controller->_ogFolderLocalSourceCursorDate == INT32_MAX)
+                    controller->_ogFolderLocalSourceCursorDate = nextCursor;
+                controller->_ogFolderLocalSourceExhausted = exhausted;
 
                 NSMutableDictionary *existingIndexByPeerId = [[NSMutableDictionary alloc] init];
-                NSMutableArray *allItems = [[NSMutableArray alloc] initWithArray:controller->_ios6AllDialogItems == nil ? @[] : controller->_ios6AllDialogItems];
+                NSMutableArray *allItems = [[NSMutableArray alloc] initWithArray:controller->_ogAllDialogItems == nil ? @[] : controller->_ogAllDialogItems];
                 for (NSUInteger i = 0; i < allItems.count; i++)
                 {
                     id item = allItems[i];
@@ -4859,33 +4732,33 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                         addedCount++;
                     }
                 }
-                controller->_ios6AllDialogItems = allItems;
-                controller->_ios6VisibleListCache = nil;
-                controller->_ios6VisibleListCacheFilterId = INT32_MIN;
+                controller->_ogAllDialogItems = allItems;
+                controller->_ogVisibleListCache = nil;
+                controller->_ogVisibleListCacheFilterId = INT32_MIN;
 
 
                 if (page.count != 0)
                 {
                     [controller reloadData:false];
-                    [controller ios6UpdateFolderTabs];
+                    [controller og_updateFolderTabs];
                 }
 
-                NSUInteger visibleCount = [controller ios6VisibleListModel].count;
-                if (!controller->_ios6FolderLocalSourceExhausted)
+                NSUInteger visibleCount = [controller og_visibleListModel].count;
+                if (!controller->_ogFolderLocalSourceExhausted)
                 {
-                    [controller ios6ScheduleFolderLocalSourceContinuation];
+                    [controller og_scheduleFolderLocalSourceContinuation];
                 }
-                else if (controller->_ios6FolderLocalSourceExhausted && visibleCount < 8 && controller->_canLoadMore && !controller->_isLoading)
+                else if (controller->_ogFolderLocalSourceExhausted && visibleCount < 8 && controller->_canLoadMore && !controller->_isLoading)
                 {
-                    [controller ios6ScheduleLazyLoadMoreItems:20];
+                    [controller og_scheduleLazyLoadMoreItems:20];
                 }
-                [controller ios6UpdateFolderEmptyLabel];
+                [controller og_updateFolderEmptyLabel];
             }];
         });
     }];
 }
 
-- (NSArray *)ios6FolderSourceItems
+- (NSArray *)og_folderSourceItems
 {
     NSMutableArray *result = [[NSMutableArray alloc] init];
     NSMutableSet *seen = [[NSMutableSet alloc] init];
@@ -4903,7 +4776,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [result addObject:conversation];
         }
     }
-    for (id item in _ios6AllDialogItems)
+    for (id item in _ogAllDialogItems)
     {
         if (![item isKindOfClass:[TGConversation class]])
             continue;
@@ -4947,7 +4820,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return result;
 }
 
-- (NSDictionary *)ios6StoredInputPeer:(TLInputPeer *)peer
+- (NSDictionary *)og_storedInputPeer:(TLInputPeer *)peer
 {
     if ([peer isKindOfClass:[TLInputPeer$inputPeerSelf class]])
         return @{ @"type": @"self" };
@@ -4966,7 +4839,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return nil;
 }
 
-- (TLInputPeer *)ios6InputPeerFromStoredValue:(NSDictionary *)value
+- (TLInputPeer *)og_inputPeerFromStoredValue:(NSDictionary *)value
 {
     if (![value isKindOfClass:[NSDictionary class]])
         return nil;
@@ -5002,14 +4875,15 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return nil;
 }
 
-- (void)ios6SetDialogFilters:(NSArray *)filters
+- (void)og_setDialogFilters:(NSArray *)filters
 {
-    _ios6SourceDialogFilters = filters ?: @[];
-    NSArray *displayed = _ios6SourceDialogFilters;
+    _ogSourceDialogFilters = filters ?: @[];
+    _ogFolderTagFilters = nil;
+    NSArray *displayed = _ogSourceDialogFilters;
     if ([TGOnegramSettings boolForKey:TGOnegramSettingChatListHideAllChatsTab])
     {
         NSMutableArray *folders = [[NSMutableArray alloc] init];
-        for (NSDictionary *filter in _ios6SourceDialogFilters)
+        for (NSDictionary *filter in _ogSourceDialogFilters)
         {
             if (![filter[@"default"] boolValue])
                 [folders addObject:filter];
@@ -5017,26 +4891,26 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (folders.count >= 2)
             displayed = folders;
     }
-    _ios6DialogFilters = displayed;
+    _ogDialogFilters = displayed;
     bool selectedExists = false;
-    for (NSDictionary *filter in _ios6DialogFilters)
-        selectedExists = selectedExists || [filter[@"id"] intValue] == _ios6SelectedDialogFilterId;
-    if (!selectedExists && _ios6DialogFilters.count != 0)
+    for (NSDictionary *filter in _ogDialogFilters)
+        selectedExists = selectedExists || [filter[@"id"] intValue] == _ogSelectedDialogFilterId;
+    if (!selectedExists && _ogDialogFilters.count != 0)
     {
-        _ios6SelectedDialogFilterId = [_ios6DialogFilters[0][@"id"] intValue];
-        [self ios6StoreSelectedDialogFilterId];
+        _ogSelectedDialogFilterId = [_ogDialogFilters[0][@"id"] intValue];
+        [self og_storeSelectedDialogFilterId];
     }
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
 }
 
-- (void)ios6StoreDialogFilters
+- (void)og_storeDialogFilters
 {
     int64_t accountId = TGTelegraphInstance.clientUserId;
-    if (accountId == 0 || accountId != _ios6DialogFiltersAccountId)
+    if (accountId == 0 || accountId != _ogDialogFiltersAccountId)
         return;
     NSMutableArray *filters = [[NSMutableArray alloc] init];
-    for (NSDictionary *filter in _ios6SourceDialogFilters)
+    for (NSDictionary *filter in _ogSourceDialogFilters)
     {
         NSMutableDictionary *stored = [filter mutableCopy];
         for (NSString *key in @[@"pinned", @"include", @"exclude"])
@@ -5044,7 +4918,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         NSMutableArray *peers = [[NSMutableArray alloc] init];
         for (TLInputPeer *peer in [filter[@"inputPeers"] allValues])
         {
-            NSDictionary *value = [self ios6StoredInputPeer:peer];
+            NSDictionary *value = [self og_storedInputPeer:peer];
             if (value != nil)
                 [peers addObject:value];
         }
@@ -5071,17 +4945,17 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     OGStartupDiagnosticsDialogsPresented(_listModel.count, !_canLoadMore);
 }
 
-- (void)ios6RestoreDialogFilters
+- (void)og_restoreDialogFilters
 {
     int64_t accountId = TGTelegraphInstance.clientUserId;
-    if (accountId == 0 || accountId == _ios6DialogFiltersAccountId || ![self ios6FoldersAllowed])
+    if (accountId == 0 || accountId == _ogDialogFiltersAccountId || ![self og_foldersAllowed])
         return;
-    _ios6DialogFiltersAccountId = accountId;
-    [self ios6SetDialogFilters:[self ios6NormalizeDialogFilters:@[]]];
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
-    NSUInteger generation = ++_ios6DialogFiltersRestoreGeneration;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    _ogDialogFiltersAccountId = accountId;
+    [self og_setDialogFilters:[self og_normalizeDialogFilters:@[]]];
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
+    NSUInteger generation = ++_ogDialogFiltersRestoreGeneration;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     [TGDatabaseInstance() customProperty:[NSString stringWithFormat:@"ios6DialogFilters.%lld", accountId] completion:^(NSData *data)
     {
         OGPlatformDispatchOnMainThread(^
@@ -5089,14 +4963,14 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                if (controller->_ios6DialogFiltersRestoreGeneration == generation && controller->_ios6DialogFiltersAccountId == accountId)
-                    [controller ios6ApplyStoredDialogFilters:data accountId:accountId];
+                if (controller->_ogDialogFiltersRestoreGeneration == generation && controller->_ogDialogFiltersAccountId == accountId)
+                    [controller og_applyStoredDialogFilters:data accountId:accountId];
             }];
         });
     }];
 }
 
-- (void)ios6ApplyStoredDialogFilters:(NSData *)data accountId:(int64_t)accountId
+- (void)og_applyStoredDialogFilters:(NSData *)data accountId:(int64_t)accountId
 {
     id stored = data.length == 0 ? nil : [NSPropertyListSerialization propertyListFromData:data mutabilityOption:NSPropertyListImmutable format:NULL errorDescription:NULL];
     if ([stored isKindOfClass:[NSDictionary class]] && [stored[@"version"] isKindOfClass:[NSNumber class]] && [stored[@"version"] intValue] == 1 && [stored[@"accountId"] isKindOfClass:[NSNumber class]] && [stored[@"accountId"] intValue] == accountId && [stored[@"filters"] isKindOfClass:[NSArray class]])
@@ -5124,8 +4998,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             NSMutableDictionary *peers = [[NSMutableDictionary alloc] init];
             for (id peerValue in filter[@"inputPeers"])
             {
-                TLInputPeer *peer = [self ios6InputPeerFromStoredValue:peerValue];
-                int64_t peerId = [self ios6PeerIdForInputPeer:peer];
+                TLInputPeer *peer = [self og_inputPeerFromStoredValue:peerValue];
+                int64_t peerId = [self og_peerIdForInputPeer:peer];
                 if (peerId == 0) { valid = false; break; }
                 peers[@(peerId)] = peer;
             }
@@ -5135,27 +5009,27 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [filters addObject:filter];
         }
         if (valid && filters.count != 0)
-            [self ios6SetDialogFilters:filters];
+            [self og_setDialogFilters:filters];
     }
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
     bool selectedExists = false;
-    for (NSDictionary *filter in _ios6DialogFilters)
-        selectedExists = selectedExists || [filter[@"id"] intValue] == _ios6SelectedDialogFilterId;
+    for (NSDictionary *filter in _ogDialogFilters)
+        selectedExists = selectedExists || [filter[@"id"] intValue] == _ogSelectedDialogFilterId;
     if (!selectedExists)
     {
-        _ios6SelectedDialogFilterId = 0;
-        [self ios6StoreSelectedDialogFilterId];
+        _ogSelectedDialogFilterId = 0;
+        [self og_storeSelectedDialogFilterId];
     }
     if (self.isViewLoaded)
     {
-        [self ios6UpdateFolderTabs];
-        [self ios6LayoutFolderTabs];
+        [self og_updateFolderTabs];
+        [self og_layoutFolderTabs];
         [self reloadData:false];
     }
 }
 
-- (NSArray *)ios6NormalizeDialogFilters:(NSArray *)filters
+- (NSArray *)og_normalizeDialogFilters:(NSArray *)filters
 {
     NSMutableArray *result = [[NSMutableArray alloc] init];
     bool hasDefault = false;
@@ -5169,6 +5043,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         NSArray *pinnedPeers = nil;
         NSArray *includePeers = nil;
         NSArray *excludePeers = nil;
+        int32_t color = TGDialogFilterNoColor;
+        NSString *emoticon = nil;
         @try
         {
             defaultFilter = [[filter valueForKey:@"defaultFilter"] boolValue];
@@ -5179,6 +5055,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             pinnedPeers = [filter valueForKey:@"pinnedPeers"];
             includePeers = [filter valueForKey:@"includePeers"];
             excludePeers = [filter valueForKey:@"excludePeers"];
+            color = [[filter valueForKey:@"color"] intValue];
+            emoticon = [filter valueForKey:@"emoticon"];
         }
         @catch (__unused NSException *exception)
         {
@@ -5199,13 +5077,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         NSMutableDictionary *inputPeersById = [[NSMutableDictionary alloc] init];
         for (TLInputPeer *inputPeer in normalizedPinnedPeers)
         {
-            int64_t peerId = [self ios6PeerIdForInputPeer:inputPeer];
+            int64_t peerId = [self og_peerIdForInputPeer:inputPeer];
             if (peerId != 0)
                 inputPeersById[@(peerId)] = inputPeer;
         }
         for (TLInputPeer *inputPeer in normalizedIncludePeers)
         {
-            int64_t peerId = [self ios6PeerIdForInputPeer:inputPeer];
+            int64_t peerId = [self og_peerIdForInputPeer:inputPeer];
             if (peerId != 0)
                 inputPeersById[@(peerId)] = inputPeer;
         }
@@ -5216,11 +5094,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             @"title": title,
             @"default": @(defaultFilter),
             @"chatlist": @(chatlist),
-            @"pinned": [self ios6PeerIdSetForInputPeers:normalizedPinnedPeers],
-            @"pinnedOrder": [self ios6PeerIdArrayForInputPeers:normalizedPinnedPeers],
-            @"include": [self ios6PeerIdSetForInputPeers:normalizedIncludePeers],
-            @"exclude": [self ios6PeerIdSetForInputPeers:[excludePeers isKindOfClass:[NSArray class]] ? excludePeers : @[]],
-            @"inputPeers": inputPeersById
+            @"pinned": [self og_peerIdSetForInputPeers:normalizedPinnedPeers],
+            @"pinnedOrder": [self og_peerIdArrayForInputPeers:normalizedPinnedPeers],
+            @"include": [self og_peerIdSetForInputPeers:normalizedIncludePeers],
+            @"exclude": [self og_peerIdSetForInputPeers:[excludePeers isKindOfClass:[NSArray class]] ? excludePeers : @[]],
+            @"inputPeers": inputPeersById,
+            @"color": @(defaultFilter ? TGDialogFilterNoColor : [TGDialogFilterSignals effectiveColorForFilterId:filterId serverColor:color]),
+            @"emoticon": [emoticon isKindOfClass:[NSString class]] ? emoticon : @""
         };
         [result addObject:normalized];
     }
@@ -5244,32 +5124,32 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return result;
 }
 
-- (void)ios6ScheduleFolderPeerHydrationReconciliation
+- (void)og_scheduleFolderPeerHydrationReconciliation
 {
-    if (_ios6FolderPeerHydrationReconcileScheduled || _ios6DialogFilters.count == 0 || ![self ios6FoldersAllowed])
+    if (_ogFolderPeerHydrationReconcileScheduled || _ogDialogFilters.count == 0 || ![self og_foldersAllowed])
         return;
     if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
         return;
 
-    _ios6FolderPeerHydrationReconcileScheduled = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    _ogFolderPeerHydrationReconcileScheduled = true;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     OGPlatformDispatchOnMainThreadAfter(0.35, ^
     {
         [reference withValue:^(void *value)
         {
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
-            controller->_ios6FolderPeerHydrationReconcileScheduled = false;
+            controller->_ogFolderPeerHydrationReconcileScheduled = false;
             if (controller->_dialogListFastScrolling)
             {
-                [controller ios6ScheduleFolderPeerHydrationReconciliation];
+                [controller og_scheduleFolderPeerHydrationReconciliation];
                 return;
             }
-            [controller ios6HydrateExplicitFolderPeers];
+            [controller og_hydrateExplicitFolderPeers];
         }];
     });
 }
 
-- (void)ios6MergeFolderPeerIdsFromDatabase:(NSArray *)peerIds completion:(void (^)(void))completion
+- (void)og_mergeFolderPeerIdsFromDatabase:(NSArray *)peerIds completion:(void (^)(void))completion
 {
     if (peerIds.count == 0)
     {
@@ -5278,7 +5158,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
 
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     TGTelegraphDialogListCompanion *dialogListCompanion = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] ? (TGTelegraphDialogListCompanion *)_dialogListCompanion : nil;
     int64_t clientUserId = TGTelegraphInstance.clientUserId;
     [TGDatabaseInstance() loadDialogListConversationsWithPeerIds:peerIds selfUserId:clientUserId completion:^(NSArray *conversations)
@@ -5316,7 +5196,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                         [controller dialogListEnsureCoalescedAllDialogItems];
                     }
                     NSMutableArray *listModel = coalescing ? controller->_dialogListCoalescedModel : controller->_listModel;
-                    NSArray *sourceAllItems = coalescing ? controller->_dialogListCoalescedAllDialogItems : controller->_ios6AllDialogItems;
+                    NSArray *sourceAllItems = coalescing ? controller->_dialogListCoalescedAllDialogItems : controller->_ogAllDialogItems;
                     NSMutableDictionary *allIndexByPeerId = [[NSMutableDictionary alloc] init];
                     NSMutableArray *allItems = [[NSMutableArray alloc] initWithArray:sourceAllItems ?: @[]];
                     for (NSUInteger i = 0; i < allItems.count; i++)
@@ -5362,12 +5242,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                         }
                         else
                         {
-                            controller->_ios6AllDialogItems = allItems;
-                            controller->_ios6VisibleListCache = nil;
-                            controller->_ios6VisibleListCacheFilterId = INT32_MIN;
+                            controller->_ogAllDialogItems = allItems;
+                            controller->_ogVisibleListCache = nil;
+                            controller->_ogVisibleListCacheFilterId = INT32_MIN;
                             [controller reloadData:false];
-                            [controller ios6UpdateFolderTabs];
-                            [controller ios6UpdateFolderEmptyLabel];
+                            [controller og_updateFolderTabs];
+                            [controller og_updateFolderEmptyLabel];
                         }
                     }
 
@@ -5379,34 +5259,34 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }];
 }
 
-- (void)ios6ContinueFolderPeerHydration
+- (void)og_continueFolderPeerHydration
 {
-    if (!_ios6FolderPeerHydrationActive)
+    if (!_ogFolderPeerHydrationActive)
         return;
 
-    if (_ios6FolderPeerHydrationQueue.count == 0)
+    if (_ogFolderPeerHydrationQueue.count == 0)
     {
-        _ios6FolderPeerHydrationActive = false;
-        TGDialogListControllerReference *reference = _ios6LifetimeReference;
+        _ogFolderPeerHydrationActive = false;
+        TGDialogListControllerReference *reference = _ogLifetimeReference;
         OGPlatformDispatchOnMainThreadAfter(0.35, ^
         {
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                [controller ios6RefreshAllDialogItems:false];
+                [controller og_refreshAllDialogItems:false];
             }];
         });
         return;
     }
 
-    NSUInteger batchLimit = MAX((NSUInteger)1, _ios6FolderPeerHydrationBatchSize);
-    NSUInteger batchCount = MIN(batchLimit, _ios6FolderPeerHydrationQueue.count);
-    NSArray *batch = [_ios6FolderPeerHydrationQueue subarrayWithRange:NSMakeRange(0, batchCount)];
-    [_ios6FolderPeerHydrationQueue removeObjectsInRange:NSMakeRange(0, batchCount)];
+    NSUInteger batchLimit = MAX((NSUInteger)1, _ogFolderPeerHydrationBatchSize);
+    NSUInteger batchCount = MIN(batchLimit, _ogFolderPeerHydrationQueue.count);
+    NSArray *batch = [_ogFolderPeerHydrationQueue subarrayWithRange:NSMakeRange(0, batchCount)];
+    [_ogFolderPeerHydrationQueue removeObjectsInRange:NSMakeRange(0, batchCount)];
     NSMutableArray *batchPeerIds = [[NSMutableArray alloc] initWithCapacity:batch.count];
     for (TLInputPeer *inputPeer in batch)
     {
-        int64_t peerId = [self ios6PeerIdForInputPeer:inputPeer];
+        int64_t peerId = [self og_peerIdForInputPeer:inputPeer];
         if (peerId != 0)
             [batchPeerIds addObject:@(peerId)];
     }
@@ -5425,7 +5305,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     TGTelegraphDialogListCompanion *companion = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] ? (TGTelegraphDialogListCompanion *)_dialogListCompanion : nil;
     [companion ios6MarkFolderOnlyHydrationPeerIds:batchPeerIds];
 
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     __block NSArray *resolvedBatchPeerIds = @[];
     SSignal *signal = [[[TGTelegramNetworking readyInstance] mapToSignal:^SSignal *(TGTelegramNetworking *networking)
     {
@@ -5450,7 +5330,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return [[TGGroupManagementSignals processedDialogs:result peerId:0] then:[SSignal single:resolved]];
     }];
 
-    [_ios6FolderPeerHydrationDisposable setDisposable:[[signal startOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:^(NSArray *peerIds)
+    [_ogFolderPeerHydrationDisposable setDisposable:[[signal startOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:^(NSArray *peerIds)
     {
         if ([peerIds isKindOfClass:[NSArray class]])
             resolvedBatchPeerIds = [peerIds copy];
@@ -5464,26 +5344,26 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 NSTimeInterval retryDelay = 0.15;
                 if (batch.count > 1)
                 {
-                    controller->_ios6FolderPeerHydrationBatchSize = MAX((NSUInteger)1, batch.count / 2);
+                    controller->_ogFolderPeerHydrationBatchSize = MAX((NSUInteger)1, batch.count / 2);
                     for (NSInteger i = (NSInteger)batch.count - 1; i >= 0; i--)
-                        [controller->_ios6FolderPeerHydrationQueue insertObject:batch[(NSUInteger)i] atIndex:0];
+                        [controller->_ogFolderPeerHydrationQueue insertObject:batch[(NSUInteger)i] atIndex:0];
                 }
                 else if (batch.count == 1)
                 {
                     TLInputPeer *inputPeer = batch[0];
-                    int64_t peerId = [controller ios6PeerIdForInputPeer:inputPeer];
+                    int64_t peerId = [controller og_peerIdForInputPeer:inputPeer];
                     NSNumber *peerKey = @(peerId);
-                    int retryCount = [controller->_ios6FolderPeerHydrationRetryCounts[peerKey] intValue] + 1;
-                    controller->_ios6FolderPeerHydrationRetryCounts[peerKey] = @(retryCount);
+                    int retryCount = [controller->_ogFolderPeerHydrationRetryCounts[peerKey] intValue] + 1;
+                    controller->_ogFolderPeerHydrationRetryCounts[peerKey] = @(retryCount);
                     bool transient = [errorType hasPrefix:@"FLOOD_WAIT_"] || [errorType hasPrefix:@"INTERNAL"] || [errorType hasPrefix:@"TIMEOUT"] || [errorType hasPrefix:@"NETWORK"];
                     if (transient && retryCount < 3)
                     {
-                        [controller->_ios6FolderPeerHydrationQueue addObject:inputPeer];
+                        [controller->_ogFolderPeerHydrationQueue addObject:inputPeer];
                         retryDelay = [errorType hasPrefix:@"FLOOD_WAIT_"] ? 2.0 : 0.75;
                     }
                     else
                     {
-                        controller->_ios6FolderPeerHydrationFailed++;
+                        controller->_ogFolderPeerHydrationFailed++;
                     }
                 }
                 NSLog(@"FOLDERS hydrate error batch=%d type=%@", (int)batch.count, errorType);
@@ -5492,7 +5372,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     [reference withValue:^(void *delayedValue)
                     {
                         TGDialogListController *delayedController = (__bridge TGDialogListController *)delayedValue;
-                        [delayedController ios6ContinueFolderPeerHydration];
+                        [delayedController og_continueFolderPeerHydration];
                     }];
                 });
             }];
@@ -5504,18 +5384,18 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                [controller ios6MergeFolderPeerIdsFromDatabase:resolvedBatchPeerIds completion:^
+                [controller og_mergeFolderPeerIdsFromDatabase:resolvedBatchPeerIds completion:^
                 {
-                    controller->_ios6FolderPeerHydrationLoaded += (int)batch.count;
+                    controller->_ogFolderPeerHydrationLoaded += (int)batch.count;
                     NSUInteger maximumBatchSize = TGDialogListHydrationBatchLimit();
-                    if (controller->_ios6FolderPeerHydrationBatchSize < maximumBatchSize)
-                        controller->_ios6FolderPeerHydrationBatchSize = MIN(maximumBatchSize, controller->_ios6FolderPeerHydrationBatchSize + 2);
+                    if (controller->_ogFolderPeerHydrationBatchSize < maximumBatchSize)
+                        controller->_ogFolderPeerHydrationBatchSize = MIN(maximumBatchSize, controller->_ogFolderPeerHydrationBatchSize + 2);
                     OGPlatformDispatchOnMainThread(^
                     {
                         [reference withValue:^(void *delayedValue)
                         {
                             TGDialogListController *delayedController = (__bridge TGDialogListController *)delayedValue;
-                            [delayedController ios6ContinueFolderPeerHydration];
+                            [delayedController og_continueFolderPeerHydration];
                         }];
                     });
                 }];
@@ -5524,13 +5404,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }]];
 }
 
-- (void)ios6HydrateExplicitFolderPeers
+- (void)og_hydrateExplicitFolderPeers
 {
-    if (_ios6FolderPeerHydrationActive || _ios6FolderPeerLocalLookupInFlight)
+    if (_ogFolderPeerHydrationActive || _ogFolderPeerLocalLookupInFlight)
         return;
 
     NSMutableDictionary *inputPeersById = [[NSMutableDictionary alloc] init];
-    for (NSDictionary *filter in _ios6DialogFilters)
+    for (NSDictionary *filter in _ogDialogFilters)
     {
         NSDictionary *filterPeers = filter[@"inputPeers"];
         if ([filterPeers isKindOfClass:[NSDictionary class]])
@@ -5539,7 +5419,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (inputPeersById.count == 0)
         return;
 
-    NSArray *sourceItems = [self ios6FolderSourceItems];
+    NSArray *sourceItems = [self og_folderSourceItems];
     NSMutableDictionary *sourceByPeerId = [[NSMutableDictionary alloc] init];
     for (id item in sourceItems)
     {
@@ -5550,30 +5430,30 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     NSMutableArray *localLookupPeerIds = [[NSMutableArray alloc] init];
     for (NSNumber *peerId in inputPeersById)
     {
-        if (sourceByPeerId[peerId] == nil && ![_ios6FolderPeerLocalLookupAttempted containsObject:peerId])
+        if (sourceByPeerId[peerId] == nil && ![_ogFolderPeerLocalLookupAttempted containsObject:peerId])
         {
-            [_ios6FolderPeerLocalLookupAttempted addObject:peerId];
+            [_ogFolderPeerLocalLookupAttempted addObject:peerId];
             [localLookupPeerIds addObject:peerId];
         }
     }
 
     if (localLookupPeerIds.count != 0)
     {
-        _ios6FolderPeerLocalLookupInFlight = true;
-        TGDialogListControllerReference *reference = _ios6LifetimeReference;
-        [self ios6MergeFolderPeerIdsFromDatabase:localLookupPeerIds completion:^
+        _ogFolderPeerLocalLookupInFlight = true;
+        TGDialogListControllerReference *reference = _ogLifetimeReference;
+        [self og_mergeFolderPeerIdsFromDatabase:localLookupPeerIds completion:^
         {
             [reference withValue:^(void *value)
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
-                controller->_ios6FolderPeerLocalLookupInFlight = false;
-                [controller ios6HydrateExplicitFolderPeers];
+                controller->_ogFolderPeerLocalLookupInFlight = false;
+                [controller og_hydrateExplicitFolderPeers];
             }];
         }];
         return;
     }
 
-    sourceItems = [self ios6FolderSourceItems];
+    sourceItems = [self og_folderSourceItems];
     [sourceByPeerId removeAllObjects];
     for (id item in sourceItems)
     {
@@ -5595,32 +5475,32 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (missingPeersById.count == 0)
         return;
 
-    [_ios6FolderPeerHydrationQueue removeAllObjects];
-    [_ios6FolderPeerHydrationQueue addObjectsFromArray:missingPeersById.allValues];
-    [_ios6FolderPeerHydrationRetryCounts removeAllObjects];
-    _ios6FolderPeerHydrationBatchSize = TGDialogListHydrationBatchLimit();
-    _ios6FolderPeerHydrationLoaded = 0;
-    _ios6FolderPeerHydrationFailed = 0;
-    _ios6FolderPeerHydrationActive = true;
-    [self ios6ContinueFolderPeerHydration];
+    [_ogFolderPeerHydrationQueue removeAllObjects];
+    [_ogFolderPeerHydrationQueue addObjectsFromArray:missingPeersById.allValues];
+    [_ogFolderPeerHydrationRetryCounts removeAllObjects];
+    _ogFolderPeerHydrationBatchSize = TGDialogListHydrationBatchLimit();
+    _ogFolderPeerHydrationLoaded = 0;
+    _ogFolderPeerHydrationFailed = 0;
+    _ogFolderPeerHydrationActive = true;
+    [self og_continueFolderPeerHydration];
 }
 
-- (NSDictionary *)ios6SelectedDialogFilter
+- (NSDictionary *)og_selectedDialogFilter
 {
-    for (NSDictionary *filter in _ios6DialogFilters)
+    for (NSDictionary *filter in _ogDialogFilters)
     {
-        if ([filter[@"id"] intValue] == _ios6SelectedDialogFilterId)
+        if ([filter[@"id"] intValue] == _ogSelectedDialogFilterId)
             return filter;
     }
     return nil;
 }
 
-- (bool)ios6ConversationIsUnread:(TGConversation *)conversation
+- (bool)og_conversationIsUnread:(TGConversation *)conversation
 {
     return conversation.unreadMark || conversation.unreadCount > 0 || conversation.serviceUnreadCount > 0;
 }
 
-- (bool)ios6Conversation:(TGConversation *)conversation matchesDialogFilter:(NSDictionary *)filter
+- (bool)og_conversation:(TGConversation *)conversation matchesDialogFilter:(NSDictionary *)filter
 {
     if (conversation == nil || filter == nil)
         return false;
@@ -5684,31 +5564,31 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (mute == nil || [mute boolValue])
             return false;
     }
-    if ((flags & (1 << 12)) && ![self ios6ConversationIsUnread:conversation])
+    if ((flags & (1 << 12)) && ![self og_conversationIsUnread:conversation])
         return false;
     if ((flags & (1 << 13)) && conversation.isArchived)
         return false;
     return true;
 }
 
-- (NSArray *)ios6VisibleItemsForDialogFilter:(NSDictionary *)filter
+- (NSArray *)og_visibleItemsForDialogFilter:(NSDictionary *)filter
 {
     if (filter == nil || [filter[@"id"] intValue] == 0)
     {
         NSArray *sourceItems = _listModel;
-        NSMutableArray *normalItems = [[NSMutableArray alloc] init];
-        NSMutableArray *archiveItems = [[NSMutableArray alloc] init];
+        NSMutableArray *regularRows = [[NSMutableArray alloc] init];
+        NSMutableArray *archivedRows = [[NSMutableArray alloc] init];
         for (id item in sourceItems)
         {
-            if ([self ios6IsArchivedConversation:item])
-                [archiveItems addObject:item];
+            if ([self og_isArchivedConversation:item])
+                [archivedRows addObject:item];
             else
-                [normalItems addObject:item];
+                [regularRows addObject:item];
         }
-        return _ios6ArchiveExpanded ? archiveItems : normalItems;
+        return _ogArchiveExpanded ? archivedRows : regularRows;
     }
 
-    NSArray *sourceItems = [self ios6FolderSourceItems];
+    NSArray *sourceItems = [self og_folderSourceItems];
     NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] init];
     NSMutableArray *matchingItems = [[NSMutableArray alloc] init];
     for (id item in sourceItems)
@@ -5716,8 +5596,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (![item isKindOfClass:[TGConversation class]])
             continue;
         TGConversation *conversation = (TGConversation *)item;
-        [self ios6EnsureDialogListDataForConversation:conversation];
-        if ([self ios6Conversation:conversation matchesDialogFilter:filter])
+        [self og_ensureDialogListDataForConversation:conversation];
+        if ([self og_conversation:conversation matchesDialogFilter:filter])
         {
             [matchingItems addObject:conversation];
             itemsByPeerId[@(conversation.conversationId)] = conversation;
@@ -5757,7 +5637,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return result;
 }
 
-- (int)ios6UnreadCountForDialogFilter:(NSDictionary *)filter sourceItems:(NSArray *)sourceItems
+- (int)og_unreadCountForDialogFilter:(NSDictionary *)filter sourceItems:(NSArray *)sourceItems
 {
     int count = 0;
     if ([filter[@"id"] intValue] == 0)
@@ -5767,9 +5647,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (![item isKindOfClass:[TGConversation class]])
                 continue;
             TGConversation *conversation = (TGConversation *)item;
-            if (![self ios6ConversationIsUnread:conversation] || [self ios6IsArchivedConversation:item])
+            if (![self og_conversationIsUnread:conversation] || [self og_isArchivedConversation:item])
                 continue;
-            [self ios6EnsureDialogListDataForConversation:conversation];
+            [self og_ensureDialogListDataForConversation:conversation];
             NSNumber *mute = conversation.dialogListData[@"mute"];
             if (mute != nil && ![mute boolValue])
                 count++;
@@ -5781,76 +5661,76 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (![item isKindOfClass:[TGConversation class]])
             continue;
         TGConversation *conversation = (TGConversation *)item;
-        if (![self ios6ConversationIsUnread:conversation])
+        if (![self og_conversationIsUnread:conversation])
             continue;
-        [self ios6EnsureDialogListDataForConversation:conversation];
+        [self og_ensureDialogListDataForConversation:conversation];
         NSNumber *mute = conversation.dialogListData[@"mute"];
         if (mute == nil || [mute boolValue])
             continue;
-        if ([self ios6Conversation:conversation matchesDialogFilter:filter])
+        if ([self og_conversation:conversation matchesDialogFilter:filter])
             count++;
     }
     return count;
 }
 
-- (int)ios6UnreadCountForDialogFilter:(NSDictionary *)filter
+- (int)og_unreadCountForDialogFilter:(NSDictionary *)filter
 {
-    return [self ios6UnreadCountForDialogFilter:filter sourceItems:[self ios6FolderSourceItems]];
+    return [self og_unreadCountForDialogFilter:filter sourceItems:[self og_folderSourceItems]];
 }
 
-- (void)ios6SynchronizeDialogStateForce:(bool)force
+- (void)og_synchronizeDialogStateForce:(bool)force
 {
-    if (![self ios6FoldersAllowed] || TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
+    if (![self og_foldersAllowed] || TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
         return;
     if (OGPlatformUsesConstrainedBackgroundExecution() && [TGTelegramNetworking maybeInstance] == nil)
         return;
 
     if (force)
     {
-        _ios6DialogFiltersLastRefreshTime = 0.0;
-        _ios6AllDialogItemsLastRefreshTime = 0.0;
+        _ogDialogFiltersLastRefreshTime = 0.0;
+        _ogAllDialogItemsLastRefreshTime = 0.0;
     }
 
-    [self ios6ReloadDialogFilters:force];
-    [self ios6RefreshAllDialogItems:force];
-    [self ios6HydrateExplicitFolderPeers];
+    [self og_reloadDialogFilters:force];
+    [self og_refreshAllDialogItems:force];
+    [self og_hydrateExplicitFolderPeers];
     if ([_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
         [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6PreloadAllDialogsForFolders];
 }
 
 - (void)ios6SynchronizeDialogState
 {
-    [self ios6SynchronizeDialogStateForce:false];
+    [self og_synchronizeDialogStateForce:false];
 }
 
-- (void)ios6AuthorizationReady:(NSNotification *)__unused notification
+- (void)og_authorizationReady:(NSNotification *)__unused notification
 {
-    if (_ios6DialogFiltersAccountId != TGTelegraphInstance.clientUserId)
+    if (_ogDialogFiltersAccountId != TGTelegraphInstance.clientUserId)
     {
-        [_ios6DialogFiltersDisposable setDisposable:nil];
-        _ios6DialogFiltersRequestInFlight = false;
-        _ios6DialogFiltersLastRefreshTime = 0.0;
+        [_ogDialogFiltersDisposable setDisposable:nil];
+        _ogDialogFiltersRequestInFlight = false;
+        _ogDialogFiltersLastRefreshTime = 0.0;
     }
-    _ios6DialogFiltersAuthorizationRetryCount = 0;
-    _ios6DialogFiltersAuthorizationRetryScheduled = false;
-    _ios6DialogFiltersNetworkRetryCount = 0;
-    _ios6DialogFiltersNetworkRetryScheduled = false;
-    [self ios6RestoreDialogFilters];
-    [self refreshOwnEmojiStatusIfNeeded];
-    [self updateTitleEmojiStatus];
-    [self ios6SynchronizeDialogStateForce:false];
+    _ogDialogFiltersAuthorizationRetryCount = 0;
+    _ogDialogFiltersAuthorizationRetryScheduled = false;
+    _ogDialogFiltersNetworkRetryCount = 0;
+    _ogDialogFiltersNetworkRetryScheduled = false;
+    [self og_restoreDialogFilters];
+    [self refreshOwnUserIfStale];
+    [self loadCachedOwnEmojiStatus];
+    [self og_synchronizeDialogStateForce:false];
 }
 
-- (void)ios6ReloadDialogFilters:(bool)force
+- (void)og_reloadDialogFilters:(bool)force
 {
-    if (![self ios6FoldersAllowed])
+    if (![self og_foldersAllowed])
         return;
     if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
     {
         return;
     }
-    _ios6DialogFiltersAuthorizationRetryCount = 0;
-    _ios6DialogFiltersAuthorizationRetryScheduled = false;
+    _ogDialogFiltersAuthorizationRetryCount = 0;
+    _ogDialogFiltersAuthorizationRetryScheduled = false;
 
     if (cpuCoreCount() == 1 && !_isOnScreen && self.navigationController != nil && self.navigationController.topViewController != self)
         return;
@@ -5858,20 +5738,20 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     TGTelegramNetworking *networking = OGPlatformUsesConstrainedBackgroundExecution() ? [TGTelegramNetworking maybeInstance] : [TGTelegramNetworking instance];
     if (networking == nil)
         return;
-    if (_ios6DialogFiltersRequestInFlight)
+    if (_ogDialogFiltersRequestInFlight)
         return;
 
     NSTimeInterval now = CFAbsoluteTimeGetCurrent();
     NSTimeInterval minimumInterval = force ? 5.0 : 60.0;
-    if (_ios6DialogFiltersLastRefreshTime > 0.0 && now - _ios6DialogFiltersLastRefreshTime < minimumInterval)
+    if (_ogDialogFiltersLastRefreshTime > 0.0 && now - _ogDialogFiltersLastRefreshTime < minimumInterval)
         return;
-    _ios6DialogFiltersLastRefreshTime = now;
-    _ios6DialogFiltersRequestInFlight = true;
+    _ogDialogFiltersLastRefreshTime = now;
+    _ogDialogFiltersRequestInFlight = true;
 
     int64_t accountId = TGTelegraphInstance.clientUserId;
-    TGIOS6GetDialogFiltersRequest *request = [[TGIOS6GetDialogFiltersRequest alloc] init];
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
-    [_ios6DialogFiltersDisposable setDisposable:[[[networking requestSignal:request] mapToSignal:^SSignal *(id response)
+    OGCompatGetDialogFiltersRequest *request = [[OGCompatGetDialogFiltersRequest alloc] init];
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
+    [_ogDialogFiltersDisposable setDisposable:[[[networking requestSignal:request] mapToSignal:^SSignal *(id response)
     {
         id filters = response;
         if (![filters isKindOfClass:[NSArray class]])
@@ -5885,6 +5765,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (![filter respondsToSelector:@selector(filterId)] || ![filter respondsToSelector:@selector(defaultFilter)] || ![filter respondsToSelector:@selector(flags)])
                 return [SSignal fail:@"INVALID_DIALOG_FILTERS_RESPONSE"];
         }
+        if (filters != response && [response respondsToSelector:@selector(flags)])
+            [TGDialogFilterSignals storeServerTagsEnabled:([[response valueForKey:@"flags"] intValue] & 1) != 0];
         return [SSignal single:filters];
     }] startWithNext:^(NSArray *filters)
     {
@@ -5895,36 +5777,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
                 if (accountId != TGTelegraphInstance.clientUserId)
                     return;
-                strongSelf->_ios6DialogFiltersRestoreGeneration++;
-                strongSelf->_ios6DialogFiltersAccountId = accountId;
-                [strongSelf ios6SetDialogFilters:[strongSelf ios6NormalizeDialogFilters:filters]];
-                [strongSelf ios6StoreDialogFilters];
-                strongSelf->_ios6VisibleListCache = nil;
-                strongSelf->_ios6VisibleListCacheFilterId = INT32_MIN;
-                bool selectedExists = false;
-                for (NSDictionary *filter in strongSelf->_ios6DialogFilters)
-                {
-                    if ([filter[@"id"] intValue] == strongSelf->_ios6SelectedDialogFilterId)
-                    {
-                        selectedExists = true;
-                        break;
-                    }
-                }
-                if (!selectedExists)
-                {
-                    strongSelf->_ios6SelectedDialogFilterId = 0;
-                    [strongSelf ios6StoreSelectedDialogFilterId];
-                }
-
-                strongSelf->_ios6DialogFiltersNetworkRetryCount = 0;
-                strongSelf->_ios6DialogFiltersNetworkRetryScheduled = false;
-                [strongSelf ios6UpdateFolderTabs];
-                [strongSelf ios6LayoutFolderTabs];
-                [strongSelf reloadData:false];
-                [strongSelf ios6RefreshAllDialogItems:true];
-                [strongSelf ios6HydrateExplicitFolderPeers];
-                if ([strongSelf->_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
-                    [(TGTelegraphDialogListCompanion *)strongSelf->_dialogListCompanion ios6PreloadAllDialogsForFolders];
+                strongSelf->_ogDialogFiltersNetworkRetryCount = 0;
+                strongSelf->_ogDialogFiltersNetworkRetryScheduled = false;
+                [strongSelf og_applyDialogFilters:filters accountId:accountId];
             }];
         });
     } error:^(id error)
@@ -5935,24 +5790,24 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
                 if (accountId != TGTelegraphInstance.clientUserId)
                     return;
-                controller->_ios6DialogFiltersRequestInFlight = false;
+                controller->_ogDialogFiltersRequestInFlight = false;
                 NSString *errorType = [error isKindOfClass:[NSString class]] ? error : [networking extractNetworkErrorType:error];
-                controller->_ios6DialogFiltersLastRefreshTime = 0.0;
+                controller->_ogDialogFiltersLastRefreshTime = 0.0;
                 NSLog(@"FOLDERS error type=%@", errorType);
-                if (!controller->_ios6DialogFiltersNetworkRetryScheduled && TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
+                if (!controller->_ogDialogFiltersNetworkRetryScheduled && TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
                 {
-                    controller->_ios6DialogFiltersNetworkRetryScheduled = true;
-                    int retryCount = MIN(controller->_ios6DialogFiltersNetworkRetryCount, 5);
-                    controller->_ios6DialogFiltersNetworkRetryCount++;
+                    controller->_ogDialogFiltersNetworkRetryScheduled = true;
+                    int retryCount = MIN(controller->_ogDialogFiltersNetworkRetryCount, 5);
+                    controller->_ogDialogFiltersNetworkRetryCount++;
                     NSTimeInterval delay = MIN(8.0, 0.5 * (1 << retryCount));
-                    TGDialogListControllerReference *retryReference = controller->_ios6LifetimeReference;
+                    TGDialogListControllerReference *retryReference = controller->_ogLifetimeReference;
                     OGPlatformDispatchOnMainThreadAfter(delay, ^
                     {
                         [retryReference withValue:^(void *retryValue)
                         {
                             TGDialogListController *retryController = (__bridge TGDialogListController *)retryValue;
-                            retryController->_ios6DialogFiltersNetworkRetryScheduled = false;
-                            [retryController ios6ReloadDialogFilters:true];
+                            retryController->_ogDialogFiltersNetworkRetryScheduled = false;
+                            [retryController og_reloadDialogFilters:true];
                         }];
                     });
                 }
@@ -5966,68 +5821,450 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             {
                 TGDialogListController *controller = (__bridge TGDialogListController *)value;
                 if (accountId == TGTelegraphInstance.clientUserId)
-                    controller->_ios6DialogFiltersRequestInFlight = false;
+                    controller->_ogDialogFiltersRequestInFlight = false;
             }];
         });
     }]];
 }
 
-- (void)ios6DialogFiltersUpdated:(NSNotification *)__unused notification
+- (void)og_applyDialogFilters:(NSArray *)filters accountId:(int64_t)accountId
 {
-    _ios6DialogFiltersLastRefreshTime = 0.0;
-    [self ios6ReloadDialogFilters:true];
+    _ogDialogFiltersRestoreGeneration++;
+    _ogDialogFiltersAccountId = accountId;
+    [self og_setDialogFilters:[self og_normalizeDialogFilters:filters]];
+    [self og_storeDialogFilters];
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
+    bool selectedExists = false;
+    for (NSDictionary *filter in _ogDialogFilters)
+    {
+        if ([filter[@"id"] intValue] == _ogSelectedDialogFilterId)
+        {
+            selectedExists = true;
+            break;
+        }
+    }
+    if (!selectedExists)
+    {
+        _ogSelectedDialogFilterId = 0;
+        [self og_storeSelectedDialogFilterId];
+    }
+
+    [self og_updateFolderTabs];
+    [self og_layoutFolderTabs];
+    [self reloadData:false];
+    [self og_refreshAllDialogItems:true];
+    [self og_hydrateExplicitFolderPeers];
+    if ([_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
+        [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6PreloadAllDialogsForFolders];
 }
 
-- (void)ios6FolderTabPressed:(UIButton *)button
+- (void)og_dialogFiltersUpdated:(NSNotification *)__unused notification
+{
+    _ogDialogFiltersLastRefreshTime = 0.0;
+    [self og_reloadDialogFilters:true];
+}
+
+- (void)dialogFiltersDidChange:(NSNotification *)notification
+{
+    _ogFolderTagFilters = nil;
+    if (![self og_foldersAllowed] || TGTelegraphInstance.clientUserId == 0)
+        return;
+    NSArray *filters = notification.userInfo[@"filters"];
+    if ([filters isKindOfClass:[NSArray class]])
+    {
+        _ogDialogFiltersLastRefreshTime = CFAbsoluteTimeGetCurrent();
+        [self og_applyDialogFilters:filters accountId:TGTelegraphInstance.clientUserId];
+    }
+    else if (self.isViewLoaded)
+        [self reloadData:false];
+}
+
+- (NSArray *)og_folderTagsForConversation:(TGConversation *)conversation
+{
+    if (conversation == nil || ![self og_foldersAllowed])
+        return nil;
+    if (_ogFolderTagFilters == nil)
+    {
+        NSMutableArray *tagFilters = [[NSMutableArray alloc] init];
+        if ([TGDialogFilterSignals tagsVisible])
+        {
+            for (NSDictionary *filter in _ogSourceDialogFilters)
+            {
+                int32_t color = [filter[@"color"] intValue];
+                NSString *title = filter[@"title"];
+                if ([filter[@"default"] boolValue] || filter[@"color"] == nil || color < 0 || title.length == 0)
+                    continue;
+                UIColor *tagColor = [TGDialogFilter colorForIndex:color];
+                if (tagColor != nil)
+                    [tagFilters addObject:@{@"filter": filter, @"tag": @{@"title": title, @"color": tagColor}}];
+            }
+        }
+        _ogFolderTagFilters = tagFilters;
+    }
+    if (_ogFolderTagFilters.count == 0)
+        return nil;
+    NSMutableArray *tags = nil;
+    for (NSDictionary *entry in _ogFolderTagFilters)
+    {
+        NSDictionary *filter = entry[@"filter"];
+        if ([filter[@"id"] intValue] == _ogSelectedDialogFilterId)
+            continue;
+        if (![self og_conversation:conversation matchesDialogFilter:filter])
+            continue;
+        if (tags == nil)
+            tags = [[NSMutableArray alloc] init];
+        [tags addObject:entry[@"tag"]];
+    }
+    return tags;
+}
+
+- (NSArray *)dialogFilterConversations
+{
+    return [self og_folderSourceItems];
+}
+
+- (bool)dialogFilter:(TGDialogFilter *)filter matchesConversation:(TGConversation *)conversation
+{
+    if (filter == nil || conversation == nil)
+        return false;
+    if (filter.defaultFilter)
+        return !conversation.isArchived;
+    NSDictionary *normalized = [[self og_normalizeDialogFilters:@[filter]] lastObject];
+    return [self og_conversation:conversation matchesDialogFilter:normalized];
+}
+
+- (void)og_loadDialogFilters:(void (^)(TGDialogFiltersState *state))completion
+{
+    void (^block)(TGDialogFiltersState *) = [completion copy];
+    [_ogDialogFilterActionDisposable setDisposable:[[TGDialogFiltersController signalWithProgress:[TGDialogFilterSignals filters]] startWithNext:^(TGDialogFiltersState *state)
+    {
+        if (block)
+            block(state);
+    } error:^(id error)
+    {
+        [TGDialogFiltersController presentError:error];
+    } completed:nil]];
+}
+
+- (void)og_saveDialogFilter:(TGDialogFilter *)filter
+{
+    [_ogDialogFilterActionDisposable setDisposable:[[TGDialogFiltersController signalWithProgress:[TGDialogFilterSignals saveFilter:filter]] startWithNext:nil error:^(id error)
+    {
+        [TGDialogFiltersController presentError:error];
+    } completed:nil]];
+}
+
+- (TGDialogFilter *)og_dialogFilterWithId:(int32_t)filterId inState:(TGDialogFiltersState *)state
+{
+    for (TGDialogFilter *filter in state.filters)
+    {
+        if (filter.filterId == filterId && !filter.defaultFilter)
+            return filter;
+    }
+    return nil;
+}
+
+- (NSArray *)og_conversationsForDialogFilter:(NSDictionary *)filter
+{
+    bool isDefault = [filter[@"default"] boolValue] || [filter[@"id"] intValue] == 0;
+    NSMutableArray *result = [[NSMutableArray alloc] init];
+    for (TGConversation *conversation in [self og_folderSourceItems])
+    {
+        if (conversation.isAd || [conversation.dialogListData[@"isSavedMessages"] intValue] == 2)
+            continue;
+        if (isDefault ? [self og_isArchivedConversation:conversation] : ![self og_conversation:conversation matchesDialogFilter:filter])
+            continue;
+        [result addObject:conversation];
+    }
+    return result;
+}
+
+- (void)og_markConversationsAsRead:(NSArray *)conversations
+{
+    NSMutableArray *requests = [[NSMutableArray alloc] init];
+    for (TGConversation *conversation in conversations)
+    {
+        [requests addObject:[[TGReadPeerMessagesRequest alloc] initWithPeerId:conversation.conversationId maxMessageIndex:nil date:0 length:0 unread:false]];
+        if (conversation.unreadMentionCount > 0)
+            [[TGDownloadMessagesSignal clearUnseenMentions:conversation.conversationId] startWithNext:nil];
+    }
+    if (requests.count != 0)
+        [TGDatabaseInstance() transactionReadHistoryForPeerIds:requests];
+}
+
+- (void)og_setConversations:(NSArray *)conversations muted:(bool)muted
+{
+    static int actionId = 0;
+    for (TGConversation *conversation in conversations)
+    {
+        if ([conversation.dialogListData[@"mute"] boolValue] == muted)
+            continue;
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId64 ")/(dialogFilterMute%d)", conversation.conversationId, actionId++] options:@{@"peerId": @(conversation.conversationId), @"accessHash": @(conversation.accessHash), @"muteUntil": @(muted ? INT32_MAX : 0)} watcher:TGTelegraphInstance];
+    }
+}
+
+- (void)og_folderTabLongPress:(UILongPressGestureRecognizer *)recognizer
+{
+    if (recognizer.state != UIGestureRecognizerStateBegan || _isDisplayingSearch || _ogFolderSwipeActive || _ogFolderSwipeFinishing)
+        return;
+    NSInteger index = recognizer.view.tag - 6100;
+    if (index < 0 || index >= (NSInteger)_ogDialogFilters.count)
+        return;
+    NSDictionary *filter = _ogDialogFilters[index];
+    int32_t filterId = [filter[@"id"] intValue];
+    bool isDefault = [filter[@"default"] boolValue] || filterId == 0;
+    CGRect sourceRect = [recognizer.view convertRect:recognizer.view.bounds toView:self.view];
+
+    NSArray *conversations = [self og_conversationsForDialogFilter:filter];
+    NSMutableArray *unreadConversations = [[NSMutableArray alloc] init];
+    NSMutableArray *mutableConversations = [[NSMutableArray alloc] init];
+    bool allMuted = true;
+    for (TGConversation *conversation in conversations)
+    {
+        if ([self og_conversationIsUnread:conversation])
+            [unreadConversations addObject:conversation];
+        [self og_ensureDialogListDataForConversation:conversation];
+        NSDictionary *dialogListData = conversation.dialogListData;
+        if ([dialogListData[@"isSavedMessages"] intValue] != 0 || [dialogListData[@"isEncrypted"] boolValue] || conversation.isEncrypted)
+            continue;
+        [mutableConversations addObject:conversation];
+        if (![dialogListData[@"mute"] boolValue])
+            allMuted = false;
+    }
+    bool hasUserFolders = false;
+    for (NSDictionary *item in _ogSourceDialogFilters)
+        hasUserFolders = hasUserFolders || ![item[@"default"] boolValue];
+
+    NSMutableArray *actions = [[NSMutableArray alloc] init];
+    if (hasUserFolders)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.Reorder") action:@"reorder" type:TGActionSheetActionTypeGeneric]];
+    if (!isDefault)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.ConfigureFolder") action:@"edit" type:TGActionSheetActionTypeGeneric]];
+    else
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.EditFolders") action:@"editFolders" type:TGActionSheetActionTypeGeneric]];
+    if (!isDefault && mutableConversations.count != 0)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(allMuted ? @"DialogFilters.UnmuteAll" : @"DialogFilters.MuteAll") action:@"mute" type:TGActionSheetActionTypeGeneric]];
+    if (unreadConversations.count != 0)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.ReadAll") action:@"read" type:TGActionSheetActionTypeGeneric]];
+    if (!isDefault)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.DeleteFolder") action:@"delete" type:TGActionSheetActionTypeDestructive]];
+    [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]];
+
+    __weak TGDialogListController *weakSelf = self;
+    [TGDialogFiltersController presentActionSheetWithTitle:isDefault ? nil : filter[@"title"] actions:actions controller:self sourceRect:sourceRect actionBlock:^(NSString *action)
+    {
+        __strong TGDialogListController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        if ([action isEqualToString:@"reorder"] || [action isEqualToString:@"editFolders"])
+        {
+            TGDialogFiltersController *controller = [[TGDialogFiltersController alloc] init];
+            controller.startsReordering = [action isEqualToString:@"reorder"];
+            [strongSelf.navigationController pushViewController:controller animated:true];
+            return;
+        }
+        if ([action isEqualToString:@"read"])
+        {
+            [strongSelf og_markConversationsAsRead:unreadConversations];
+            return;
+        }
+        if ([action isEqualToString:@"mute"])
+        {
+            [strongSelf og_setConversations:mutableConversations muted:!allMuted];
+            return;
+        }
+        if (![action isEqualToString:@"edit"] && ![action isEqualToString:@"delete"])
+            return;
+        [strongSelf og_loadDialogFilters:^(TGDialogFiltersState *state)
+        {
+            __strong TGDialogListController *listController = weakSelf;
+            if (listController == nil)
+                return;
+            TGDialogFilter *dialogFilter = [listController og_dialogFilterWithId:filterId inState:state];
+            if (dialogFilter == nil)
+                return;
+            if ([action isEqualToString:@"delete"])
+            {
+                [TGDialogFiltersController deleteFilter:dialogFilter controller:listController completion:nil];
+                return;
+            }
+            [listController.navigationController pushViewController:[[TGDialogFilterEditController alloc] initWithFilter:dialogFilter allFilters:state.filters] animated:true];
+        }];
+    }];
+}
+
+- (bool)canAddPeerIdToDialogFilter:(int64_t)peerId
+{
+    return peerId != 0 && !TGPeerIdIsSecretChat(peerId) && !TGPeerIdIsAd(peerId) && !TGPeerIdIsFeed(peerId) && [self og_foldersAllowed] && !_dialogListCompanion.forwardMode && !_dialogListCompanion.feedChannels && TGTelegraphInstance.clientUserId != 0;
+}
+
+- (void)presentAddToDialogFilterForPeerId:(int64_t)peerId
+{
+    if (![self canAddPeerIdToDialogFilter:peerId])
+        return;
+    TGConversation *conversation = nil;
+    for (TGConversation *item in [self og_folderSourceItems])
+    {
+        if (item.conversationId == peerId)
+        {
+            conversation = item;
+            break;
+        }
+    }
+    if (conversation == nil)
+        conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
+    if (conversation == nil || conversation.isEncrypted)
+        return;
+    [self og_presentAddToFolderForConversation:conversation fromRect:CGRectZero];
+}
+
+- (void)og_presentAddToFolderForConversation:(TGConversation *)conversation fromRect:(CGRect)sourceRect
+{
+    int64_t peerId = conversation.conversationId;
+    __weak TGDialogListController *weakSelf = self;
+    [self og_loadDialogFilters:^(TGDialogFiltersState *state)
+    {
+        __strong TGDialogListController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        NSMutableArray *candidates = [[NSMutableArray alloc] init];
+        NSUInteger userFolders = 0;
+        for (TGDialogFilter *filter in state.filters)
+        {
+            if (filter.defaultFilter)
+                continue;
+            userFolders++;
+            if (![strongSelf dialogFilter:filter matchesConversation:conversation])
+                [candidates addObject:filter];
+        }
+        NSMutableArray *actions = [[NSMutableArray alloc] init];
+        for (TGDialogFilter *filter in candidates)
+            [actions addObject:[[TGActionSheetAction alloc] initWithTitle:filter.title action:[NSString stringWithFormat:@"%d", (int)filter.filterId] type:TGActionSheetActionTypeGeneric]];
+        if (userFolders < [TGDialogFilterSignals folderLimit])
+            [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"DialogFilters.NewFolder") action:@"new" type:TGActionSheetActionTypeGeneric]];
+        if (actions.count == 0)
+        {
+            [TGDialogFiltersController presentError:@"DIALOG_FILTERS_TOO_MUCH"];
+            return;
+        }
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]];
+        [TGDialogFiltersController presentActionSheetWithTitle:TGLocalized(@"DialogFilters.AddToFolder") actions:actions controller:strongSelf sourceRect:sourceRect actionBlock:^(NSString *action)
+        {
+            __strong TGDialogListController *listController = weakSelf;
+            if (listController == nil || [action isEqualToString:@"cancel"])
+                return;
+            if ([action isEqualToString:@"new"])
+            {
+                TGDialogFilterEditController *controller = [[TGDialogFilterEditController alloc] initWithFilter:nil allFilters:state.filters];
+                controller.initialIncludedPeerIds = @[@(peerId)];
+                [listController.navigationController pushViewController:controller animated:true];
+                return;
+            }
+            TGDialogFilter *filter = [[listController og_dialogFilterWithId:(int32_t)[action intValue] inState:state] copy];
+            if (filter == nil)
+                return;
+            [filter removeExcludedPeerId:peerId];
+            if (![listController dialogFilter:filter matchesConversation:conversation])
+            {
+                if ([filter includedPeerIds].count >= [TGDialogFilterSignals chatsPerFolderLimit])
+                {
+                    [TGDialogFiltersController presentError:@"FILTER_INCLUDE_TOO_MUCH"];
+                    return;
+                }
+                [filter addIncludedPeerId:peerId];
+            }
+            [listController og_saveDialogFilter:filter];
+        }];
+    }];
+}
+
+- (void)og_removeConversation:(TGConversation *)conversation fromDialogFilterId:(int32_t)filterId
+{
+    int64_t peerId = conversation.conversationId;
+    __weak TGDialogListController *weakSelf = self;
+    [self og_loadDialogFilters:^(TGDialogFiltersState *state)
+    {
+        __strong TGDialogListController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        TGDialogFilter *filter = [[strongSelf og_dialogFilterWithId:filterId inState:state] copy];
+        if (filter == nil)
+            return;
+        [filter removeIncludedPeerId:peerId];
+        if ([strongSelf dialogFilter:filter matchesConversation:conversation])
+        {
+            if (filter.chatlist)
+            {
+                [TGDialogFiltersController presentError:@"CHATLIST_EXCLUDE_INVALID"];
+                return;
+            }
+            if (filter.excludePeerIds.count >= [TGDialogFilterSignals chatsPerFolderLimit])
+            {
+                [TGDialogFiltersController presentError:@"FILTER_EXCLUDE_TOO_MUCH"];
+                return;
+            }
+            [filter addExcludedPeerId:peerId];
+        }
+        if ((filter.flags & TGDialogFilterIncludeCategoriesMask) == 0 && [filter includedPeerIds].count == 0)
+        {
+            [TGDialogFiltersController presentError:@"FILTER_INCLUDE_EMPTY"];
+            return;
+        }
+        [strongSelf og_saveDialogFilter:filter];
+    }];
+}
+
+- (void)og_folderTabPressed:(UIButton *)button
 {
     NSInteger index = button.tag - 6100;
-    [self ios6SelectDialogFilterAtIndex:index];
+    [self og_selectDialogFilterAtIndex:index];
 }
 
-- (void)ios6UpdateFolderTabs
+- (void)og_updateFolderTabs
 {
     TG_DIALOG_LIST_COST(TGDialogListCostFolderTabs);
-    if (_ios6FolderTabsScrollView == nil)
+    if (_ogFolderTabsScrollView == nil)
         return;
-    if (_ios6FolderSwipeActive || _ios6FolderSwipeFinishing || (cpuCoreCount() == 1 && _tableView != nil && (_tableView.dragging || _tableView.tracking || _tableView.decelerating)))
+    if (_ogFolderSwipeActive || _ogFolderSwipeFinishing || (cpuCoreCount() == 1 && _tableView != nil && (_tableView.dragging || _tableView.tracking || _tableView.decelerating)))
     {
-        _ios6FolderTabsUpdatePending = true;
+        _ogFolderTabsUpdatePending = true;
         return;
     }
-    _ios6FolderTabsUpdatePending = false;
+    _ogFolderTabsUpdatePending = false;
 
     bool brandedStyle = [TGPresentation brandedIOS6Style];
-    bool classicStyle = [TGPresentation classicIOS6Style];
-    bool classicDarkStyle = TGDialogListClassicIOS6DarkStyle(self.presentation);
+    bool classicStyle = [TGPresentation classicThemeStyle];
+    bool classicDarkStyle = OGCompatDialogListClassicDarkStyle(self.presentation);
     OGDialogListAppearance *brandedAppearance = brandedStyle ? [TGPresentation brandedIOS6DialogListAppearance] : nil;
-    _ios6FolderTabsView.backgroundColor = [self ios6FolderTabsBackgroundColor];
-    _ios6FolderTabsScrollView.backgroundColor = [UIColor clearColor];
-    _ios6FolderTabsSeparatorView.backgroundColor = brandedStyle ? brandedAppearance.folderTabsSeparatorColor : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
-    _ios6FolderEmptyLabel.textColor = brandedStyle ? brandedAppearance.folderEmptyColor : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
+    _ogFolderTabsView.backgroundColor = [self og_folderTabsBackgroundColor];
+    _ogFolderTabsScrollView.backgroundColor = [UIColor clearColor];
+    _ogFolderTabsSeparatorView.backgroundColor = brandedStyle ? brandedAppearance.folderTabsSeparatorColor : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
+    _ogFolderEmptyLabel.textColor = brandedStyle ? brandedAppearance.folderEmptyColor : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
 
-    NSArray *folderSourceItems = brandedStyle ? nil : [self ios6FolderSourceItems];
-    NSMutableArray *unreadCounts = brandedStyle ? nil : [[NSMutableArray alloc] initWithCapacity:_ios6DialogFilters.count];
-    NSMutableString *stateKey = [[NSMutableString alloc] initWithFormat:@"%d|%d|%d|%d|%.0f|%p", brandedStyle ? 1 : 0, classicStyle ? 1 : 0, classicDarkStyle ? 1 : 0, _ios6SelectedDialogFilterId, self.view.bounds.size.width, brandedAppearance];
-    for (NSDictionary *filter in _ios6DialogFilters)
+    NSArray *folderSourceItems = brandedStyle ? nil : [self og_folderSourceItems];
+    NSMutableArray *unreadCounts = brandedStyle ? nil : [[NSMutableArray alloc] initWithCapacity:_ogDialogFilters.count];
+    NSMutableString *stateKey = [[NSMutableString alloc] initWithFormat:@"%d|%d|%d|%d|%.0f|%p", brandedStyle ? 1 : 0, classicStyle ? 1 : 0, classicDarkStyle ? 1 : 0, _ogSelectedDialogFilterId, self.view.bounds.size.width, brandedAppearance];
+    for (NSDictionary *filter in _ogDialogFilters)
     {
         if (brandedStyle)
             [stateKey appendFormat:@"|%d:%@", [filter[@"id"] intValue], filter[@"title"]];
         else
         {
-            int unread = [self ios6UnreadCountForDialogFilter:filter sourceItems:folderSourceItems];
+            int unread = [self og_unreadCountForDialogFilter:filter sourceItems:folderSourceItems];
             [unreadCounts addObject:@(unread)];
             [stateKey appendFormat:@"|%d:%d:%@", [filter[@"id"] intValue], unread, filter[@"title"]];
         }
     }
 
-    if ([_ios6FolderTabsStateKey isEqualToString:stateKey])
+    if ([_ogFolderTabsStateKey isEqualToString:stateKey])
     {
-        [self ios6UpdateFolderEmptyLabel];
+        [self og_updateFolderEmptyLabel];
         return;
     }
-    _ios6FolderTabsStateKey = [stateKey copy];
+    _ogFolderTabsStateKey = [stateKey copy];
 
-    for (UIView *view in [_ios6FolderTabsScrollView.subviews copy])
+    for (UIView *view in [_ogFolderTabsScrollView.subviews copy])
         [view removeFromSuperview];
 
     UIFont *font = brandedStyle ? brandedAppearance.folderButtonFont : TGBoldSystemFontOfSize(13.0f);
@@ -6035,26 +6272,26 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     CGFloat brandedTrailingInset = brandedAppearance.folderTabsTrailingInset;
     CGFloat brandedSpacing = brandedAppearance.folderTabsSpacing;
     CGFloat brandedContentHeight = MAX(0.0f, brandedAppearance.folderTabsHeight - 1.0f);
-    if (brandedStyle && _ios6DialogFilters.count > 1)
+    if (brandedStyle && _ogDialogFilters.count > 1)
     {
         CGFloat totalWidth = 0.0f;
-        for (NSDictionary *filter in _ios6DialogFilters)
+        for (NSDictionary *filter in _ogDialogFilters)
             totalWidth += TGDialogListBrandedFolderButtonWidth(brandedAppearance, filter[@"title"]);
         CGFloat availableSpacing = self.view.bounds.size.width - brandedInset - brandedTrailingInset - totalWidth;
         if (availableSpacing >= 0.0f)
-            brandedSpacing = availableSpacing / (_ios6DialogFilters.count - 1);
+            brandedSpacing = availableSpacing / (_ogDialogFilters.count - 1);
     }
     CGFloat x = brandedStyle ? brandedInset : 8.0f;
     NSInteger index = 0;
     UIButton *selectedButton = nil;
-    for (NSDictionary *filter in _ios6DialogFilters)
+    for (NSDictionary *filter in _ogDialogFilters)
     {
         NSString *title = filter[@"title"];
         int unread = brandedStyle ? 0 : [unreadCounts[index] intValue];
         NSString *badgeText = unread > 999 ? @"999+" : (unread > 0 ? [NSString stringWithFormat:@"%d", unread] : nil);
         CGSize titleSize = [title sizeWithFont:font];
         CGFloat badgeWidth = brandedStyle || badgeText.length == 0 ? 0.0f : MAX(18.0f, [badgeText sizeWithFont:TGBoldSystemFontOfSize(11.0f)].width + 10.0f);
-        bool selected = [filter[@"id"] intValue] == _ios6SelectedDialogFilterId;
+        bool selected = [filter[@"id"] intValue] == _ogSelectedDialogFilterId;
         CGFloat width = brandedStyle ? TGDialogListBrandedFolderButtonWidth(brandedAppearance, title) : MAX(64.0f, titleSize.width + 24.0f + (badgeWidth > 0.0f ? badgeWidth + 5.0f : 0.0f));
         CGFloat brandedButtonHeight = brandedAppearance.folderButtonHeight;
         CGFloat brandedButtonY = brandedAppearance.folderButtonTopInset;
@@ -6112,70 +6349,76 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
         if (selected)
             selectedButton = button;
-        [button addTarget:self action:@selector(ios6FolderTabPressed:) forControlEvents:UIControlEventTouchUpInside];
-        [_ios6FolderTabsScrollView addSubview:button];
+        [button addTarget:self action:@selector(og_folderTabPressed:) forControlEvents:UIControlEventTouchUpInside];
+        if (!_dialogListCompanion.forwardMode)
+        {
+            UILongPressGestureRecognizer *longPressRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(og_folderTabLongPress:)];
+            longPressRecognizer.minimumPressDuration = 0.45;
+            [button addGestureRecognizer:longPressRecognizer];
+        }
+        [_ogFolderTabsScrollView addSubview:button];
         x += width;
-        if (index + 1 < (NSInteger)_ios6DialogFilters.count)
+        if (index + 1 < (NSInteger)_ogDialogFilters.count)
             x += brandedStyle ? brandedSpacing : 2.0f;
         index++;
     }
     CGFloat contentHeight = brandedStyle ? brandedContentHeight : 37.0f;
     CGFloat trailingInset = brandedStyle ? brandedTrailingInset : 6.0f;
-    _ios6FolderTabsScrollView.contentSize = CGSizeMake(MAX(self.view.bounds.size.width, x + trailingInset), contentHeight);
-    if (selectedButton != nil && [self ios6FolderTabsHeight] > 0.0f)
-        [_ios6FolderTabsScrollView scrollRectToVisible:CGRectInset(selectedButton.frame, brandedStyle ? -13.0f : -16.0f, 0.0f) animated:false];
-    [self ios6UpdateFolderEmptyLabel];
+    _ogFolderTabsScrollView.contentSize = CGSizeMake(MAX(self.view.bounds.size.width, x + trailingInset), contentHeight);
+    if (selectedButton != nil && [self og_folderTabsHeight] > 0.0f)
+        [_ogFolderTabsScrollView scrollRectToVisible:CGRectInset(selectedButton.frame, brandedStyle ? -13.0f : -16.0f, 0.0f) animated:false];
+    [self og_updateFolderEmptyLabel];
 }
 
-- (UIColor *)ios6FolderTabsBackgroundColor
+- (UIColor *)og_folderTabsBackgroundColor
 {
     if ([TGPresentation brandedIOS6Style])
-        return [TGPresentation brandedIOS6DialogListHeaderColorForSize:_ios6FolderTabsView.bounds.size];
-    if ([TGPresentation classicIOS6Style])
-        return TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.backgroundColor : UIColorRGB(0xf7f7f7);
+        return [TGPresentation brandedIOS6DialogListHeaderColorForSize:_ogFolderTabsView.bounds.size];
+    if ([TGPresentation classicThemeStyle])
+        return OGCompatDialogListClassicDarkStyle(self.presentation) ? self.presentation.pallete.backgroundColor : UIColorRGB(0xf7f7f7);
     return self.presentation.pallete.backgroundColor;
 }
 
-- (void)ios6LayoutFolderTabs
+- (void)og_layoutFolderTabs
 {
-    if (_tableView == nil || _ios6FolderTabsView == nil)
+    if (_tableView == nil || _ogFolderTabsView == nil)
         return;
 
-    CGFloat height = [self ios6FolderTabsHeight];
+    CGFloat height = [self og_folderTabsHeight];
     CGFloat width = _tableView.bounds.size.width;
-    CGFloat playerHeight = [TGPresentation brandedIOS6Style] ? _ios6PlayerHeight : 0.0f;
-    CGRect headerFrame = _ios6ListHeaderView.frame;
+    CGFloat playerHeight = [TGPresentation brandedIOS6Style] ? _ogPlayerHeight : 0.0f;
+    CGRect headerFrame = _ogListHeaderView.frame;
     headerFrame.size = CGSizeMake(width, height + playerHeight);
-    _ios6ListHeaderView.frame = headerFrame;
-    if (_ios6FolderTabsView.superview != _ios6ListHeaderView)
-        [_ios6ListHeaderView addSubview:_ios6FolderTabsView];
-    _ios6PlayerHostView.frame = CGRectMake(0.0f, height, width, playerHeight);
+    _ogListHeaderView.frame = headerFrame;
+    if (_ogFolderTabsView.superview != _ogListHeaderView)
+        [_ogListHeaderView addSubview:_ogFolderTabsView];
+    _ogPlayerHostView.frame = CGRectMake(0.0f, height, width, playerHeight);
     if ([TGPresentation brandedIOS6Style])
     {
         TGNavigationBar *navigationBar = [self.navigationController.navigationBar isKindOfClass:[TGNavigationBar class]] ? (TGNavigationBar *)self.navigationController.navigationBar : nil;
-        if (navigationBar.musicPlayerHostView == _ios6PlayerHostView)
-            navigationBar.musicPlayerHostView = _ios6PlayerHostView;
+        if (navigationBar.musicPlayerHostView == _ogPlayerHostView)
+            navigationBar.musicPlayerHostView = _ogPlayerHostView;
     }
-    _ios6FolderTabsView.hidden = height < FLT_EPSILON;
-    _ios6FolderTabsView.frame = CGRectMake(0.0f, 0.0f, width, height);
-    _ios6FolderTabsView.backgroundColor = [self ios6FolderTabsBackgroundColor];
-    _ios6FolderTabsScrollView.frame = CGRectMake(0.0f, 0.0f, width, MAX(0.0f, height - 1.0f));
-    _ios6FolderTabsSeparatorView.frame = CGRectMake(0.0f, MAX(0.0f, height - 1.0f), width, height > 0.0f ? 1.0f : 0.0f);
-    [self ios6UpdateFolderEmptyLabel];
+    _ogFolderTabsView.hidden = height < FLT_EPSILON;
+    _ogFolderTabsView.frame = CGRectMake(0.0f, 0.0f, width, height);
+    _ogFolderTabsView.backgroundColor = [self og_folderTabsBackgroundColor];
+    _ogFolderTabsScrollView.frame = CGRectMake(0.0f, 0.0f, width, MAX(0.0f, height - 1.0f));
+    _ogFolderTabsSeparatorView.frame = CGRectMake(0.0f, MAX(0.0f, height - 1.0f), width, height > 0.0f ? 1.0f : 0.0f);
+    [self og_updateFolderEmptyLabel];
 }
 
-- (void)ios6UpdateFolderEmptyLabel
+- (void)og_updateFolderEmptyLabel
 {
-    if (_ios6FolderEmptyLabel == nil)
+    if (_ogFolderEmptyLabel == nil)
         return;
-    bool folderContentLoading = _ios6AllDialogItemsLoading || !_ios6FolderLocalSourceExhausted || _ios6FolderPeerHydrationActive || _ios6FolderPeerLocalLookupInFlight || ([self ios6SelectedDialogFilterNeedsHistoryScan] && _canLoadMore);
-    bool show = _ios6SelectedDialogFilterId != 0 && [self ios6VisibleListModel].count == 0 && !_isLoading && !folderContentLoading && !_isDisplayingSearch && _ios6FolderSwipeContainerView == nil;
-    _ios6FolderEmptyLabel.hidden = !show;
+    bool folderContentLoading = _ogAllDialogItemsLoading || !_ogFolderLocalSourceExhausted || _ogFolderPeerHydrationActive || _ogFolderPeerLocalLookupInFlight || ([self og_selectedDialogFilterNeedsHistoryScan] && _canLoadMore);
+    bool show = _ogSelectedDialogFilterId != 0 && [self og_visibleListModel].count == 0 && !_isLoading && !folderContentLoading && !_isDisplayingSearch && _ogFolderSwipeContainerView == nil;
+    _ogFolderEmptyLabel.hidden = !show;
     if (show)
     {
-        CGFloat top = self.controllerInset.top + [self ios6FolderTabsHeight] + _ios6PlayerHeight;
-        _ios6FolderEmptyLabel.frame = CGRectMake(20.0f, top + 40.0f, self.view.bounds.size.width - 40.0f, 44.0f);
-        [self.view bringSubviewToFront:_ios6FolderEmptyLabel];
+        CGFloat top = self.controllerInset.top + [self og_folderTabsHeight] + _ogPlayerHeight;
+        _ogFolderEmptyLabel.frame = CGRectMake(20.0f, top + 40.0f, self.view.bounds.size.width - 40.0f, 44.0f);
+        [self.view bringSubviewToFront:_ogFolderEmptyLabel];
     }
 }
 
@@ -6188,56 +6431,56 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)dialogListCommitDisplayedItems
 {
-    _dialogListDisplayedItems = [[self ios6VisibleListModel] copy] ?: @[];
+    _dialogListDisplayedItems = [[self og_visibleListModel] copy] ?: @[];
 }
 
-- (void)ios6StoreSelectedDialogFilterId
+- (void)og_storeSelectedDialogFilterId
 {
     if (!_dialogListCompanion.forwardMode)
-        [[NSUserDefaults standardUserDefaults] setInteger:_ios6SelectedDialogFilterId forKey:@"TGIOS6SelectedDialogFilterId"];
+        [[NSUserDefaults standardUserDefaults] setInteger:_ogSelectedDialogFilterId forKey:@"TGIOS6SelectedDialogFilterId"];
 }
 
-- (NSArray *)ios6VisibleListModel
+- (NSArray *)og_visibleListModel
 {
-    if (![self ios6FoldersAllowed] || (_dialogListCompanion.forwardMode && _ios6SelectedDialogFilterId == 0))
+    if (![self og_foldersAllowed] || (_dialogListCompanion.forwardMode && _ogSelectedDialogFilterId == 0))
         return _listModel;
-    if (_ios6VisibleListCache != nil && _ios6VisibleListCacheFilterId == _ios6SelectedDialogFilterId)
-        return _ios6VisibleListCache;
-    NSArray *result = [self ios6VisibleItemsForDialogFilter:[self ios6SelectedDialogFilter]];
-    _ios6VisibleListCache = [result copy] ?: @[];
-    _ios6VisibleListCacheFilterId = _ios6SelectedDialogFilterId;
-    return _ios6VisibleListCache;
+    if (_ogVisibleListCache != nil && _ogVisibleListCacheFilterId == _ogSelectedDialogFilterId)
+        return _ogVisibleListCache;
+    NSArray *result = [self og_visibleItemsForDialogFilter:[self og_selectedDialogFilter]];
+    _ogVisibleListCache = [result copy] ?: @[];
+    _ogVisibleListCacheFilterId = _ogSelectedDialogFilterId;
+    return _ogVisibleListCache;
 }
 
-- (id)ios6DialogListItemAtIndexPath:(NSIndexPath *)indexPath
+- (id)og_dialogListItemAtIndexPath:(NSIndexPath *)indexPath
 {
-    NSArray *visibleItems = [self dialogListDisplayedItems];
-    if (indexPath.row >= 0 && indexPath.row < (NSInteger)visibleItems.count)
-        return visibleItems[indexPath.row];
+    NSArray *displayedRows = [self dialogListDisplayedItems];
+    if (indexPath.row >= 0 && indexPath.row < (NSInteger)displayedRows.count)
+        return displayedRows[indexPath.row];
     
     return nil;
 }
 
-- (NSUInteger)ios6ArchivedConversationCount
+- (NSUInteger)og_archivedConversationCount
 {
     NSUInteger count = 0;
     for (id item in _listModel)
     {
-        if ([self ios6IsArchivedConversation:item])
+        if ([self og_isArchivedConversation:item])
             count++;
     }
     return count;
 }
 
-- (int)ios6ArchivedUnreadCount
+- (int)og_archivedUnreadCount
 {
     int count = 0;
     for (id item in _listModel)
     {
-        if ([self ios6IsArchivedConversation:item])
+        if ([self og_isArchivedConversation:item])
         {
             TGConversation *conversation = (TGConversation *)item;
-            [self ios6EnsureDialogListDataForConversation:conversation];
+            [self og_ensureDialogListDataForConversation:conversation];
             if (![conversation.dialogListData[@"mute"] boolValue])
                 count += conversation.unreadCount + MAX(0, conversation.serviceUnreadCount);
         }
@@ -6245,15 +6488,15 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return count;
 }
 
-- (UITableViewCell *)ios6ArchiveHeaderCellForTableView:(UITableView *)tableView
+- (UITableViewCell *)og_archiveHeaderCellForTableView:(UITableView *)tableView
 {
-    static NSString *ArchiveHeaderCellIdentifier = @"IOS6ArchiveHeaderCell";
+    static NSString *ArchiveHeaderCellIdentifier = @"OGArchiveHeaderCell";
     TGDialogListArchiveHeaderCell *cell = (TGDialogListArchiveHeaderCell *)[tableView dequeueReusableCellWithIdentifier:ArchiveHeaderCellIdentifier];
     if (cell == nil)
         cell = [[TGDialogListArchiveHeaderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ArchiveHeaderCellIdentifier];
 
     [cell setPresentation:_presentation branded:[TGPresentation brandedIOS6Style]];
-    [cell setArchivedCount:[self ios6ArchivedConversationCount] unreadCount:[self ios6ArchivedUnreadCount] expanded:_ios6ArchiveExpanded];
+    [cell setArchivedCount:[self og_archivedConversationCount] unreadCount:[self og_archivedUnreadCount] expanded:_ogArchiveExpanded];
     return cell;
 }
 
@@ -6278,8 +6521,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (indexPath.section == 0)
             return [TGPresentation brandedIOS6Style] ? 49.0f : 45.0f;
         
-        id item = [self ios6DialogListItemAtIndexPath:indexPath];
-        if ([self ios6IsArchiveHeaderItem:item])
+        id item = [self og_dialogListItemAtIndexPath:indexPath];
+        if ([self og_isArchiveHeaderItem:item])
             return TGDialogListArchiveHeaderHeight;
         if (item != nil)
             return [self dialogListConversationRowHeight];
@@ -6464,21 +6707,22 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [cell setTypingString:typingIt->second];
     }
     
-    [cell setSwipeActionsEnabled:!showsListState || ![self ios6NewChatListGesturesEnabled]];
+    cell.folderTags = showsListState ? [self og_folderTagsForConversation:conversation] : nil;
+    [cell setSwipeActionsEnabled:!showsListState || ![self og_newChatListGesturesEnabled]];
     [cell restartAnimations:false];
 }
 
 - (bool)isLastCell:(NSIndexPath *)indexPath {
-    id item = [self ios6DialogListItemAtIndexPath:indexPath];
+    id item = [self og_dialogListItemAtIndexPath:indexPath];
     if (![item isKindOfClass:[TGConversation class]])
         return true;
     
     bool isLastCell = false;
     TGConversation *conversation = (TGConversation *)item;
-    NSArray *visibleItems = [self dialogListDisplayedItems];
-    if (indexPath.row + 1 < (NSInteger)visibleItems.count && [visibleItems[indexPath.row + 1] isKindOfClass:[TGConversation class]]) {
-        TGConversation *nextConversation = visibleItems[indexPath.row + 1];
-        isLastCell = (nextConversation.pinnedToTop || nextConversation.isAd || [self ios6IsArchivedConversation:nextConversation]) != (conversation.pinnedToTop || conversation.isAd || [self ios6IsArchivedConversation:conversation]);
+    NSArray *displayedRows = [self dialogListDisplayedItems];
+    if (indexPath.row + 1 < (NSInteger)displayedRows.count && [displayedRows[indexPath.row + 1] isKindOfClass:[TGConversation class]]) {
+        TGConversation *followingDialog = displayedRows[indexPath.row + 1];
+        isLastCell = (followingDialog.pinnedToTop || followingDialog.isAd || [self og_isArchivedConversation:followingDialog]) != (conversation.pinnedToTop || conversation.isAd || [self og_isArchivedConversation:conversation]);
     } else {
         isLastCell = true;
     }
@@ -6549,9 +6793,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
         else
         {
-            id item = [self ios6DialogListItemAtIndexPath:indexPath];
-            if ([self ios6IsArchiveHeaderItem:item])
-                return [self ios6ArchiveHeaderCellForTableView:tableView];
+            id item = [self og_dialogListItemAtIndexPath:indexPath];
+            if ([self og_isArchiveHeaderItem:item])
+                return [self og_archiveHeaderCellForTableView:tableView];
             if ([item isKindOfClass:[TGConversation class]])
                 conversation = item;
             else if ([item isKindOfClass:[TGFeed class]])
@@ -6652,7 +6896,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         {
             if ([conversation isKindOfClass:[TGConversation class]])
             {
-                [self ios6EnsureDialogListDataForConversation:conversation];
+                [self og_ensureDialogListDataForConversation:conversation];
                 if (OGDiagnosticsEnabled() && (conversation.dialogListData.count == 0 || [conversation.dialogListData[@"title"] length] == 0))
                     OGPlatformDiagnosticLog(@"DIALOGCELL incomplete row=%d peer=%lld data=%d title=%d archived=%d pinned=%d", (int)indexPath.row, conversation.conversationId, (int)conversation.dialogListData.count, (int)[conversation.dialogListData[@"title"] length], conversation.isArchived ? 1 : 0, conversation.pinnedDate != 0 ? 1 : 0);
                 static NSString *MessageCellIdentifier = @"MC";
@@ -6666,7 +6910,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     cell.togglePinConversation = self.togglePinConversation;
                     cell.toggleGroupConversation = self.toggleGroupConversation;
                     cell.toggleReadConversation = self.toggleReadConversation;
-                    cell.toggleArchiveConversation = self.toggleArchiveConversation;
+                    cell.archiveToggleHandler = self.archiveToggleHandler;
                     cell.openCommunity = self.openCommunity;
                     cell.watcherHandle = _actionHandle;
                     cell.enableEditing = ![_dialogListCompanion forwardMode] && !_dialogListCompanion.privacyMode;
@@ -6696,7 +6940,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                     cell = [[TGDialogListCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:FeedCellIdentifier assetsSource:[_dialogListCompanion dialogListCellAssetsSource]];
                     cell.deleteConversation = self.deleteConversation;
                     cell.togglePinConversation = self.togglePinConversation;
-                    cell.toggleArchiveConversation = self.toggleArchiveConversation;
+                    cell.archiveToggleHandler = self.archiveToggleHandler;
                     cell.openCommunity = self.openCommunity;
                     cell.watcherHandle = _actionHandle;
                 }
@@ -6704,7 +6948,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 cell.presentation = _presentation;
                 [cell setFastScrolling:_dialogListFastScrolling];
                 [self prepareCell:cell forFeed:(TGFeed *)conversation animated:false];
-                [cell setSwipeActionsEnabled:![self ios6NewChatListGesturesEnabled]];
+                [cell setSwipeActionsEnabled:![self og_newChatListGesturesEnabled]];
                 [cell setIsLastCell:[self isLastCell:indexPath]];
                 
                 return cell;
@@ -7043,7 +7287,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (!_dialogListHiddenFlushScheduled)
         {
             _dialogListHiddenFlushScheduled = true;
-            TGDialogListControllerReference *reference = _ios6LifetimeReference;
+            TGDialogListControllerReference *reference = _ogLifetimeReference;
             dispatch_async(dispatch_get_main_queue(), ^
             {
                 [reference withValue:^(void *value)
@@ -7078,7 +7322,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
 
     _dialogListRateLimitFlushScheduled = true;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     OGPlatformDispatchOnMainThreadAfter(interval - elapsed, ^
     {
         [reference withValue:^(void *value)
@@ -7090,7 +7334,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
             controller->_dialogListLastUIUpdateTime = CFAbsoluteTimeGetCurrent();
             [controller dialogListFlushCoalescedUpdates];
-            [controller ios6ContinueDialogListDataHydration];
+            [controller og_continueDialogListDataHydration];
         }];
     });
 }
@@ -7107,7 +7351,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
 
     _dialogListCoalescedAllDialogItemsDirty = true;
-    _dialogListCoalescedAllDialogItems = [[NSMutableArray alloc] initWithArray:_ios6AllDialogItems == nil ? @[] : _ios6AllDialogItems];
+    _dialogListCoalescedAllDialogItems = [[NSMutableArray alloc] initWithArray:_ogAllDialogItems == nil ? @[] : _ogAllDialogItems];
 }
 
 - (void)dialogListCoalesceFullReload:(NSArray *)items
@@ -7141,7 +7385,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [_dialogListCoalescedModel replaceObjectAtIndex:i withObject:updatedItem];
     }
 
-    if (_ios6AllDialogItems.count != 0 || _dialogListCoalescedAllDialogItemsDirty)
+    if (_ogAllDialogItems.count != 0 || _dialogListCoalescedAllDialogItemsDirty)
     {
         [self dialogListEnsureCoalescedAllDialogItems];
         for (NSInteger i = (NSInteger)_dialogListCoalescedAllDialogItems.count - 1; i >= 0; i--)
@@ -7239,7 +7483,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (insertionObjects.count != 0)
         [_dialogListCoalescedModel insertObjects:insertionObjects atIndexes:insertionPositions];
 
-    if (_ios6AllDialogItems.count != 0 || _dialogListCoalescedAllDialogItemsDirty)
+    if (_ogAllDialogItems.count != 0 || _dialogListCoalescedAllDialogItemsDirty)
     {
         [self dialogListEnsureCoalescedAllDialogItems];
         NSMutableDictionary *updatesByPeerId = [[NSMutableDictionary alloc] initWithCapacity:updatedItems.count];
@@ -7356,7 +7600,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     {
         _dialogListDisplayedItems = [items copy];
         [self dialogListRefreshVisibleCells];
-        [self ios6UpdateFolderEmptyLabel];
+        [self og_updateFolderEmptyLabel];
         return true;
     }
     NSMutableDictionary *oldIndices = [[NSMutableDictionary alloc] initWithCapacity:previous.count];
@@ -7367,7 +7611,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     {
         id item = previous[i];
         int64_t peerId = TGDialogListItemPeerId(item);
-        id key = peerId != 0 ? TGDialogListDiffKey(item, peerId) : ([self ios6IsArchiveHeaderItem:item] ? @"archive" : nil);
+        id key = peerId != 0 ? TGDialogListDiffKey(item, peerId) : ([self og_isArchiveHeaderItem:item] ? @"archive" : nil);
         if (key == nil || oldIndices[key] != nil)
             return false;
         oldIndices[key] = @(i);
@@ -7378,7 +7622,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     for (id item in items)
     {
         int64_t peerId = TGDialogListItemPeerId(item);
-        id key = peerId != 0 ? TGDialogListDiffKey(item, peerId) : ([self ios6IsArchiveHeaderItem:item] ? @"archive" : nil);
+        id key = peerId != 0 ? TGDialogListDiffKey(item, peerId) : ([self og_isArchiveHeaderItem:item] ? @"archive" : nil);
         if (key == nil || [newKeySet containsObject:key])
             return false;
         [newKeySet addObject:key];
@@ -7493,7 +7737,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 [(TGDialogListCell *)cell setEditingConrolsExpanded:true toLeft:editingToLeft animated:false];
         }
     }
-    [self ios6UpdateFolderEmptyLabel];
+    [self og_updateFolderEmptyLabel];
     return true;
 }
 
@@ -7516,7 +7760,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     _dialogListVisibleRefreshPending = false;
 
     if (allDialogItemsDirty)
-        _ios6AllDialogItems = [coalescedAllDialogItems copy];
+        _ogAllDialogItems = [coalescedAllDialogItems copy];
 
     if (hasFullReload)
     {
@@ -7533,25 +7777,25 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return;
     }
 
-    NSArray *previousVisibleItems = [[self ios6VisibleListModel] copy];
-    NSUInteger archivedCountBefore = [self ios6ArchivedConversationCount];
+    NSArray *previousVisibleItems = [[self og_visibleListModel] copy];
+    NSUInteger archivedTotalPrior = [self og_archivedConversationCount];
     int countBefore = (int)_listModel.count;
 
     [_listModel removeAllObjects];
     [_listModel addObjectsFromArray:coalescedModel];
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _ogVisibleListCache = nil;
+    _ogVisibleListCacheFilterId = INT32_MIN;
 
-    NSUInteger archivedCountAfter = [self ios6ArchivedConversationCount];
-    if (archivedCountBefore != archivedCountAfter)
+    NSUInteger archivedTotalNow = [self og_archivedConversationCount];
+    if (archivedTotalPrior != archivedTotalNow)
     {
-        if (_ios6ArchiveExpanded && archivedCountAfter == 0)
-            _ios6ArchiveExpanded = false;
+        if (_ogArchiveExpanded && archivedTotalNow == 0)
+            _ogArchiveExpanded = false;
         [self updateBarButtonItemsAnimated:false];
         reloadPending = true;
     }
 
-    NSArray *currentVisibleItems = [self ios6VisibleListModel];
+    NSArray *currentVisibleItems = [self og_visibleListModel];
     if (![self dialogListVisibleItems:previousVisibleItems haveSameOrderAs:currentVisibleItems])
         reloadPending = true;
 
@@ -7563,8 +7807,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     else if (visibleRefreshPending)
         [self dialogListRefreshVisibleCells];
 
-    [self ios6UpdateFolderTabs];
-    [self ios6ScheduleFolderPeerHydrationReconciliation];
+    [self og_updateFolderTabs];
+    [self og_scheduleFolderPeerHydrationReconciliation];
     _visibleConversationsPipe.sink(@true);
 
     if ((countBefore == 0) != (_listModel.count == 0))
@@ -7600,7 +7844,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (needsReload)
     {
         [tableView reloadData];
-        [self ios6LayoutFolderTabs];
+        [self og_layoutFolderTabs];
     }
 }
 
@@ -7611,7 +7855,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)dialogListRefreshVisibleCellsAnimated:(bool)animated
 {
-    NSArray *items = [self ios6VisibleListModel];
+    NSArray *items = [self og_visibleListModel];
     NSArray *displayedItems = [self dialogListDisplayedItems];
     if (items != displayedItems && ![self dialogListVisibleItems:displayedItems haveSameOrderAs:items])
     {
@@ -7686,7 +7930,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             if (_dialogListFastScrolling)
                 return;
             [self dialogListFlushCoalescedUpdates];
-            [self ios6ContinueDialogListDataHydration];
+            [self og_continueDialogListDataHydration];
         });
         return;
     }
@@ -7699,7 +7943,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
                 [(TGDialogListCell *)cell resumeDeferredContent];
         }
         [self dialogListFlushCoalescedUpdates];
-        [self ios6ContinueDialogListDataHydration];
+        [self og_continueDialogListDataHydration];
     }
 }
 
@@ -7814,11 +8058,11 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (NSString *)dialogListAvatarFilter
 {
-    CGFloat avatarSize = [TGPresentation brandedIOS6Style] ? 50.0f : ([TGPresentation classicIOS6Style] ? 52.0f : 62.0f);
-    return [TGPresentation classicIOS6Style] ? [NSString stringWithFormat:@"scale:%dx%d", (int)avatarSize, (int)avatarSize] : [NSString stringWithFormat:@"circle:%dx%d", (int)avatarSize, (int)avatarSize];
+    CGFloat avatarSize = [TGPresentation brandedIOS6Style] ? 50.0f : ([TGPresentation classicThemeStyle] ? 52.0f : 62.0f);
+    return [TGPresentation classicThemeStyle] ? [NSString stringWithFormat:@"scale:%dx%d", (int)avatarSize, (int)avatarSize] : [NSString stringWithFormat:@"circle:%dx%d", (int)avatarSize, (int)avatarSize];
 }
 
-- (void)ios6ScheduleCompleteDialogHydrationAndAvatarPrefetch
+- (void)og_scheduleCompleteDialogHydrationAndAvatarPrefetch
 {
     if (!OGPlatformUsesConstrainedBackgroundExecution() || _listModel.count == 0)
         return;
@@ -7832,7 +8076,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
         TGConversation *conversation = (TGConversation *)item;
         if (conversation.dialogListData.count == 0)
-            [self ios6EnsureDialogListDataForConversation:conversation];
+            [self og_ensureDialogListDataForConversation:conversation];
         else if (avatarPrefetchRemaining != 0)
         {
             avatarPrefetchRemaining--;
@@ -7846,7 +8090,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (conversation == nil || _presentation == nil || width <= 0.0f || conversation.dialogListData.count == 0)
         return;
 
-    NSArray *preheatContext = @[_presentation, @(width), @([TGPresentation brandedIOS6Style]), @([TGPresentation classicIOS6Style]), @(TGCurrentEmojiRenderMode()), @([TGDialogListCell renderCacheGeneration])];
+    NSArray *preheatContext = @[_presentation, @(width), @([TGPresentation brandedIOS6Style]), @([TGPresentation classicThemeStyle]), @(TGCurrentEmojiRenderMode()), @([TGDialogListCell renderCacheGeneration])];
     if (_dialogListPreheatedConversations == nil)
         _dialogListPreheatedConversations = [[NSMutableDictionary alloc] init];
     if (![_dialogListPreheatContext isEqualToArray:preheatContext] || _dialogListPreheatedConversations.count > 1024)
@@ -7894,7 +8138,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         author = TGLocalized(@"DialogList.Draft");
     }
     bool branded = [TGPresentation brandedIOS6Style];
-    bool classic = [TGPresentation classicIOS6Style];
+    bool classic = [TGPresentation classicThemeStyle];
     bool encrypted = [data[@"isEncrypted"] boolValue];
     bool muted = [data[@"mute"] boolValue];
     bool verified = [data[@"isVerified"] boolValue];
@@ -7922,7 +8166,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (preparedGeneration != nil && preparedGeneration.unsignedLongLongValue == [TGDialogListCell renderCacheGeneration])
         return;
     OGMemoryCache *prepared = _dialogListPreheatedRenderKeys;
-    OGRuntimeDispatchPreload(@[@"dialog", _ios6LifetimeReference, @(conversation.conversationId)], ^
+    OGRuntimeDispatchPreload(@[@"dialog", _ogLifetimeReference, @(conversation.conversationId)], ^
     {
         [TGDialogListCell prewarmTitleText:title messageText:message authorName:author statusText:status width:renderWidth presentation:presentation unread:unread unreadCount:unreadCount serviceUnreadCount:serviceUnreadCount unreadMark:unreadMark unreadMentionCount:mentions pinned:pinned muted:muted verified:verified premium:premium emojiStatus:emojiStatus deliveryState:delivery dateText:dateText encrypted:encrypted showsDeliveryStatus:showsDeliveryStatus branded:branded classic:classic];
         if (emojiMode == TGCurrentEmojiRenderMode())
@@ -7970,7 +8214,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
     for (NSInteger row = start; row <= end; row++)
     {
-        id item = [self ios6DialogListItemAtIndexPath:[NSIndexPath indexPathForRow:row inSection:indexPath.section]];
+        id item = [self og_dialogListItemAtIndexPath:[NSIndexPath indexPathForRow:row inSection:indexPath.section]];
         if ([item isKindOfClass:[TGConversation class]])
         {
             TGConversation *conversation = (TGConversation *)item;
@@ -8018,7 +8262,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (generation != _dialogListFullPreheatGeneration || _tableView == nil || _tableView.window == nil)
         return;
 
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDialogListControllerReference *reference = _ogLifetimeReference;
     if (_dialogListFastScrolling)
     {
         TGDispatchAfter(0.3, dispatch_get_main_queue(), ^
@@ -8060,18 +8304,18 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (tableView == _tableView)
     {
         int listCount = (int)[self dialogListDisplayedItems].count;
-        bool ios6FolderPreloadActive = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] && [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6FolderPreloadActive];
+        bool folderPreloadActive = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] && [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6FolderPreloadActive];
         bool nearBottom = listCount != 0 && (listCount < 10 || indexPath.row >= listCount - 10);
         bool constrainedFastScroll = OGPlatformUsesConstrainedBackgroundExecution() && TGDialogListSingleCoreDevice() && _dialogListFastScrolling;
-        bool selectedFilterNeedsHistory = _ios6SelectedDialogFilterId == 0 || [self ios6SelectedDialogFilterNeedsHistoryScan];
-        bool localFolderSourcePending = _ios6SelectedDialogFilterId != 0 && selectedFilterNeedsHistory && !_ios6FolderLocalSourceExhausted;
-        if (!constrainedFastScroll && nearBottom && localFolderSourcePending && !_ios6AllDialogItemsLoading)
+        bool selectedFilterNeedsHistory = _ogSelectedDialogFilterId == 0 || [self og_selectedDialogFilterNeedsHistoryScan];
+        bool localFolderSourcePending = _ogSelectedDialogFilterId != 0 && selectedFilterNeedsHistory && !_ogFolderLocalSourceExhausted;
+        if (!constrainedFastScroll && nearBottom && localFolderSourcePending && !_ogAllDialogItemsLoading)
         {
-            [self ios6RefreshAllDialogItems:false];
+            [self og_refreshAllDialogItems:false];
         }
-        else if (!constrainedFastScroll && selectedFilterNeedsHistory && !localFolderSourcePending && !ios6FolderPreloadActive && !_ios6ArchiveExpanded && _canLoadMore && !_isLoading && nearBottom)
+        else if (!constrainedFastScroll && selectedFilterNeedsHistory && !localFolderSourcePending && !folderPreloadActive && !_ogArchiveExpanded && _canLoadMore && !_isLoading && nearBottom)
         {
-            [self ios6ScheduleLazyLoadMoreItems:15];
+            [self og_scheduleLazyLoadMoreItems:15];
         }
         
         if ([cell isKindOfClass:[TGDialogListCell class]])
@@ -8098,16 +8342,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         if (indexPath.section == 0)
             return false;
         
-        id visibleItem = [self ios6DialogListItemAtIndexPath:indexPath];
-        if ([visibleItem isKindOfClass:[TGFeed class]]) {
+        id displayedRow = [self og_dialogListItemAtIndexPath:indexPath];
+        if ([displayedRow isKindOfClass:[TGFeed class]]) {
             return true;
         }
-        if ([visibleItem isKindOfClass:[TGConversation class]]) {
-            TGConversation *item = visibleItem;
+        if ([displayedRow isKindOfClass:[TGConversation class]]) {
+            TGConversation *item = displayedRow;
             if (item.isAd) {
                 return false;
             }
-            if ([self ios6IsArchiveHeaderItem:visibleItem]) {
+            if ([self og_isArchiveHeaderItem:displayedRow]) {
                 return false;
             }
             return true;
@@ -8164,7 +8408,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 {
     if (tableView == _tableView)
     {
-        id item = [self ios6DialogListItemAtIndexPath:indexPath];
+        id item = [self og_dialogListItemAtIndexPath:indexPath];
         return [item isKindOfClass:[TGConversation class]] || [item isKindOfClass:[TGFeed class]];
     }
     return true;
@@ -8337,7 +8581,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 - (void)searchMixinWillActivate:(bool)animated
 {
     _isDisplayingSearch = true;
-    [self ios6LayoutFolderTabs];
+    [self og_layoutFolderTabs];
     _tableView.scrollEnabled = false;
     
     _emptyListContainer.hidden = true;
@@ -8414,7 +8658,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 - (void)searchMixinWillDeactivate:(bool)animated
 {
     _isDisplayingSearch = false;
-    [self ios6LayoutFolderTabs];
+    [self og_layoutFolderTabs];
     _tableView.scrollEnabled = true;
     
     _emptyListContainer.hidden = false;
@@ -8455,15 +8699,15 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if ((scrollView.isDragging || scrollView.isTracking) && _scrollingToConversationId != 0)
         _scrollingToConversationId = 0;
 
-    if ((scrollView.isDragging || scrollView.isTracking) && !_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil)
+    if ((scrollView.isDragging || scrollView.isTracking) && !_ogSearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil)
     {
         CGFloat hiddenOffset = -_tableView.contentInset.top + [self onegramSearchHeaderHeight] + self.explicitTableInset.top;
         if (scrollView.contentOffset.y < hiddenOffset)
             scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, hiddenOffset);
     }
     
-    if (!_ios6Refreshing)
-        [self ios6UpdateRefreshPullWithOverscroll:[self ios6RefreshOverscroll]];
+    if (!_ogRefreshing)
+        [self og_updateRefreshPullWithOverscroll:[self og_refreshOverscroll]];
 
     bool atTop = scrollView.contentOffset.y <= -_tableView.tableHeaderView.frame.size.height + FLT_EPSILON;
     if (_atTopValue != atTop)
@@ -8503,8 +8747,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         {
             [self dialogListPrimeVisibleRenderCache];
         }
-        if (_ios6FolderTabsUpdatePending)
-            [self ios6UpdateFolderTabs];
+        if (_ogFolderTabsUpdatePending)
+            [self og_updateFolderTabs];
     }
 }
 
@@ -8528,8 +8772,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         {
             [self dialogListPrimeVisibleRenderCache];
         }
-        if (_ios6FolderTabsUpdatePending)
-            [self ios6UpdateFolderTabs];
+        if (_ogFolderTabsUpdatePending)
+            [self og_updateFolderTabs];
     }
 }
 
@@ -8543,7 +8787,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         [self dialogListSetFastScrolling:true];
         _draggingStartOffset = scrollView.contentOffset.y;
         CGFloat hiddenOffset = -_tableView.contentInset.top + [self onegramSearchHeaderHeight] + self.explicitTableInset.top;
-        _ios6SearchPullArmed = _searchBar != nil && scrollView.contentOffset.y <= hiddenOffset + 1.0f;
+        _ogSearchPullArmed = _searchBar != nil && scrollView.contentOffset.y <= hiddenOffset + 1.0f;
     }
     
     if (_searchMixin.isActive && scrollView == _searchMixin.searchResultsTableView)
@@ -8560,16 +8804,16 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 {
     if (scrollView == _tableView)
     {
-        bool refreshTriggered = [self ios6RefreshAvailable] && !_ios6Refreshing && [self ios6RefreshOverscroll] >= [self ios6RefreshThreshold];
+        bool refreshTriggered = [self og_refreshAvailable] && !_ogRefreshing && [self og_refreshOverscroll] >= [self og_refreshThreshold];
         if (refreshTriggered)
-            [self ios6BeginRefresh];
-        else if ([self ios6ArchivePullAvailable] && scrollView.contentOffset.y < -_tableView.contentInset.top + self.explicitTableInset.top - 90.0f)
+            [self og_beginRefresh];
+        else if ([self og_archivePullAvailable] && scrollView.contentOffset.y < -_tableView.contentInset.top + self.explicitTableInset.top - 90.0f)
         {
             __weak TGDialogListController *weakSelf = self;
             dispatch_async(dispatch_get_main_queue(), ^
             {
                 __strong TGDialogListController *strongSelf = weakSelf;
-                if (strongSelf != nil && !strongSelf->_ios6ArchiveExpanded)
+                if (strongSelf != nil && !strongSelf->_ogArchiveExpanded)
                     [strongSelf archiveButtonPressed:nil];
             });
         }
@@ -8579,7 +8823,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             CGFloat searchHeight = [self onegramSearchHeaderHeight];
             CGFloat hiddenOffset = shownOffset + searchHeight;
 
-            if (!_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil && targetContentOffset->y < hiddenOffset)
+            if (!_ogSearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil && targetContentOffset->y < hiddenOffset)
             {
                 targetContentOffset->y = hiddenOffset;
             }
@@ -8604,17 +8848,17 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
 }
 
-- (bool)ios6ArchivePullAvailable
+- (bool)og_archivePullAvailable
 {
-    return [TGOnegramSettings boolForKey:TGOnegramSettingGeneralHideArchive] && !_ios6ArchiveExpanded && _ios6SelectedDialogFilterId == 0 && !_searchMixin.isActive && !_editingMode;
+    return [TGOnegramSettings boolForKey:TGOnegramSettingGeneralHideArchive] && !_ogArchiveExpanded && _ogSelectedDialogFilterId == 0 && !_searchMixin.isActive && !_editingMode;
 }
 
-- (bool)ios6RefreshAvailable
+- (bool)og_refreshAvailable
 {
-    return _tableView != nil && [self ios6FoldersAllowed] && !_dialogListCompanion.forwardMode && !_dialogListCompanion.feedChannels && !_searchMixin.isActive && !_isDisplayingSearch && !_editingMode && !_ios6FolderSwipeActive && !_ios6FolderSwipeFinishing && TGTelegraphInstance.clientUserId != 0;
+    return _tableView != nil && [self og_foldersAllowed] && !_dialogListCompanion.forwardMode && !_dialogListCompanion.feedChannels && !_searchMixin.isActive && !_isDisplayingSearch && !_editingMode && !_ogFolderSwipeActive && !_ogFolderSwipeFinishing && TGTelegraphInstance.clientUserId != 0;
 }
 
-- (CGFloat)ios6RefreshOverscroll
+- (CGFloat)og_refreshOverscroll
 {
     if (_tableView == nil)
         return 0.0f;
@@ -8622,180 +8866,180 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return MAX(0.0f, shownOffset - _tableView.contentOffset.y);
 }
 
-- (CGFloat)ios6RefreshThreshold
+- (CGFloat)og_refreshThreshold
 {
-    return [self ios6ArchivePullAvailable] ? 130.0f : 70.0f;
+    return [self og_archivePullAvailable] ? 130.0f : 70.0f;
 }
 
-- (void)ios6LoadRefreshViewsIfNeeded
+- (void)og_loadRefreshViewsIfNeeded
 {
-    if (_ios6RefreshContainerView != nil || _tableView == nil)
+    if (_ogRefreshContainerView != nil || _tableView == nil)
         return;
 
     CGFloat side = 36.0f;
-    _ios6RefreshContainerView = [[UIView alloc] initWithFrame:CGRectZero];
-    _ios6RefreshContainerView.clipsToBounds = true;
-    _ios6RefreshContainerView.userInteractionEnabled = false;
-    _ios6RefreshContainerView.backgroundColor = [UIColor clearColor];
-    _ios6RefreshContainerView.hidden = true;
-    [self.view insertSubview:_ios6RefreshContainerView aboveSubview:_tableView];
+    _ogRefreshContainerView = [[UIView alloc] initWithFrame:CGRectZero];
+    _ogRefreshContainerView.clipsToBounds = true;
+    _ogRefreshContainerView.userInteractionEnabled = false;
+    _ogRefreshContainerView.backgroundColor = [UIColor clearColor];
+    _ogRefreshContainerView.hidden = true;
+    [self.view insertSubview:_ogRefreshContainerView aboveSubview:_tableView];
 
-    _ios6RefreshBadgeView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, -side, side, side)];
-    _ios6RefreshBadgeView.layer.cornerRadius = side / 2.0f;
-    _ios6RefreshBadgeView.layer.borderWidth = TGScreenPixel;
-    [_ios6RefreshContainerView addSubview:_ios6RefreshBadgeView];
+    _ogRefreshBadgeView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, -side, side, side)];
+    _ogRefreshBadgeView.layer.cornerRadius = side / 2.0f;
+    _ogRefreshBadgeView.layer.borderWidth = TGScreenPixel;
+    [_ogRefreshContainerView addSubview:_ogRefreshBadgeView];
 
-    _ios6RefreshProgressLayer = [CAShapeLayer layer];
-    _ios6RefreshProgressLayer.frame = CGRectMake(0.0f, 0.0f, side, side);
-    _ios6RefreshProgressLayer.fillColor = [UIColor clearColor].CGColor;
-    _ios6RefreshProgressLayer.lineWidth = 2.5f;
-    _ios6RefreshProgressLayer.lineCap = kCALineCapRound;
-    [_ios6RefreshBadgeView.layer addSublayer:_ios6RefreshProgressLayer];
+    _ogRefreshProgressLayer = [CAShapeLayer layer];
+    _ogRefreshProgressLayer.frame = CGRectMake(0.0f, 0.0f, side, side);
+    _ogRefreshProgressLayer.fillColor = [UIColor clearColor].CGColor;
+    _ogRefreshProgressLayer.lineWidth = 2.5f;
+    _ogRefreshProgressLayer.lineCap = kCALineCapRound;
+    [_ogRefreshBadgeView.layer addSublayer:_ogRefreshProgressLayer];
 
-    _ios6RefreshActivityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    _ios6RefreshActivityIndicator.hidesWhenStopped = true;
-    _ios6RefreshActivityIndicator.center = CGPointMake(side / 2.0f, side / 2.0f);
-    [_ios6RefreshBadgeView addSubview:_ios6RefreshActivityIndicator];
+    _ogRefreshActivityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+    _ogRefreshActivityIndicator.hidesWhenStopped = true;
+    _ogRefreshActivityIndicator.center = CGPointMake(side / 2.0f, side / 2.0f);
+    [_ogRefreshBadgeView addSubview:_ogRefreshActivityIndicator];
 }
 
-- (void)ios6UpdateRefreshAppearance
+- (void)og_updateRefreshAppearance
 {
     TGPresentationPallete *pallete = self.presentation.pallete;
-    _ios6RefreshBadgeView.backgroundColor = pallete.collectionMenuCellBackgroundColor ?: pallete.backgroundColor;
-    _ios6RefreshBadgeView.layer.borderColor = (pallete.collectionMenuSeparatorColor ?: pallete.separatorColor).CGColor;
-    _ios6RefreshProgressLayer.strokeColor = pallete.accentColor.CGColor;
-    _ios6RefreshActivityIndicator.activityIndicatorViewStyle = pallete.isDark ? UIActivityIndicatorViewStyleWhite : UIActivityIndicatorViewStyleGray;
+    _ogRefreshBadgeView.backgroundColor = pallete.collectionMenuCellBackgroundColor ?: pallete.backgroundColor;
+    _ogRefreshBadgeView.layer.borderColor = (pallete.collectionMenuSeparatorColor ?: pallete.separatorColor).CGColor;
+    _ogRefreshProgressLayer.strokeColor = pallete.accentColor.CGColor;
+    _ogRefreshActivityIndicator.activityIndicatorViewStyle = pallete.isDark ? UIActivityIndicatorViewStyleWhite : UIActivityIndicatorViewStyleGray;
 }
 
-- (void)ios6LayoutRefreshContainer
+- (void)og_layoutRefreshContainer
 {
-    CGRect contentRect = [self ios6FolderSwipeContentRect];
+    CGRect contentRect = [self og_folderSwipeContentRect];
     if (CGRectIsEmpty(contentRect))
         contentRect = CGRectMake(0.0f, self.controllerInset.top, self.view.bounds.size.width, MAX(0.0f, self.view.bounds.size.height - self.controllerInset.top));
-    _ios6RefreshContainerView.frame = contentRect;
+    _ogRefreshContainerView.frame = contentRect;
 }
 
-- (void)ios6SetRefreshProgress:(CGFloat)progress
+- (void)og_setRefreshProgress:(CGFloat)progress
 {
-    CGFloat side = _ios6RefreshBadgeView.bounds.size.width;
+    CGFloat side = _ogRefreshBadgeView.bounds.size.width;
     CGFloat radius = 10.0f;
     CGFloat startAngle = -(CGFloat)M_PI_2;
     CGMutablePathRef path = CGPathCreateMutable();
     if (progress > FLT_EPSILON)
         CGPathAddArc(path, NULL, side / 2.0f, side / 2.0f, radius, startAngle, startAngle + (CGFloat)(M_PI * 2.0) * MIN(1.0f, progress), false);
-    _ios6RefreshProgressLayer.path = path;
+    _ogRefreshProgressLayer.path = path;
     CGPathRelease(path);
 }
 
-- (void)ios6UpdateRefreshPullWithOverscroll:(CGFloat)overscroll
+- (void)og_updateRefreshPullWithOverscroll:(CGFloat)overscroll
 {
-    if (overscroll <= FLT_EPSILON || ![self ios6RefreshAvailable])
+    if (overscroll <= FLT_EPSILON || ![self og_refreshAvailable])
     {
-        _ios6RefreshContainerView.hidden = true;
+        _ogRefreshContainerView.hidden = true;
         return;
     }
 
-    [self ios6LoadRefreshViewsIfNeeded];
-    if (_ios6RefreshContainerView.hidden)
+    [self og_loadRefreshViewsIfNeeded];
+    if (_ogRefreshContainerView.hidden)
     {
-        [self ios6UpdateRefreshAppearance];
-        [self ios6LayoutRefreshContainer];
-        _ios6RefreshContainerView.hidden = false;
+        [self og_updateRefreshAppearance];
+        [self og_layoutRefreshContainer];
+        _ogRefreshContainerView.hidden = false;
     }
 
-    CGFloat progress = MIN(1.0f, overscroll / [self ios6RefreshThreshold]);
-    CGFloat side = _ios6RefreshBadgeView.bounds.size.width;
+    CGFloat progress = MIN(1.0f, overscroll / [self og_refreshThreshold]);
+    CGFloat side = _ogRefreshBadgeView.bounds.size.width;
     CGFloat restingY = 14.0f;
     [CATransaction begin];
     [CATransaction setDisableActions:true];
-    _ios6RefreshBadgeView.frame = CGRectMake(CGFloor((_ios6RefreshContainerView.bounds.size.width - side) / 2.0f), -side + (side + restingY) * progress, side, side);
-    _ios6RefreshBadgeView.alpha = progress;
-    [self ios6SetRefreshProgress:progress];
+    _ogRefreshBadgeView.frame = CGRectMake(CGFloor((_ogRefreshContainerView.bounds.size.width - side) / 2.0f), -side + (side + restingY) * progress, side, side);
+    _ogRefreshBadgeView.alpha = progress;
+    [self og_setRefreshProgress:progress];
     [CATransaction commit];
 }
 
-- (void)ios6BeginRefresh
+- (void)og_beginRefresh
 {
-    [self ios6LoadRefreshViewsIfNeeded];
-    if (_ios6RefreshContainerView == nil)
+    [self og_loadRefreshViewsIfNeeded];
+    if (_ogRefreshContainerView == nil)
         return;
 
-    _ios6Refreshing = true;
-    _ios6RefreshSawActivity = false;
-    _ios6RefreshStartTime = CFAbsoluteTimeGetCurrent();
-    NSUInteger generation = ++_ios6RefreshGeneration;
+    _ogRefreshing = true;
+    _ogRefreshSawActivity = false;
+    _ogRefreshStartTime = CFAbsoluteTimeGetCurrent();
+    NSUInteger generation = ++_ogRefreshGeneration;
 
-    [self ios6UpdateRefreshAppearance];
-    [self ios6LayoutRefreshContainer];
-    _ios6RefreshContainerView.hidden = false;
-    CGFloat side = _ios6RefreshBadgeView.bounds.size.width;
-    _ios6RefreshBadgeView.frame = CGRectMake(CGFloor((_ios6RefreshContainerView.bounds.size.width - side) / 2.0f), 14.0f, side, side);
-    _ios6RefreshBadgeView.alpha = 1.0f;
-    [self ios6SetRefreshProgress:0.0f];
-    [_ios6RefreshActivityIndicator startAnimating];
+    [self og_updateRefreshAppearance];
+    [self og_layoutRefreshContainer];
+    _ogRefreshContainerView.hidden = false;
+    CGFloat side = _ogRefreshBadgeView.bounds.size.width;
+    _ogRefreshBadgeView.frame = CGRectMake(CGFloor((_ogRefreshContainerView.bounds.size.width - side) / 2.0f), 14.0f, side, side);
+    _ogRefreshBadgeView.alpha = 1.0f;
+    [self og_setRefreshProgress:0.0f];
+    [_ogRefreshActivityIndicator startAnimating];
 
     [ActionStageInstance() dispatchOnStageQueue:^
     {
         [ActionStageInstance() requestActor:@"/tg/service/updatestate" options:nil watcher:TGTelegraphInstance];
     }];
 
-    if (_ios6RefreshDisposable == nil)
-        _ios6RefreshDisposable = [[SMetaDisposable alloc] init];
+    if (_ogRefreshDisposable == nil)
+        _ogRefreshDisposable = [[SMetaDisposable alloc] init];
     __weak TGDialogListController *weakSelf = self;
-    [_ios6RefreshDisposable setDisposable:[[[TGSynchronizationStateSignal synchronizationState] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *value)
+    [_ogRefreshDisposable setDisposable:[[[TGSynchronizationStateSignal synchronizationState] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *value)
     {
         __strong TGDialogListController *strongSelf = weakSelf;
-        if (strongSelf == nil || !strongSelf->_ios6Refreshing || strongSelf->_ios6RefreshGeneration != generation)
+        if (strongSelf == nil || !strongSelf->_ogRefreshing || strongSelf->_ogRefreshGeneration != generation)
             return;
         if ((TGSynchronizationStateValue)[value intValue] != TGSynchronizationStateSynchronized)
-            strongSelf->_ios6RefreshSawActivity = true;
-        else if (strongSelf->_ios6RefreshSawActivity)
-            [strongSelf ios6CompleteRefreshForGeneration:generation];
+            strongSelf->_ogRefreshSawActivity = true;
+        else if (strongSelf->_ogRefreshSawActivity)
+            [strongSelf og_completeRefreshForGeneration:generation];
     }]];
 
     TGDispatchAfter(1.2, dispatch_get_main_queue(), ^
     {
         __strong TGDialogListController *strongSelf = weakSelf;
-        if (strongSelf != nil && !strongSelf->_ios6RefreshSawActivity)
-            [strongSelf ios6CompleteRefreshForGeneration:generation];
+        if (strongSelf != nil && !strongSelf->_ogRefreshSawActivity)
+            [strongSelf og_completeRefreshForGeneration:generation];
     });
     TGDispatchAfter(20.0, dispatch_get_main_queue(), ^
     {
-        [weakSelf ios6CompleteRefreshForGeneration:generation];
+        [weakSelf og_completeRefreshForGeneration:generation];
     });
 }
 
-- (void)ios6CompleteRefreshForGeneration:(NSUInteger)generation
+- (void)og_completeRefreshForGeneration:(NSUInteger)generation
 {
-    if (!_ios6Refreshing || _ios6RefreshGeneration != generation)
+    if (!_ogRefreshing || _ogRefreshGeneration != generation)
         return;
 
-    NSTimeInterval remaining = 0.6 - (CFAbsoluteTimeGetCurrent() - _ios6RefreshStartTime);
+    NSTimeInterval remaining = 0.6 - (CFAbsoluteTimeGetCurrent() - _ogRefreshStartTime);
     if (remaining > 0.0)
     {
         __weak TGDialogListController *weakSelf = self;
         TGDispatchAfter(remaining, dispatch_get_main_queue(), ^
         {
-            [weakSelf ios6CompleteRefreshForGeneration:generation];
+            [weakSelf og_completeRefreshForGeneration:generation];
         });
         return;
     }
 
-    [self ios6EndRefreshAnimated:true];
+    [self og_endRefreshAnimated:true];
 }
 
-- (void)ios6EndRefreshAnimated:(bool)animated
+- (void)og_endRefreshAnimated:(bool)animated
 {
-    if (!_ios6Refreshing)
+    if (!_ogRefreshing)
         return;
 
-    _ios6Refreshing = false;
-    _ios6RefreshGeneration++;
-    [_ios6RefreshDisposable setDisposable:nil];
+    _ogRefreshing = false;
+    _ogRefreshGeneration++;
+    [_ogRefreshDisposable setDisposable:nil];
 
-    UIView *badgeView = _ios6RefreshBadgeView;
-    UIView *containerView = _ios6RefreshContainerView;
-    UIActivityIndicatorView *activityIndicator = _ios6RefreshActivityIndicator;
+    UIView *badgeView = _ogRefreshBadgeView;
+    UIView *containerView = _ogRefreshContainerView;
+    UIActivityIndicatorView *activityIndicator = _ogRefreshActivityIndicator;
     void (^completion)(void) = ^
     {
         [activityIndicator stopAnimating];
@@ -8814,7 +9058,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         badgeView.alpha = 0.0f;
     } completion:^(__unused BOOL finished)
     {
-        if (!_ios6Refreshing)
+        if (!_ogRefreshing)
             completion();
     }];
 }
@@ -8910,7 +9154,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (tableView == _tableView)
     {
         TGConversation *conversation = nil;
-        id item = [self ios6DialogListItemAtIndexPath:indexPath];
+        id item = [self og_dialogListItemAtIndexPath:indexPath];
         if ([item isKindOfClass:[TGConversation class]] || [item isKindOfClass:[TGFeed class]])
             conversation = item;
         
@@ -9113,24 +9357,24 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 {
     if (tableView == _tableView)
     {
-        CGFloat folderTabsHeight = [self ios6FolderTabsHeight];
-        CGFloat playerHeight = [TGPresentation brandedIOS6Style] ? _ios6PlayerHeight : 0.0f;
+        CGFloat folderTabsHeight = [self og_folderTabsHeight];
+        CGFloat playerHeight = [TGPresentation brandedIOS6Style] ? _ogPlayerHeight : 0.0f;
 #if OG_PLUGINS_AVAILABLE
         if (section == 1)
         {
             UIView *original = nil;
-            if (folderTabsHeight + playerHeight > FLT_EPSILON && _ios6ListHeaderView != nil)
+            if (folderTabsHeight + playerHeight > FLT_EPSILON && _ogListHeaderView != nil)
             {
-                [self ios6LayoutFolderTabs];
-                original = _ios6ListHeaderView;
+                [self og_layoutFolderTabs];
+                original = _ogListHeaderView;
             }
             return OGPluginUIChatListSurfacesSectionView(self, original, folderTabsHeight + playerHeight, tableView.bounds.size.width);
         }
 #else
-        if (section == 1 && folderTabsHeight + playerHeight > FLT_EPSILON && _ios6ListHeaderView != nil)
+        if (section == 1 && folderTabsHeight + playerHeight > FLT_EPSILON && _ogListHeaderView != nil)
         {
-            [self ios6LayoutFolderTabs];
-            return _ios6ListHeaderView;
+            [self og_layoutFolderTabs];
+            return _ogListHeaderView;
         }
 #endif
         return nil;
@@ -9240,9 +9484,9 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 {
     if (tableView == _tableView)
 #if OG_PLUGINS_AVAILABLE
-        return section == 1 ? [self ios6FolderTabsHeight] + ([TGPresentation brandedIOS6Style] ? _ios6PlayerHeight : 0.0f) + OGPluginUIChatListSurfacesSectionHeight(self) : 0.0f;
+        return section == 1 ? [self og_folderTabsHeight] + ([TGPresentation brandedIOS6Style] ? _ogPlayerHeight : 0.0f) + OGPluginUIChatListSurfacesSectionHeight(self) : 0.0f;
 #else
-        return section == 1 ? [self ios6FolderTabsHeight] + ([TGPresentation brandedIOS6Style] ? _ios6PlayerHeight : 0.0f) : 0.0f;
+        return section == 1 ? [self og_folderTabsHeight] + ([TGPresentation brandedIOS6Style] ? _ogPlayerHeight : 0.0f) : 0.0f;
 #endif
     
     if (((NSString *)_searchResultsSections[section][@"title"]).length == 0 || [(NSArray *)_searchResultsSections[section][@"items"] count] == 0)
@@ -9531,12 +9775,12 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)_selectFirstConversation
 {
-    NSArray *visibleItems = [self dialogListDisplayedItems];
-    if (visibleItems.count == 0)
+    NSArray *displayedRows = [self dialogListDisplayedItems];
+    if (displayedRows.count == 0)
         return;
     
     TGConversation *conversation = nil;
-    for (id item in visibleItems)
+    for (id item in displayedRows)
     {
         if ([item isKindOfClass:[TGConversation class]])
         {
@@ -9799,7 +10043,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 }
 
 - (void)performTableAction:(UITableViewRowAction *)action withIndexPath:(NSIndexPath *)indexPath {
-    TGConversation *conversation = (TGConversation *)[self ios6DialogListItemAtIndexPath:indexPath];
+    TGConversation *conversation = (TGConversation *)[self og_dialogListItemAtIndexPath:indexPath];
     if (![conversation isKindOfClass:[TGConversation class]])
         return;
     if ([action.title isEqualToString:TGLocalized(@"Common.Delete")]) {
@@ -9840,11 +10084,11 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 #endif
 
 - (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (_ios6SelectedDialogFilterId != 0)
+    if (_ogSelectedDialogFilterId != 0)
         return false;
     if (tableView == _tableView) {
         if (indexPath.section != 0) {
-            TGConversation *conversation = (TGConversation *)[self ios6DialogListItemAtIndexPath:indexPath];
+            TGConversation *conversation = (TGConversation *)[self og_dialogListItemAtIndexPath:indexPath];
             return conversation.pinnedToTop;
         }
     }
@@ -10067,7 +10311,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)_performSizeChangesWithDuration:(NSTimeInterval)duration size:(CGSize)size
 {
-    [self ios6LayoutFolderTabs];
+    [self og_layoutFolderTabs];
     CGSize collectionViewSize = size;
     
     if (_titlePanelWrappingView != nil)
@@ -10177,13 +10421,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 {
     _presentation = presentation;
     _needsUpdate = true;
-    _ios6FolderTabsStateKey = nil;
+    _ogFolderTabsStateKey = nil;
     TGNavigationBar *navigationBar = [self.navigationController.navigationBar isKindOfClass:[TGNavigationBar class]] ? (TGNavigationBar *)self.navigationController.navigationBar : nil;
-    if (![TGPresentation brandedIOS6Style] && _ios6PlayerHeight > FLT_EPSILON)
+    if (![TGPresentation brandedIOS6Style] && _ogPlayerHeight > FLT_EPSILON)
     {
-        CGFloat height = _ios6PlayerHeight;
-        _ios6PlayerHeight = 0.0f;
-        if (navigationBar.musicPlayerHostView == _ios6PlayerHostView)
+        CGFloat height = _ogPlayerHeight;
+        _ogPlayerHeight = 0.0f;
+        if (navigationBar.musicPlayerHostView == _ogPlayerHostView)
             navigationBar.musicPlayerHostView = nil;
         [super setAdditionalNavigationBarHeight:height > 2.0f ? 37.0f : height];
     }
@@ -10191,7 +10435,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     {
         [self setAdditionalNavigationBarHeight:self.additionalNavigationBarHeight > 2.0f ? 44.0f : self.additionalNavigationBarHeight];
         if (_isOnScreen)
-            navigationBar.musicPlayerHostView = _ios6PlayerHostView;
+            navigationBar.musicPlayerHostView = _ogPlayerHostView;
     }
 
     if (self.isViewLoaded)
@@ -10205,10 +10449,10 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [_searchBar setPallete:presentation.searchBarPallete];
     
     _titleLockIconView.presentation = self.presentation;
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
     UIColor *classicTitleShadowColor = TGDialogListNavigationShadowColor(_presentation, 0.9f);
     UIColor *classicSubtitleShadowColor = TGDialogListNavigationShadowColor(_presentation, 0.72f);
-    _titleLabel.textColor = TGDialogListNavigationTitleColor(self.presentation);
+    _titleLabel.textColor = OGDialogListHeaderTitleColor(self.presentation);
     _titleLabel.shadowColor = classicTitleShadowColor;
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     if (_titleLabel != nil && _titleLabel.font != TGDialogListNavigationTitleFont())
@@ -10217,13 +10461,13 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         [_titleLabel sizeToFit];
         [self _layoutTitleViews:self.interfaceOrientation];
     }
-    _titleStatusLabel.textColor = TGDialogListNavigationTitleColor(_presentation);
+    _titleStatusLabel.textColor = OGDialogListHeaderTitleColor(_presentation);
     _titleStatusLabel.shadowColor = classicTitleShadowColor;
     _titleStatusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-    _titleStatusSubtitleLabel.textColor = TGDialogListNavigationSubtitleColor(_presentation);
+    _titleStatusSubtitleLabel.textColor = OGDialogListHeaderSubtitleColor(_presentation);
     _titleStatusSubtitleLabel.shadowColor = classicSubtitleShadowColor;
     _titleStatusSubtitleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-    _titleStatusIndicator.color = classicIOS6Style ? [UIColor whiteColor] : _presentation.pallete.navigationSpinnerColor;
+    _titleStatusIndicator.color = classicThemeStyle ? [UIColor whiteColor] : _presentation.pallete.navigationSpinnerColor;
     
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
@@ -10245,8 +10489,8 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     
     _primaryTitlePanel.presentation = self.presentation;
 
-    [self ios6UpdateFolderTabs];
-    [self ios6LayoutFolderTabs];
+    [self og_updateFolderTabs];
+    [self og_layoutFolderTabs];
     
     [self updateBarButtonItemsAnimated:false];
 }

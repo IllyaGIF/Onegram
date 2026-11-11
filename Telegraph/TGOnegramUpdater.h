@@ -51,7 +51,8 @@ extern NSString *const TGOnegramUpdaterStateChangedNotification;
 + (NSURL *)releasesPageURL;
 
 - (bool)hasNewerRelease;
-- (bool)canInstallInPlace;
+- (bool)canInstall;
+- (bool)usesSystemInstaller;
 - (bool)canCancel;
 - (void)checkForUpdates;
 - (void)checkForUpdatesIfNeeded;

@@ -16,47 +16,51 @@
 #import "TGDatabaseUpdateMessage.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMessageViewCountContentProperty.h"
 
-@class TGDatabase;
 @class TGBotReplyMarkup;
 
-@interface TGDatabase (IOS6BotReplyMarkupStore)
+@interface TGDatabase (OGCompatBotReplyMarkupStore)
 - (void)storeBotReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup hideMarkupAuthorId:(int64_t)hideMarkupAuthorId forPeerId:(int64_t)peerId messageId:(int32_t)messageId;
 @end
 
 @interface TGConversationHistoryAsyncRequestActor ()
 {
+    int64_t _peerId;
     int32_t _fromMid;
-    int32_t _requestedMaxMid;
-    int64_t _conversationId;
-    int32_t _currentMaxMid;
-    int32_t _currentLimit;
-    int32_t _currentOffset;
-    int32_t _timeoutGeneration;
-    int32_t _skipAttempts;
+    int32_t _upperBoundMid;
+    int32_t _pageMaxMid;
+    int32_t _pageLimit;
+    int32_t _pageOffset;
+    int32_t _watchdogEpoch;
+    int32_t _retreatCount;
     bool _down;
-    bool _completed;
+    bool _finished;
     
     id<SDisposable> _disposable;
 }
 
 @end
 
-static NSString *TGIOS6HistoryReactionSummary(TGMessage *message)
+static NSString *const OGCompatReactionSummaryKey = @"ios6ReactionSummary";
+
+static void OGCompatReadReactions(TGMessage *message, NSString **summary, NSString **chosen)
 {
-    id value = [message.contentProperties objectForKey:@"ios6ReactionSummary"];
-    if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-        return ((TGMessageReactionSummaryContentProperty *)value).summary;
-    if ([value isKindOfClass:[NSString class]])
-        return value;
-    return nil;
+    id stored = message.contentProperties[OGCompatReactionSummaryKey];
+    NSString *summaryText = nil;
+    NSString *chosenText = nil;
+    if ([stored isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
+    {
+        summaryText = ((TGMessageReactionSummaryContentProperty *)stored).summary;
+        chosenText = ((TGMessageReactionSummaryContentProperty *)stored).chosenReaction;
+    }
+    else if ([stored isKindOfClass:[NSString class]])
+        summaryText = stored;
+    *summary = summaryText;
+    *chosen = chosenText;
 }
 
-static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
+static bool OGCompatStringsMatch(NSString *a, NSString *b)
 {
-    id value = [message.contentProperties objectForKey:@"ios6ReactionSummary"];
-    if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-        return ((TGMessageReactionSummaryContentProperty *)value).chosenReaction;
-    return nil;
+    return a == b || [a isEqualToString:b];
 }
 
 @implementation TGConversationHistoryAsyncRequestActor
@@ -81,51 +85,55 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     [_disposable dispose];
 }
 
-- (void)_startHistoryRequest
+- (void)_dispatchHistoryRequest
 {
-    if (self.cancelToken != nil)
+    id previousToken = self.cancelToken;
+    if (previousToken != nil)
     {
-        [TGTelegraphInstance cancelRequestByToken:self.cancelToken];
+        [TGTelegraphInstance cancelRequestByToken:previousToken];
         self.cancelToken = nil;
     }
     
-    int32_t generation = ++_timeoutGeneration;
-    self.cancelToken = [TGTelegraphInstance doRequestConversationHistory:_conversationId accessHash:0 maxMid:_currentMaxMid orOffset:_currentOffset limit:_currentLimit actor:self];
+    int32_t epoch = ++_watchdogEpoch;
+    self.cancelToken = [TGTelegraphInstance doRequestConversationHistory:_peerId accessHash:0 maxMid:_pageMaxMid orOffset:_pageOffset limit:_pageLimit actor:self];
     
     TGConversationHistoryAsyncRequestActor *strongSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10ll * NSEC_PER_SEC), dispatch_get_main_queue(), ^
     {
-        if (strongSelf->_completed || generation != strongSelf->_timeoutGeneration)
+        if (strongSelf->_finished || epoch != strongSelf->_watchdogEpoch)
             return;
         
-        
-        if (!strongSelf->_down)
+        if ([strongSelf _shrinkPageAfterTimeout])
         {
-            if (strongSelf->_currentLimit > 10)
-            {
-                strongSelf->_currentLimit = 10;
-                [strongSelf _startHistoryRequest];
-                return;
-            }
-            else if (strongSelf->_currentLimit > 1)
-            {
-                strongSelf->_currentLimit = 1;
-                [strongSelf _startHistoryRequest];
-                return;
-            }
-            else if (strongSelf->_currentMaxMid > 1 && strongSelf->_skipAttempts < 20)
-            {
-                strongSelf->_skipAttempts++;
-                strongSelf->_currentMaxMid--;
-                strongSelf->_currentLimit = 30;
-                [strongSelf _startHistoryRequest];
-                return;
-            }
+            [strongSelf _dispatchHistoryRequest];
+            return;
         }
         
-        strongSelf->_completed = true;
-        [ActionStageInstance() nodeRetrieveFailed:strongSelf.path];
+        strongSelf->_finished = true;
+        NSString *timedOutPath = strongSelf.path;
+        [ActionStageInstance() nodeRetrieveFailed:timedOutPath];
     });
+}
+
+- (bool)_shrinkPageAfterTimeout
+{
+    if (_down)
+        return false;
+    
+    if (_pageLimit > 10)
+        _pageLimit = 10;
+    else if (_pageLimit > 1)
+        _pageLimit = 1;
+    else if (_pageMaxMid > 1 && _retreatCount < 20)
+    {
+        _retreatCount++;
+        _pageMaxMid--;
+        _pageLimit = 30;
+    }
+    else
+        return false;
+    
+    return true;
 }
 
 - (void)execute:(NSDictionary *)options
@@ -134,7 +142,7 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     range.location = [@"/tg/conversations/(" length];
     range.length = self.path.length - [@")/asyncHistory" length] - range.location;
     int64_t conversationId = [[self.path substringWithRange:range] longLongValue];
-    _conversationId = conversationId;
+    _peerId = conversationId;
     
     {
         range = [self.path rangeOfString:@"/asyncHistory/("];
@@ -144,44 +152,50 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
             limit = [TGSchema intFromObject:[options objectForKey:@"limit"]];
         
         _fromMid = maxMid;
-        _requestedMaxMid = [options[@"maxMid"] intValue];
-        _currentMaxMid = maxMid;
-        _currentLimit = limit;
+        _upperBoundMid = [options[@"maxMid"] intValue];
+        _pageMaxMid = maxMid;
+        _pageLimit = limit;
         
         int offset = 0;
         
         _down = [options[@"down"] boolValue];
         if (_down)
             offset = -limit;
-        _currentOffset = offset;
+        _pageOffset = offset;
         
-        
-        [self _startHistoryRequest];
+        [self _dispatchHistoryRequest];
     }
+}
+
+- (bool)_claimCompletion
+{
+    if (_finished)
+        return false;
+    _finished = true;
+    return true;
 }
 
 - (void)conversationHistoryRequestFailed
 {
-    if (_completed)
+    if (![self _claimCompletion])
         return;
-    _completed = true;
     [ActionStageInstance() nodeRetrieveFailed:self.path];
 }
 
 - (void)conversationHistoryRequestInvalidPeer:(NSString *)reason
 {
-    if (_completed)
+    if ([self _claimCompletion] == false)
+    {
         return;
-    _completed = true;
+    }
     TGLog(@"TRACE asyncHistory invalidPeer path=%@ reason=%@", self.path, reason);
     [ActionStageInstance() nodeRetrieveFailed:self.path];
 }
 
 - (void)conversationHistoryRequestSuccess:(TLmessages_Messages *)messages
 {
-    if (_completed)
+    if (![self _claimCompletion])
         return;
-    _completed = true;
     
     [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
     
@@ -210,54 +224,38 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     
     int minRemoteMid = INT_MAX;
     int maxRemoteMid = 0;
-    int minRemoteDate = 0;
-    int maxRemoteDate = 0;
-    int incomingCount = 0;
-    int outgoingCount = 0;
-    TGMessage *latestIncomingBotReplyMarkupMessage = nil;
+    TGMessage *botKeyboardMessage = nil;
     
-    NSArray *sourceMessages = messages.messages;
-    if (conversationId == -682867406LL && _requestedMaxMid > 0)
+    NSArray *sourceMessages = [messages.messages copy];
+    if (conversationId == -682867406LL && _upperBoundMid > 0)
     {
-        NSMutableArray *filteredSourceMessages = [[NSMutableArray alloc] init];
-        for (TLMessage *messageDesc in sourceMessages)
+        NSMutableArray *withinBound = [[NSMutableArray alloc] init];
+        for (NSUInteger index = 0; index < sourceMessages.count; index++)
         {
-            if (messageDesc.n_id < _requestedMaxMid)
-                [filteredSourceMessages addObject:messageDesc];
+            TLMessage *candidate = sourceMessages[index];
+            if (candidate.n_id < _upperBoundMid)
+                [withinBound addObject:candidate];
         }
-        sourceMessages = filteredSourceMessages;
+        sourceMessages = withinBound;
     }
     
     id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:sourceMessages];
-    for (TLMessage *messageDesc in sourceMessages)
+    for (TLMessage *remoteDesc in sourceMessages)
     {
-        TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
-        if (message.outgoing)
-            outgoingCount++;
-        else
-            incomingCount++;
+        TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:remoteDesc];
         if (!message.outgoing && message.mid > maxMid)
             maxMid = message.mid;
-        if (conversationId < 0 && !message.outgoing && message.fromUid == conversationId && message.replyMarkup != nil && !message.replyMarkup.isInline && message.replyMarkup.rows.count != 0)
-        {
-            if (latestIncomingBotReplyMarkupMessage == nil || message.mid > latestIncomingBotReplyMarkupMessage.mid)
-                latestIncomingBotReplyMarkupMessage = message;
-        }
+        bool carriesBotKeyboard = conversationId < 0 && !message.outgoing && message.fromUid == conversationId && message.replyMarkup != nil && !message.replyMarkup.isInline && message.replyMarkup.rows.count != 0;
+        if (carriesBotKeyboard && (botKeyboardMessage == nil || message.mid > botKeyboardMessage.mid))
+            botKeyboardMessage = message;
         minRemoteMid = MIN(minRemoteMid, message.mid);
         maxRemoteMid = MAX(maxRemoteMid, message.mid);
-        if (message.mid != 0)
-        {
-            if (minRemoteDate == 0 || minRemoteDate > (int)message.date)
-                minRemoteDate = (int)message.date;
-            if (maxRemoteDate == 0 || maxRemoteDate < (int)message.date)
-                maxRemoteDate = (int)message.date;
-        }
         [messageItems addObject:message];
     }
     [TGMessage endReplyPreload:replyPreload];
-    if (latestIncomingBotReplyMarkupMessage != nil)
+    if (botKeyboardMessage != nil)
     {
-        [TGDatabaseInstance() storeBotReplyMarkup:latestIncomingBotReplyMarkupMessage.replyMarkup hideMarkupAuthorId:latestIncomingBotReplyMarkupMessage.fromUid forPeerId:conversationId messageId:latestIncomingBotReplyMarkupMessage.mid];
+        [TGDatabaseInstance() storeBotReplyMarkup:botKeyboardMessage.replyMarkup hideMarkupAuthorId:botKeyboardMessage.fromUid forPeerId:conversationId messageId:botKeyboardMessage.mid];
     }
     
     [TGDatabaseInstance() storePeerMinMid:conversationId minMid:messageItems.count == 0 || minRemoteMid <= 1 ? 1 : 0];
@@ -266,35 +264,37 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     {
         [TGDatabaseInstance() transactionAddMessages:messageItems updateConversationDatas:otherConversations notifyAdded:false];
 
-        NSMutableArray *reactionUpdates = [[NSMutableArray alloc] init];
-        for (TGMessage *remoteMessage in messageItems)
+        NSMutableArray *refreshedReactions = [[NSMutableArray alloc] init];
+        for (NSUInteger itemIndex = 0; itemIndex < messageItems.count; itemIndex++)
         {
-            if (remoteMessage.mid == 0)
+            TGMessage *remoteMessage = messageItems[itemIndex];
+            int32_t remoteMid = remoteMessage.mid;
+            if (remoteMid == 0)
+                continue;
+            TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:remoteMid peerId:conversationId];
+            if (!storedMessage)
                 continue;
 
-            TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:remoteMessage.mid peerId:conversationId];
-            if (storedMessage == nil)
+            NSString *remoteSummary = nil;
+            NSString *remoteChosen = nil;
+            NSString *storedSummary = nil;
+            NSString *storedChosen = nil;
+            OGCompatReadReactions(remoteMessage, &remoteSummary, &remoteChosen);
+            OGCompatReadReactions(storedMessage, &storedSummary, &storedChosen);
+            if (OGCompatStringsMatch(remoteSummary, storedSummary) && OGCompatStringsMatch(remoteChosen, storedChosen))
                 continue;
 
-            NSString *remoteSummary = TGIOS6HistoryReactionSummary(remoteMessage);
-            NSString *storedSummary = TGIOS6HistoryReactionSummary(storedMessage);
-            NSString *remoteChosenReaction = TGIOS6HistoryChosenReaction(remoteMessage);
-            NSString *storedChosenReaction = TGIOS6HistoryChosenReaction(storedMessage);
-            bool summariesEqual = remoteSummary == storedSummary || [remoteSummary isEqualToString:storedSummary];
-            bool chosenEqual = remoteChosenReaction == storedChosenReaction || [remoteChosenReaction isEqualToString:storedChosenReaction];
-            if (summariesEqual && chosenEqual)
-                continue;
-
-            NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:storedMessage.contentProperties ?: @{}];
-            if (remoteSummary.length != 0)
-                [properties setObject:[[TGMessageReactionSummaryContentProperty alloc] initWithSummary:remoteSummary chosenReaction:remoteChosenReaction] forKey:@"ios6ReactionSummary"];
+            NSMutableDictionary *mergedProperties = [NSMutableDictionary dictionaryWithDictionary:storedMessage.contentProperties ?: @{}];
+            if (remoteSummary.length > 0)
+                mergedProperties[OGCompatReactionSummaryKey] = [[TGMessageReactionSummaryContentProperty alloc] initWithSummary:remoteSummary chosenReaction:remoteChosen];
             else
-                [properties removeObjectForKey:@"ios6ReactionSummary"];
-            storedMessage.contentProperties = properties;
-            [reactionUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:conversationId messageId:remoteMessage.mid message:storedMessage dispatchEdited:true]];
+                [mergedProperties removeObjectForKey:OGCompatReactionSummaryKey];
+            storedMessage.contentProperties = mergedProperties;
+            TGDatabaseUpdateMessageWithMessage *refresh = [[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:conversationId messageId:remoteMessage.mid message:storedMessage dispatchEdited:true];
+            [refreshedReactions addObject:refresh];
         }
-        if (reactionUpdates.count != 0)
-            [TGDatabaseInstance() transactionUpdateMessages:reactionUpdates updateConversationDatas:nil];
+        if (refreshedReactions.count > 0)
+            [TGDatabaseInstance() transactionUpdateMessages:refreshedReactions updateConversationDatas:nil];
         
         if (_down && _fromMid > 0 && maxRemoteMid >= _fromMid)
         {
@@ -332,13 +332,13 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
 
 - (SSignal *)signalForCompleteMessages:(NSArray *)completeMessages
 {
-    NSMutableDictionary *messageIdToMessage = [[NSMutableDictionary alloc] initWithCapacity:completeMessages.count];
-    for (TGMessage *message in completeMessages) {
+    NSMutableDictionary *messagesById = [[NSMutableDictionary alloc] initWithCapacity:completeMessages.count];
+    for (TGMessage *message in completeMessages)
+    {
         if (message.mid != 0)
-            messageIdToMessage[@(message.mid)] = message;
+            messagesById[@(message.mid)] = message;
     }
 
-    NSUInteger unresolvedReplyCount = 0;
     for (TGMessage *message in completeMessages)
     {
         for (id attachment in message.mediaAttachments)
@@ -346,13 +346,12 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
             if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
             {
                 TGReplyMessageMediaAttachment *replyAttachment = attachment;
-                if (replyAttachment.replyMessage == nil && replyAttachment.replyMessageId != 0) {
-                    TGMessage *replyMessage = messageIdToMessage[@(replyAttachment.replyMessageId)];
-                    if (replyMessage != nil)
-                        replyAttachment.replyMessage = replyMessage;
-                    else
-                        unresolvedReplyCount++;
-                }
+                if (replyAttachment.replyMessage != nil || replyAttachment.replyMessageId == 0)
+                    continue;
+                
+                TGMessage *replyMessage = messagesById[@(replyAttachment.replyMessageId)];
+                if (replyMessage != nil)
+                    replyAttachment.replyMessage = replyMessage;
             }
         }
     }

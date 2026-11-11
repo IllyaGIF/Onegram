@@ -12,8 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface STPCheckoutAPIVerification : NSObject
 
-+ (instancetype)verificationWithData:(NSData *)data
-                                  URLResponse:(NSURLResponse *)response;
++ (instancetype _Nullable)verificationWithData:(NSData *_Nullable)data
+                                  URLResponse:(NSURLResponse *_Nullable)response;
 
 @property(nonatomic, readonly)NSString *verificationID;
 @property(nonatomic, readonly)NSString *statusURLString;

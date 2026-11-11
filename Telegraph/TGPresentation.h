@@ -79,14 +79,15 @@ typedef enum
 + (TGPresentation *)current;
 + (SSignal *)signal;
 
-+ (bool)classicIOS6StyleAvailable;
 + (TGInterfaceStyle)interfaceStyle;
 + (void)setInterfaceStyle:(TGInterfaceStyle)style;
-+ (bool)classicIOS6Style;
+
 + (bool)brandedIOS6Style;
-+ (void)setClassicIOS6Style:(bool)enabled;
-+ (bool)classicIOS6UsesPaletteAdaptedAssets;
++ (bool)classicThemeStyleAvailable;
++ (bool)classicThemeStyle;
++ (void)setClassicThemeStyle:(bool)enabled;
 + (UIImage *)classicIOS6ResourceImage:(NSString *)name;
++ (bool)classicIOS6UsesPaletteAdaptedAssets;
 + (UIImage *)brandedIOS6ResourceImage:(NSString *)name;
 + (UIImage *)brandedIOS6GrayIconImage:(NSString *)name;
 + (UIImage *)brandedIOS6BadgeImage;

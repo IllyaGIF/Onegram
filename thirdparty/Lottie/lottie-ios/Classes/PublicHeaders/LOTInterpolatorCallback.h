@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTInterpolatorCallback.h
 //  Lottie
@@ -18,7 +18,7 @@
 
 @interface LOTPointInterpolatorCallback : NSObject <LOTPointValueDelegate>
 
-+ (instancetype )withFromPoint:(CGPoint)fromPoint toPoint:(CGPoint)toPoint;
++ (instancetype _Nonnull)withFromPoint:(CGPoint)fromPoint toPoint:(CGPoint)toPoint NS_SWIFT_NAME(init(from:to:));
 
 @property (nonatomic) CGPoint fromPoint;
 @property (nonatomic) CGPoint toPoint;
@@ -38,7 +38,7 @@
 
 @interface LOTSizeInterpolatorCallback : NSObject <LOTSizeValueDelegate>
 
-+ (instancetype )withFromSize:(CGSize)fromSize toSize:(CGSize)toSize;
++ (instancetype _Nonnull)withFromSize:(CGSize)fromSize toSize:(CGSize)toSize NS_SWIFT_NAME(init(from:to:));
 
 @property (nonatomic) CGSize fromSize;
 @property (nonatomic) CGSize toSize;
@@ -58,7 +58,7 @@
 
 @interface LOTFloatInterpolatorCallback : NSObject <LOTNumberValueDelegate>
 
-+ (instancetype )withFromFloat:(CGFloat)fromFloat toFloat:(CGFloat)toFloat;
++ (instancetype _Nonnull)withFromFloat:(CGFloat)fromFloat toFloat:(CGFloat)toFloat NS_SWIFT_NAME(init(from:to:));
 
 @property (nonatomic) CGFloat fromFloat;
 @property (nonatomic) CGFloat toFloat;

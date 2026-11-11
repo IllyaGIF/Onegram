@@ -247,7 +247,7 @@ GLuint LinkProgram(const char *fragmentSource) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    if (TGIOS4CVOpenGLESTextureCacheAvailable())
+    if (OGCompatTextureCacheAvailable())
         CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, _context, NULL, &_textureCache);
     glGenFramebuffers(1, &_framebuffer);
     glGenRenderbuffers(1, &_renderbuffer);

@@ -25,7 +25,15 @@
 
 @end
 
-static UIPopoverController *TGPassportLegacyCameraPopoverController = nil;
+static UIPopoverController *OGCompatPassportPopover = nil;
+
+static UIPopoverController *OGCompatPresentCameraPopover(UIViewController *content, UIView *anchor)
+{
+    UIPopoverController *popover = [[UIPopoverController alloc] initWithContentViewController:content];
+    CGRect area = anchor.bounds;
+    [popover presentPopoverFromRect:CGRectMake(CGRectGetMidX(area), CGRectGetMidY(area), 1.0f, 1.0f) inView:anchor permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
+    return popover;
+}
 
 @implementation TGPassportAttachMenu
 
@@ -261,28 +269,22 @@ static UIPopoverController *TGPassportLegacyCameraPopoverController = nil;
         uploadAction([TGPassportAttachMenu resultSignalForEditingContext:nil selectionContext:nil currentItem:photo], ^
         {
             __strong TGViewController *strongParentController = weakParentController;
-            if (TGPassportLegacyCameraPopoverController != nil)
-            {
-                [TGPassportLegacyCameraPopoverController dismissPopoverAnimated:true];
-                TGPassportLegacyCameraPopoverController = nil;
-            }
+            UIPopoverController *popover = OGCompatPassportPopover;
+            OGCompatPassportPopover = nil;
+            if (popover != nil)
+                [popover dismissPopoverAnimated:true];
             else if (strongParentController != nil)
                 [strongParentController dismissViewControllerAnimated:true completion:nil];
         });
     };
     
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
-    {
-        TGPassportLegacyCameraPopoverController = [[UIPopoverController alloc] initWithContentViewController:legacyCameraController];
-        UIView *sourceView = parentController.view;
-        CGRect bounds = sourceView.bounds;
-        CGRect sourceRect = CGRectMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds), 1.0f, 1.0f);
-        [TGPassportLegacyCameraPopoverController presentPopoverFromRect:sourceRect inView:sourceView permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
-    }
-    else
+    if ([[UIDevice currentDevice] userInterfaceIdiom] != UIUserInterfaceIdiomPad)
     {
         [parentController presentViewController:legacyCameraController animated:true completion:nil];
+        return;
     }
+    
+    OGCompatPassportPopover = OGCompatPresentCameraPopover(legacyCameraController, parentController.view);
 }
 
 + (void)_displayCameraWithView:(TGAttachmentCameraView *)cameraView menuController:(TGMenuSheetController *)menuController parentController:(TGViewController *)parentController context:(id<LegacyComponentsContext>)context intent:(TGPassportAttachIntent)intent uploadAction:(void (^)(SSignal *, void (^)(void)))uploadAction

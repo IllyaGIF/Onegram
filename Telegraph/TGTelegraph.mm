@@ -6,7 +6,6 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #import "../OnegramRuntime/OGRuntime.h"
-#import "IOS6NotificationProbe.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -93,7 +92,7 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import "TGConversationDeleteActor.h"
 #import "TGConversationClearHistoryActor.h"
 
-@interface TGConversationHistoryAsyncRequestActor (IOS6InvalidPeer)
+@interface TGConversationHistoryAsyncRequestActor (OGCompatInvalidPeer)
 - (void)conversationHistoryRequestInvalidPeer:(NSString *)reason;
 @end
 
@@ -215,114 +214,64 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import <objc/runtime.h>
 #import "../OnegramRuntime/OGRemoteClock.h"
 
-static int64_t TGIOS6ArchivePeerIdAndType(TLPeer *peer, NSString **type, int64_t *rawId)
+static int64_t OGCompatDialogPeerId(TLPeer *peer)
 {
-    if ([peer isKindOfClass:[TLPeer$peerUser class]])
-    {
-        int64_t userId = ((TLPeer$peerUser *)peer).user_id;
-        if (type != NULL)
-            *type = @"user";
-        if (rawId != NULL)
-            *rawId = userId;
-        return userId;
-    }
+    int64_t dialogPeerId = 0;
+    if ([peer isKindOfClass:[TLPeer$peerChannel class]])
+        dialogPeerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
     else if ([peer isKindOfClass:[TLPeer$peerChat class]])
+        dialogPeerId = TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    else if ([peer isKindOfClass:[TLPeer$peerUser class]])
+        dialogPeerId = ((TLPeer$peerUser *)peer).user_id;
+    return dialogPeerId;
+}
+
+static int64_t OGCompatUserAccessHash(int64_t userId, TLmessages_Dialogs *dialogs)
+{
+    int64_t accessHash = 0;
+    for (TLUser *user in dialogs.users)
     {
-        int64_t chatId = ((TLPeer$peerChat *)peer).chat_id;
-        if (type != NULL)
-            *type = @"chat";
-        if (rawId != NULL)
-            *rawId = chatId;
-        return TGPeerIdFromGroupId(chatId);
+        if ([user isKindOfClass:[TLUser$modernUser class]] && ((TLUser$modernUser *)user).n_id == userId)
+        {
+            accessHash = ((TLUser$modernUser *)user).access_hash;
+            break;
+        }
     }
-    else if ([peer isKindOfClass:[TLPeer$peerChannel class]])
+
+    if (accessHash == 0)
     {
-        int64_t channelId = ((TLPeer$peerChannel *)peer).channel_id;
-        if (type != NULL)
-            *type = @"channel";
-        if (rawId != NULL)
-            *rawId = channelId;
-        return TGPeerIdFromChannelId(channelId);
+        TGUser *storedUser = [TGDatabaseInstance() loadUser:userId];
+        if (storedUser != nil)
+            accessHash = storedUser.phoneNumberHash;
     }
-    
-    if (type != NULL)
-        *type = NSStringFromClass([peer class]) ?: @"unknown";
-    if (rawId != NULL)
-        *rawId = 0;
+
+    return accessHash;
+}
+
+static int64_t OGCompatChannelAccessHashFromDialogs(int64_t channelId, TLmessages_Dialogs *dialogs)
+{
+    for (TLChat *chatDesc in dialogs.chats)
+    {
+        if (chatDesc.n_id == channelId && [chatDesc isKindOfClass:[TLChat$channel class]])
+            return [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc].accessHash;
+    }
+
     return 0;
 }
 
-static NSString *TGIOS6ArchiveDialogKey(TLDialog *baseDialog)
+static TLInputPeer *OGCompatInputPeerForDialog(TLDialog$dialogMeta *dialog, TLmessages_Dialogs *dialogs, int64_t clientUserId)
 {
-    if (![baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
-        return nil;
+    TLPeer *peer = dialog.peer;
 
-    TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
-    NSString *type = nil;
-    int64_t rawId = 0;
-    TGIOS6ArchivePeerIdAndType(dialog.peer, &type, &rawId);
-    if (type.length == 0 || rawId == 0)
-        return nil;
-
-    return [NSString stringWithFormat:@"%@:%lld", type, rawId];
-}
-
-static NSString *TGIOS6DialogKey(TLDialog *baseDialog)
-{
-    NSString *key = TGIOS6ArchiveDialogKey(baseDialog);
-    if (key != nil)
-        return key;
-    if ([baseDialog isKindOfClass:[TLDialog$dialogFeedMeta class]])
-        return [NSString stringWithFormat:@"feed:%d", ((TLDialog$dialogFeedMeta *)baseDialog).feed_id];
-    return nil;
-}
-
-static void TGIOS6LogArchiveDialogs(TLmessages_Dialogs *dialogs, NSString *reason)
-{
-    
-    int index = 0;
-    for (TLDialog *baseDialog in dialogs.dialogs)
+    if ([peer isKindOfClass:[TLPeer$peerUser class]])
     {
-        if ([baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
-        {
-            TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
-            NSString *type = nil;
-            int64_t rawId = 0;
-            int64_t peerId = TGIOS6ArchivePeerIdAndType(dialog.peer, &type, &rawId);
-        }
-        else
-        {
-            TGLog(@"ARCHIVE item[%d] unknown class=%@", index, NSStringFromClass([baseDialog class]));
-        }
-        index++;
-    }
-}
-
-static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmessages_Dialogs *dialogs, int64_t clientUserId)
-{
-    if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
-    {
-        int64_t userId = ((TLPeer$peerUser *)dialog.peer).user_id;
+        int64_t userId = ((TLPeer$peerUser *)peer).user_id;
         if (userId == 0)
             return nil;
         if (userId == clientUserId)
             return [[TLInputPeer$inputPeerSelf alloc] init];
 
-        int64_t accessHash = 0;
-        for (TLUser *user in dialogs.users)
-        {
-            if ([user isKindOfClass:[TLUser$modernUser class]] && ((TLUser$modernUser *)user).n_id == userId)
-            {
-                accessHash = ((TLUser$modernUser *)user).access_hash;
-                break;
-            }
-        }
-        if (accessHash == 0)
-        {
-            TGUser *user = [TGDatabaseInstance() loadUser:userId];
-            if (user != nil)
-                accessHash = user.phoneNumberHash;
-        }
+        int64_t accessHash = OGCompatUserAccessHash(userId, dialogs);
         if (accessHash == 0)
             return nil;
 
@@ -332,9 +281,9 @@ static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmess
         return inputPeer;
     }
 
-    if ([dialog.peer isKindOfClass:[TLPeer$peerChat class]])
+    if ([peer isKindOfClass:[TLPeer$peerChat class]])
     {
-        int64_t chatId = ((TLPeer$peerChat *)dialog.peer).chat_id;
+        int64_t chatId = ((TLPeer$peerChat *)peer).chat_id;
         if (chatId == 0)
             return nil;
         TLInputPeer$inputPeerChat *inputPeer = [[TLInputPeer$inputPeerChat alloc] init];
@@ -342,21 +291,13 @@ static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmess
         return inputPeer;
     }
 
-    if ([dialog.peer isKindOfClass:[TLPeer$peerChannel class]])
+    if ([peer isKindOfClass:[TLPeer$peerChannel class]])
     {
-        int64_t channelId = ((TLPeer$peerChannel *)dialog.peer).channel_id;
+        int64_t channelId = ((TLPeer$peerChannel *)peer).channel_id;
         if (channelId == 0)
             return nil;
 
-        int64_t accessHash = 0;
-        for (TLChat *chatDesc in dialogs.chats)
-        {
-            if (chatDesc.n_id != channelId || ![chatDesc isKindOfClass:[TLChat$channel class]])
-                continue;
-            TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
-            accessHash = conversation.accessHash;
-            break;
-        }
+        int64_t accessHash = OGCompatChannelAccessHashFromDialogs(channelId, dialogs);
         if (accessHash == 0)
             return nil;
 
@@ -369,7 +310,73 @@ static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmess
     return nil;
 }
 
-static NSError *TGIOS6DialogListError(MTRpcError *rpcError, NSInteger code, NSString *description)
+static int OGCompatDialogPageCeiling()
+{
+    switch (devicePerformanceClass())
+    {
+        case TGPerformanceClassConstrained:
+            return 20;
+        case TGPerformanceClassBalanced:
+            return 80;
+        case TGPerformanceClassFast:
+        case TGPerformanceClassHigh:
+            break;
+    }
+    return 100;
+}
+
+static NSString *OGCompatMaskedPhoneNumber(NSString *phoneNumber)
+{
+    if (phoneNumber.length <= 4)
+        return phoneNumber;
+    return [NSString stringWithFormat:@"%@***%@", [phoneNumber substringToIndex:2], [phoneNumber substringFromIndex:phoneNumber.length - 2]];
+}
+
+static void OGCompatLogSentCode(id response)
+{
+    NSMutableDictionary *fields = [[NSMutableDictionary alloc] init];
+    @try
+    {
+        for (NSString *key in @[@"type", @"next_type", @"timeout", @"phone_code_hash"])
+        {
+            id value = [response valueForKey:key];
+            if (value != nil)
+                fields[key] = value;
+        }
+    }
+    @catch (__unused NSException *exception)
+    {
+    }
+
+    id codeType = fields[@"type"];
+    id nextType = fields[@"next_type"];
+    TGLog(@"AUTH sendCode success response=%@ type=%@ next=%@ timeout=%@ hashLen=%lu", response, codeType != nil ? NSStringFromClass([codeType class]) : nil, nextType != nil ? NSStringFromClass([nextType class]) : nil, fields[@"timeout"], (unsigned long)[fields[@"phone_code_hash"] length]);
+}
+
+static TGSendCodeError OGCompatSendCodeErrorForType(NSString *errorType)
+{
+    if ([errorType isEqualToString:@"PHONE_NUMBER_INVALID"])
+        return TGSendCodeErrorInvalidPhone;
+    if ([errorType hasPrefix:@"FLOOD_WAIT"])
+        return TGSendCodeErrorFloodWait;
+    if ([errorType isEqualToString:@"PHONE_NUMBER_FLOOD"])
+        return TGSendCodeErrorPhoneFlood;
+    if ([errorType isEqualToString:@"PHONE_NUMBER_BANNED"])
+        return TGSendCodeErrorPhoneBanned;
+    return TGSendCodeErrorUnknown;
+}
+
+static bool OGCompatChannelFlaggedInvalid(int64_t peerId)
+{
+    return TGPeerIdIsChannel(peerId) && [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6InvalidPeer")].length != 0;
+}
+
+static bool OGCompatErrorTextContains(MTRpcError *error, NSString *marker)
+{
+    return [[error.errorDescription uppercaseString] rangeOfString:marker].location != NSNotFound;
+}
+
+static NSError *OGCompatDialogListError(MTRpcError *rpcError, NSInteger code, NSString *description)
 {
     if (rpcError == nil)
         return [NSError errorWithDomain:@"TGDialogList" code:code userInfo:@{NSLocalizedDescriptionKey: description}];
@@ -388,7 +395,13 @@ static NSError *TGIOS6DialogListError(MTRpcError *rpcError, NSInteger code, NSSt
     return [NSError errorWithDomain:@"TGDialogListRPC" code:rpcError.errorCode userInfo:userInfo];
 }
 
-static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *dialogs, int64_t clientUserId, TLInputPeer **inputPeer)
+static void OGCompatReportDialogAuthNotReady(void (^failure)(NSError *))
+{
+    if (failure != nil)
+        failure(OGCompatDialogListError(nil, 401, @"Authorization is not ready"));
+}
+
+static TGDialogListRemoteOffset *OGCompatDialogsRemoteOffset(TLmessages_Dialogs *dialogs, int64_t clientUserId, TLInputPeer **inputPeer)
 {
     NSMutableDictionary *messages = [[NSMutableDictionary alloc] init];
     for (TLMessage *messageDesc in dialogs.messages)
@@ -401,11 +414,11 @@ static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *d
     for (NSInteger index = (NSInteger)dialogs.dialogs.count - 1; index >= 0; index--)
     {
         TLDialog *baseDialog = dialogs.dialogs[(NSUInteger)index];
-        if (![baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
+        if ([baseDialog isKindOfClass:[TLDialog$dialogMeta class]] == false)
             continue;
 
         TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
-        int64_t peerId = TGIOS6ArchivePeerIdAndType(dialog.peer, NULL, NULL);
+        int64_t peerId = OGCompatDialogPeerId(dialog.peer);
         if (peerId == 0 || dialog.top_message == 0)
             continue;
 
@@ -413,7 +426,7 @@ static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *d
         if (message == nil || message.date <= 0)
             continue;
 
-        TLInputPeer *exactInputPeer = TGIOS6InputPeerForDialog(dialog, dialogs, clientUserId);
+        TLInputPeer *exactInputPeer = OGCompatInputPeerForDialog(dialog, dialogs, clientUserId);
         if (exactInputPeer == nil)
             continue;
 
@@ -433,123 +446,121 @@ static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *d
     return nil;
 }
 
-@interface TGIOS6InputMessageID : NSObject <TLObject>
+static const int32_t OGCompatWireUnnamed = -1;
+static const int OGCompatWireRpcLayer = 181;
 
+@interface OGCompatWireObject : NSObject <TLObject>
+@end
+
+@implementation OGCompatWireObject
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (int32_t)TLconstructorName { return OGCompatWireUnnamed; }
+- (int32_t)TLconstructorSignature { return 0; }
+@end
+
+@interface OGCompatWireRpc : TLMetaRpc
+@end
+
+@implementation OGCompatWireRpc
+- (int)layerVersion { return OGCompatWireRpcLayer; }
+- (int)impliedResponseSignature { return 0; }
+- (Class)responseClass { return [NSObject class]; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (int32_t)TLconstructorName { return OGCompatWireUnnamed; }
+- (int32_t)TLconstructorSignature { return 0; }
+@end
+
+@interface OGCompatInputMessageId : OGCompatWireObject
 @property (nonatomic) int32_t messageId;
-
 @end
 
-@implementation TGIOS6InputMessageID
-
-- (int32_t)TLconstructorSignature
-{
-    return (int32_t)0xa676a322;
-}
-
-- (int32_t)TLconstructorName
-{
-    return -1;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
-
-- (void)TLserialize:(NSOutputStream *)os
-{
-    [os writeInt32:self.messageId];
-}
-
+@implementation OGCompatInputMessageId
+- (int32_t)TLconstructorSignature { return (int32_t)0xa676a322; }
+- (void)TLserialize:(NSOutputStream *)os { [os writeInt32:self.messageId]; }
 @end
 
-extern "C" NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds)
+extern "C" NSArray *OGInputMessageIdsFromMessageIds(NSArray *messageIds)
 {
-    NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:messageIds.count];
-    for (id item in messageIds)
+    NSMutableArray *converted = [[NSMutableArray alloc] initWithCapacity:messageIds.count];
+    SEL signatureSelector = @selector(TLconstructorSignature);
+    for (id entry in messageIds)
     {
-        if ([item respondsToSelector:@selector(TLconstructorSignature)])
+        id serializable = entry;
+        if ([entry respondsToSelector:signatureSelector] == false)
         {
-            [result addObject:item];
+            OGCompatInputMessageId *wrapped = [[OGCompatInputMessageId alloc] init];
+            wrapped.messageId = [entry intValue];
+            serializable = wrapped;
         }
-        else
-        {
-            TGIOS6InputMessageID *inputMessage = [[TGIOS6InputMessageID alloc] init];
-            inputMessage.messageId = [item intValue];
-            [result addObject:inputMessage];
-        }
+        [converted addObject:serializable];
     }
-    return result;
+    return converted;
 }
 
 NSString *const TGLoginTokenUpdatedNotification = @"TGLoginTokenUpdatedNotification";
 NSString *const TGAuthorizationReadyNotification = @"TGAuthorizationReadyNotification";
 
-@interface TGIOS6AuthLoginToken : NSObject <TLObject>
+@interface OGCompatLoginToken : OGCompatWireObject
 @property (nonatomic) int32_t expires;
 @property (nonatomic, strong) NSData *token;
 @end
 
-@implementation TGIOS6AuthLoginToken
+@implementation OGCompatLoginToken
 - (int32_t)TLconstructorSignature { return (int32_t)0x629f1980; }
 - (int32_t)TLconstructorName { return murMurHash32(@"auth.loginToken"); }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
-    TGIOS6AuthLoginToken *object = [[TGIOS6AuthLoginToken alloc] init];
+    OGCompatLoginToken *object = [[OGCompatLoginToken alloc] init];
     object.expires = metaObject->getInt32(murMurHash32(@"expires"));
     object.token = metaObject->getBytes(murMurHash32(@"token"));
     return object;
 }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
 @end
 
-@interface TGIOS6AuthLoginTokenMigrateTo : NSObject <TLObject>
+@interface OGCompatLoginTokenMigrateTo : OGCompatWireObject
 @property (nonatomic) int32_t dcId;
 @property (nonatomic, strong) NSData *token;
 @end
 
-@implementation TGIOS6AuthLoginTokenMigrateTo
+@implementation OGCompatLoginTokenMigrateTo
 - (int32_t)TLconstructorSignature { return (int32_t)0x068e9916; }
 - (int32_t)TLconstructorName { return murMurHash32(@"auth.loginTokenMigrateTo"); }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
-    TGIOS6AuthLoginTokenMigrateTo *object = [[TGIOS6AuthLoginTokenMigrateTo alloc] init];
+    OGCompatLoginTokenMigrateTo *object = [[OGCompatLoginTokenMigrateTo alloc] init];
     object.dcId = metaObject->getInt32(murMurHash32(@"dc_id"));
     object.token = metaObject->getBytes(murMurHash32(@"token"));
     return object;
 }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
 @end
 
-@interface TGIOS6AuthLoginTokenSuccess : NSObject <TLObject>
+@interface OGCompatLoginTokenSuccess : OGCompatWireObject
 @property (nonatomic, strong) TLauth_Authorization *authorization;
 @end
 
-@implementation TGIOS6AuthLoginTokenSuccess
+@implementation OGCompatLoginTokenSuccess
 - (int32_t)TLconstructorSignature { return (int32_t)0x390d5c5e; }
 - (int32_t)TLconstructorName { return murMurHash32(@"auth.loginTokenSuccess"); }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
-    TGIOS6AuthLoginTokenSuccess *object = [[TGIOS6AuthLoginTokenSuccess alloc] init];
+    OGCompatLoginTokenSuccess *object = [[OGCompatLoginTokenSuccess alloc] init];
     object.authorization = metaObject->getObject(murMurHash32(@"authorization"));
     return object;
 }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
 @end
 
-@interface TGIOS6UpdateLoginToken : TLUpdate
+@interface OGCompatLoginTokenUpdate : TLUpdate
 @end
 
-@implementation TGIOS6UpdateLoginToken
+@implementation OGCompatLoginTokenUpdate
 - (int32_t)TLconstructorSignature { return (int32_t)0x564fe691; }
 - (int32_t)TLconstructorName { return murMurHash32(@"updateLoginToken"); }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
 {
-    TGIOS6UpdateLoginToken *object = [[TGIOS6UpdateLoginToken alloc] init];
+    OGCompatLoginTokenUpdate *object = [[OGCompatLoginTokenUpdate alloc] init];
     TGDispatchOnMainThread(^{
         [[NSNotificationCenter defaultCenter] postNotificationName:TGLoginTokenUpdatedNotification object:nil];
     });
@@ -558,164 +569,86 @@ NSString *const TGAuthorizationReadyNotification = @"TGAuthorizationReadyNotific
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
 @end
 
-static void TGIOS6RegisterLoginTokenClasses(void)
+static void OGCompatRegisterLoginTokenClasses(void)
 {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        TLMetaClassStore::registerObjectClass([[TGIOS6AuthLoginToken alloc] init]);
-        TLMetaClassStore::registerObjectClass([[TGIOS6AuthLoginTokenMigrateTo alloc] init]);
-        TLMetaClassStore::registerObjectClass([[TGIOS6AuthLoginTokenSuccess alloc] init]);
-        TLMetaClassStore::registerObjectClass([[TGIOS6UpdateLoginToken alloc] init]);
+        for (Class tokenClass in @[[OGCompatLoginToken class], [OGCompatLoginTokenMigrateTo class], [OGCompatLoginTokenSuccess class], [OGCompatLoginTokenUpdate class]])
+            TLMetaClassStore::registerObjectClass([[tokenClass alloc] init]);
     });
 }
 
-@interface TGIOS6AuthExportLoginToken : TLMetaRpc
-@property (nonatomic) int32_t apiId;
-@property (nonatomic, strong) NSString *apiHash;
+@interface OGCompatExportLoginTokenRpc : OGCompatWireRpc
 @property (nonatomic, strong) NSArray *exceptIds;
+@property (nonatomic, strong) NSString *apiHash;
+@property (nonatomic) int32_t apiId;
 @end
 
-@implementation TGIOS6AuthExportLoginToken
+@implementation OGCompatExportLoginTokenRpc
 - (int32_t)TLconstructorSignature { return (int32_t)0xb7e085fe; }
-- (int32_t)TLconstructorName { return -1; }
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
-- (Class)responseClass { return [NSObject class]; }
-- (int)impliedResponseSignature { return 0; }
-- (int)layerVersion { return 181; }
 - (void)TLserialize:(NSOutputStream *)os
 {
+    NSArray *excluded = self.exceptIds;
     [os writeInt32:self.apiId];
     [os writeString:self.apiHash ?: @""];
     [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
-    [os writeInt32:(int32_t)self.exceptIds.count];
-    for (NSNumber *item in self.exceptIds)
-        [os writeInt64:[item longLongValue]];
+    [os writeInt32:(int32_t)excluded.count];
+    for (NSNumber *excludedId in excluded)
+        [os writeInt64:[excludedId longLongValue]];
 }
 @end
 
-@interface TGIOS6AuthImportLoginToken : TLMetaRpc
+@interface OGCompatImportLoginTokenRpc : OGCompatWireRpc
 @property (nonatomic, strong) NSData *token;
 @end
 
-@implementation TGIOS6AuthImportLoginToken
+@implementation OGCompatImportLoginTokenRpc
 - (int32_t)TLconstructorSignature { return (int32_t)0x95ac5ce4; }
-- (int32_t)TLconstructorName { return -1; }
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
-- (Class)responseClass { return [NSObject class]; }
-- (int)impliedResponseSignature { return 0; }
-- (int)layerVersion { return 181; }
 - (void)TLserialize:(NSOutputStream *)os { [os writeBytes:self.token ?: [NSData data]]; }
 @end
 
-@interface TGIOS6AuthSendCode : TLMetaRpc
-
-@property (nonatomic, strong) NSString *phoneNumber;
-@property (nonatomic) int32_t apiId;
+@interface OGCompatSendCodeRpc : OGCompatWireRpc
 @property (nonatomic, strong) NSString *apiHash;
-
+@property (nonatomic) int32_t apiId;
+@property (nonatomic, strong) NSString *phoneNumber;
 @end
 
-@implementation TGIOS6AuthSendCode
-
-- (int32_t)TLconstructorSignature
-{
-    return (int32_t)0xa677244f;
-}
-
-- (int32_t)TLconstructorName
-{
-    return -1;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
-
-- (Class)responseClass
-{
-    return [TLauth_SentCode class];
-}
-
-- (int)impliedResponseSignature
-{
-    return 0;
-}
-
-- (int)layerVersion
-{
-    return 181;
-}
-
+@implementation OGCompatSendCodeRpc
+- (int32_t)TLconstructorSignature { return (int32_t)0xa677244f; }
+- (Class)responseClass { return [TLauth_SentCode class]; }
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeString:self.phoneNumber];
+    NSString *number = self.phoneNumber;
+    NSString *hash = self.apiHash;
+    const int32_t codeSettingsConstructor = (int32_t)0xad253d78;
+    [os writeString:number];
     [os writeInt32:self.apiId];
-    [os writeString:self.apiHash];
-    [os writeInt32:(int32_t)0xad253d78];
+    [os writeString:hash];
+    [os writeInt32:codeSettingsConstructor];
     [os writeInt32:0];
 }
-
 @end
 
-@interface TGIOS6AuthSignIn : TLMetaRpc
-
-@property (nonatomic, strong) NSString *phoneNumber;
-@property (nonatomic, strong) NSString *phoneCodeHash;
+@interface OGCompatSignInRpc : OGCompatWireRpc
 @property (nonatomic, strong) NSString *phoneCode;
-
+@property (nonatomic, strong) NSString *phoneCodeHash;
+@property (nonatomic, strong) NSString *phoneNumber;
 @end
 
-@implementation TGIOS6AuthSignIn
-
-- (int32_t)TLconstructorSignature
-{
-    return (int32_t)0x8d52a951;
-}
-
-- (int32_t)TLconstructorName
-{
-    return -1;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
-
-- (Class)responseClass
-{
-    return [TLauth_Authorization class];
-}
-
-- (int)impliedResponseSignature
-{
-    return 0;
-}
-
-- (int)layerVersion
-{
-    return 181;
-}
-
+@implementation OGCompatSignInRpc
+- (int32_t)TLconstructorSignature { return (int32_t)0x8d52a951; }
+- (Class)responseClass { return [TLauth_Authorization class]; }
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:(1 << 0)];
-    [os writeString:self.phoneNumber];
-    [os writeString:self.phoneCodeHash];
-    [os writeString:self.phoneCode];
+    const int32_t signInFlags = 1 << 0;
+    NSString *number = self.phoneNumber;
+    NSString *codeHash = self.phoneCodeHash;
+    NSString *code = self.phoneCode;
+    [os writeInt32:signInFlags];
+    [os writeString:number];
+    [os writeString:codeHash];
+    [os writeString:code];
 }
-
 @end
 
 @interface TGTypingRecord : NSObject
@@ -790,102 +723,49 @@ typedef std::map<int64_t, std::pair<TGUser *, int > >::iterator UserDataToDispat
 
 @end
 
-static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChannel, int64_t peerId, int64_t accessHash)
+static inline void OGCompatFillInputChannel(TLInputChannel$inputChannel *inputChannel, int64_t peerId, int64_t accessHash)
 {
     inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = accessHash;
 }
 
-@interface TGIOS6InputFolderPeer : NSObject <TLObject>
-@property (nonatomic, strong) TLInputPeer *peer;
+@interface OGCompatInputFolderPeer : OGCompatWireObject
 @property (nonatomic) int32_t folderId;
+@property (nonatomic, strong) TLInputPeer *peer;
 @end
 
-@implementation TGIOS6InputFolderPeer
+@implementation OGCompatInputFolderPeer
 - (int32_t)TLconstructorSignature { return (int32_t)0xfbd2c296; }
-- (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return self; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
 - (void)TLserialize:(NSOutputStream *)os
 {
+    int32_t targetFolder = self.folderId;
     TLMetaClassStore::serializeObject(os, self.peer, true);
-    [os writeInt32:self.folderId];
+    [os writeInt32:targetFolder];
 }
 @end
 
-@interface TGIOS6EditPeerFoldersRequest : TLMetaRpc
+@interface OGCompatEditPeerFoldersRpc : OGCompatWireRpc
 @property (nonatomic, strong) NSArray *folderPeers;
 @end
 
-@implementation TGIOS6EditPeerFoldersRequest
-- (int32_t)TLconstructorSignature { return (int32_t)0x6847d0ab; }
-- (int32_t)TLconstructorName { return -1; }
-- (Class)responseClass { return [TLUpdates class]; }
-- (int)impliedResponseSignature { return 0; }
+@implementation OGCompatEditPeerFoldersRpc
 - (int)layerVersion { return 74; }
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return self; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
-- (void)TLserialize:(NSOutputStream *)os
-{
-    [os writeInt32:(int32_t)0x1cb5c415];
-    [os writeInt32:(int32_t)self.folderPeers.count];
-    for (id<TLObject> peer in self.folderPeers)
-        TLMetaClassStore::serializeObject(os, peer, true);
-}
-@end
-
-
-#pragma mark - iOS 6 forum forwarding
-
-@interface TGIOS6ForwardMessagesToThreadRpc : TLMetaRpc
-@property (nonatomic) int32_t flags;
-@property (nonatomic, strong) TLInputPeer *fromPeer;
-@property (nonatomic, strong) NSArray *messageIds;
-@property (nonatomic, strong) NSArray *randomIds;
-@property (nonatomic, strong) TLInputPeer *toPeer;
-@property (nonatomic) int32_t topMessageId;
-@property (nonatomic, strong) TLInputPeer *monoforumPeer;
-@property (nonatomic, strong) TLInputPeer *sendAs;
-@end
-
-@implementation TGIOS6ForwardMessagesToThreadRpc
-
-- (int32_t)TLconstructorSignature { return (int32_t)0x13704a7c; }
-- (int32_t)TLconstructorName { return -1; }
 - (Class)responseClass { return [TLUpdates class]; }
-- (int)impliedResponseSignature { return 0; }
-- (int)layerVersion { return 225; }
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
-
+- (int32_t)TLconstructorSignature { return (int32_t)0x6847d0ab; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return self; }
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:self.flags | (self.sendAs != nil ? (1 << 13) : 0)];
-    TLMetaClassStore::serializeObject(os, self.fromPeer, true);
-
+    NSArray *entries = self.folderPeers;
     [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
-    [os writeInt32:(int32_t)self.messageIds.count];
-    for (NSNumber *messageId in self.messageIds)
-        [os writeInt32:[messageId intValue]];
-
-    [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
-    [os writeInt32:(int32_t)self.randomIds.count];
-    for (NSNumber *randomId in self.randomIds)
-        [os writeInt64:[randomId longLongValue]];
-
-    TLMetaClassStore::serializeObject(os, self.toPeer, true);
-    if ((self.flags & (1 << 9)) != 0)
-        [os writeInt32:self.topMessageId];
-    if ((self.flags & (1 << 22)) != 0)
-    {
-        [os writeInt32:(int32_t)0x69d66c45];
-        TLMetaClassStore::serializeObject(os, self.monoforumPeer, true);
-    }
-    if (self.sendAs != nil)
-        TLMetaClassStore::serializeObject(os, self.sendAs, true);
+    [os writeInt32:(int32_t)entries.count];
+    for (id<TLObject> entry in entries)
+        TLMetaClassStore::serializeObject(os, entry, true);
 }
-
 @end
+
+
+#pragma mark - Forum forwarding
 
 @implementation TGTelegraph
 
@@ -2877,7 +2757,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     return false;
 }
 
-- (void)ios6PrepareAuthNetwork:(NSString *)reason
+- (void)og_compat_prepareAuthNetwork:(NSString *)reason
 {
     TGLog(@"AUTH prepare network reason=%@ appState=%ld", reason, (long)[UIApplication sharedApplication].applicationState);
     [[TGTelegramNetworking instance] resume];
@@ -2887,19 +2767,19 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     }];
 }
 
-- (void)ios6HandleLoginTokenResponse:(id)response completion:(void (^)(NSData *token, int32_t expires, bool authorized, NSString *errorText))completion
+- (void)og_compat_handleLoginTokenResponse:(id)response completion:(void (^)(NSData *token, int32_t expires, bool authorized, NSString *errorText))completion
 {
-    if ([response isKindOfClass:[TGIOS6AuthLoginToken class]])
+    if ([response isKindOfClass:[OGCompatLoginToken class]])
     {
-        TGIOS6AuthLoginToken *loginToken = (TGIOS6AuthLoginToken *)response;
+        OGCompatLoginToken *loginToken = (OGCompatLoginToken *)response;
         if (completion != nil)
             completion(loginToken.token, loginToken.expires, false, nil);
         return;
     }
 
-    if ([response isKindOfClass:[TGIOS6AuthLoginTokenSuccess class]])
+    if ([response isKindOfClass:[OGCompatLoginTokenSuccess class]])
     {
-        TLauth_Authorization *authorization = ((TGIOS6AuthLoginTokenSuccess *)response).authorization;
+        TLauth_Authorization *authorization = ((OGCompatLoginTokenSuccess *)response).authorization;
         id user = authorization.user;
         if (authorization != nil && user != nil)
         {
@@ -2922,10 +2802,10 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doExportLoginTokenWithCompletion:(void (^)(NSData *token, int32_t expires, bool authorized, NSString *errorText))completion
 {
-    [self ios6PrepareAuthNetwork:@"qrLogin"];
-    TGIOS6RegisterLoginTokenClasses();
+    [self og_compat_prepareAuthNetwork:@"qrLogin"];
+    OGCompatRegisterLoginTokenClasses();
 
-    TGIOS6AuthExportLoginToken *request = [[TGIOS6AuthExportLoginToken alloc] init];
+    OGCompatExportLoginTokenRpc *request = [[OGCompatExportLoginTokenRpc alloc] init];
     request.apiId = [_apiId intValue];
     request.apiHash = _apiHash;
     request.exceptIds = @[];
@@ -2946,12 +2826,12 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
             return;
         }
 
-        if ([response isKindOfClass:[TGIOS6AuthLoginTokenMigrateTo class]])
+        if ([response isKindOfClass:[OGCompatLoginTokenMigrateTo class]])
         {
-            TGIOS6AuthLoginTokenMigrateTo *migrate = (TGIOS6AuthLoginTokenMigrateTo *)response;
+            OGCompatLoginTokenMigrateTo *migrate = (OGCompatLoginTokenMigrateTo *)response;
             [[TGTelegramNetworking instance] moveToDatacenterId:migrate.dcId completion:^
             {
-                TGIOS6AuthImportLoginToken *importRequest = [[TGIOS6AuthImportLoginToken alloc] init];
+                OGCompatImportLoginTokenRpc *importRequest = [[OGCompatImportLoginTokenRpc alloc] init];
                 importRequest.token = migrate.token;
                 [[TGTelegramNetworking instance] performRpc:importRequest completionBlock:^(id<TLObject> importResponse, __unused int64_t importResponseTime, MTRpcError *importError)
                 {
@@ -2964,67 +2844,41 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
                     }
                     else
                     {
-                        [strongSelf ios6HandleLoginTokenResponse:importResponse completion:completion];
+                        [strongSelf og_compat_handleLoginTokenResponse:importResponse completion:completion];
                     }
                 } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassEnableUnauthorized | TGRequestClassFailOnFloodErrors | TGRequestClassPassthroughPasswordNeeded | TGRequestClassIgnorePasswordEntryRequired | TGRequestClassFailOnServerErrorsImmediately];
             }];
             return;
         }
 
-        [strongSelf ios6HandleLoginTokenResponse:response completion:completion];
+        [strongSelf og_compat_handleLoginTokenResponse:response completion:completion];
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassEnableUnauthorized | TGRequestClassFailOnFloodErrors | TGRequestClassPassthroughPasswordNeeded | TGRequestClassIgnorePasswordEntryRequired | TGRequestClassFailOnServerErrorsImmediately];
 }
 
 - (NSObject *)doSendConfirmationCode:(NSString *)phoneNumber requestBuilder:(TGSendCodeRequestBuilder *)requestBuilder
 {
-    [self ios6PrepareAuthNetwork:@"sendCode"];
+    [self og_compat_prepareAuthNetwork:@"sendCode"];
     
-    TGIOS6AuthSendCode *sendCode = [[TGIOS6AuthSendCode alloc] init];
-    sendCode.phoneNumber = phoneNumber;
-    sendCode.apiId = [_apiId intValue];
+    OGCompatSendCodeRpc *sendCode = [[OGCompatSendCodeRpc alloc] init];
     sendCode.apiHash = _apiHash;
+    sendCode.apiId = [_apiId intValue];
+    sendCode.phoneNumber = phoneNumber;
     
-    NSString *langCode = [[NSLocale preferredLanguages] objectAtIndex:0];
-    NSString *maskedPhone = phoneNumber.length <= 4 ? phoneNumber : [NSString stringWithFormat:@"%@***%@", [phoneNumber substringToIndex:MIN((NSUInteger)2, phoneNumber.length)], [phoneNumber substringFromIndex:phoneNumber.length - 2]];
-    TGLog(@"AUTH sendCode request modern phone=%@ phoneLength=%lu apiId=%@ lang=%@", maskedPhone, (unsigned long)phoneNumber.length, _apiId, langCode);
+    TGLog(@"AUTH sendCode request modern phone=%@ phoneLength=%lu apiId=%@ lang=%@", OGCompatMaskedPhoneNumber(phoneNumber), (unsigned long)phoneNumber.length, _apiId, [[NSLocale preferredLanguages] objectAtIndex:0]);
     
     return [[TGTelegramNetworking instance] performRpc:sendCode completionBlock:^(id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
     {
         if (error == nil)
         {
-            id codeType = nil;
-            id nextType = nil;
-            id timeout = nil;
-            id phoneHash = nil;
-            @try
-            {
-                codeType = [(id)response valueForKey:@"type"];
-                nextType = [(id)response valueForKey:@"next_type"];
-                timeout = [(id)response valueForKey:@"timeout"];
-                phoneHash = [(id)response valueForKey:@"phone_code_hash"];
-            }
-            @catch (__unused NSException *exception)
-            {
-            }
-            TGLog(@"AUTH sendCode success response=%@ type=%@ next=%@ timeout=%@ hashLen=%lu", response, codeType != nil ? NSStringFromClass([codeType class]) : nil, nextType != nil ? NSStringFromClass([nextType class]) : nil, timeout, (unsigned long)[phoneHash length]);
+            OGCompatLogSentCode(response);
             [requestBuilder sendCodeRequestSuccess:(TLauth_SentCode *)response];
         }
         else
         {
-            TGSendCodeError errorCode = TGSendCodeErrorUnknown;
-            
             NSString *errorType = error.errorDescription;
             TGLog(@"AUTH sendCode error raw=%@ type=%@ code=%d responseTime=%lld", error, errorType, (int)error.errorCode, responseTime);
-            if ([errorType isEqualToString:@"PHONE_NUMBER_INVALID"])
-                errorCode = TGSendCodeErrorInvalidPhone;
-            else if ([errorType hasPrefix:@"FLOOD_WAIT"])
-                errorCode = TGSendCodeErrorFloodWait;
-            else if ([errorType isEqualToString:@"PHONE_NUMBER_FLOOD"]) {
-                errorCode = TGSendCodeErrorPhoneFlood;
-            } else if ([errorType isEqualToString:@"PHONE_NUMBER_BANNED"]) {
-                errorCode = TGSendCodeErrorPhoneBanned;
-            }
-            else
+            TGSendCodeError errorCode = OGCompatSendCodeErrorForType(errorType);
+            if (errorCode == TGSendCodeErrorUnknown)
             {
                 NSInteger datacenterId = 0;
                 if ([self isMigrateToDatacenterError:errorType datacenterId:&datacenterId] && datacenterId != 0)
@@ -3041,7 +2895,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doSendConfirmationSms:(NSString *)phoneNumber phoneHash:(NSString *)phoneHash requestBuilder:(TGSendCodeRequestBuilder *)requestBuilder
 {
-    [self ios6PrepareAuthNetwork:@"resendSms"];
+    [self og_compat_prepareAuthNetwork:@"resendSms"];
     
     TLRPCauth_resendCode$auth_resendCode *resendCode = [[TLRPCauth_resendCode$auth_resendCode alloc] init];
     resendCode.phone_number = phoneNumber;
@@ -3084,7 +2938,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doSendPhoneCall:(NSString *)phoneNumber phoneHash:(NSString *)phoneHash requestBuilder:(TGSendCodeRequestBuilder *)requestBuilder
 {
-    [self ios6PrepareAuthNetwork:@"resendCall"];
+    [self og_compat_prepareAuthNetwork:@"resendCall"];
     
     TLRPCauth_resendCode$auth_resendCode *resendCode = [[TLRPCauth_resendCode$auth_resendCode alloc] init];
     resendCode.phone_number = phoneNumber;
@@ -3109,7 +2963,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doSignUp:(NSString *)phoneNumber phoneHash:(NSString *)phoneHash phoneCode:(NSString *)phoneCode firstName:(NSString *)firstName lastName:(NSString *)lastName requestBuilder:(TGSignUpRequestBuilder *)requestBuilder
 {
-    [self ios6PrepareAuthNetwork:@"signUp"];
+    [self og_compat_prepareAuthNetwork:@"signUp"];
     
     TLRPCauth_signUp$auth_signUp *signUp = [[TLRPCauth_signUp$auth_signUp alloc] init];
     signUp.phone_number = phoneNumber;
@@ -3157,12 +3011,12 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doSignIn:(NSString *)phoneNumber phoneHash:(NSString *)phoneHash phoneCode:(NSString *)phoneCode requestBuilder:(TGSignInRequestBuilder *)requestBuilder
 {
-    [self ios6PrepareAuthNetwork:@"signIn"];
+    [self og_compat_prepareAuthNetwork:@"signIn"];
     
-    TGIOS6AuthSignIn *signIn = [[TGIOS6AuthSignIn alloc] init];
-    signIn.phoneNumber = phoneNumber;
-    signIn.phoneCodeHash = phoneHash;
+    OGCompatSignInRpc *signIn = [[OGCompatSignInRpc alloc] init];
     signIn.phoneCode = phoneCode;
+    signIn.phoneCodeHash = phoneHash;
+    signIn.phoneNumber = phoneNumber;
     
     return [[TGTelegramNetworking instance] performRpc:signIn completionBlock:^(id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
     {
@@ -3290,6 +3144,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     {
         TLRPCaccount_registerDevice$account_registerDevice *registerDevice = [[TLRPCaccount_registerDevice$account_registerDevice alloc] init];
         
+        registerDevice.secret = [NSData data];
         registerDevice.flags = 0;
         registerDevice.token_type = 1;
         registerDevice.token = deviceToken;
@@ -3298,7 +3153,6 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 #else
         registerDevice.app_sandbox = false;
 #endif
-        registerDevice.secret = [NSData data];
         registerDevice.other_uids = [[TGAccountSwitcher instance] otherAuthorizedUserIds];
         rpcRequest = registerDevice;
     }
@@ -3364,28 +3218,26 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
         }
         else
         {
-            NSString *errorDescription = [error.errorDescription uppercaseString];
-            if (error.errorCode == 400 && [errorDescription rangeOfString:@"USER_ID_INVALID"].location != NSNotFound)
+            TGUser *knownUser = nil;
+            if (error.errorCode == 400 && OGCompatErrorTextContains(error, @"USER_ID_INVALID"))
+                knownUser = [TGDatabaseInstance() loadUser:uid];
+            if (knownUser != nil && knownUser.phoneNumberHash != 0)
             {
-                TGUser *user = [TGDatabaseInstance() loadUser:uid];
-                if (user != nil && user.phoneNumberHash != 0)
+                TLInputUser$inputUser *fallbackInputUser = [[TLInputUser$inputUser alloc] init];
+                fallbackInputUser.access_hash = knownUser.phoneNumberHash;
+                fallbackInputUser.user_id = uid;
+                TLRPCusers_getFullUser$users_getFullUser *fallbackRequest = [[TLRPCusers_getFullUser$users_getFullUser alloc] init];
+                fallbackRequest.n_id = fallbackInputUser;
+                TGLog(@"AUTH getFullUser retry legacy uid=%lld hash=%lld after=%@", uid, knownUser.phoneNumberHash, error.errorDescription);
+                
+                [[TGTelegramNetworking instance] performRpc:fallbackRequest completionBlock:^(TLUserFull *fallbackResult, __unused int64_t fallbackResponseTime, MTRpcError *fallbackError)
                 {
-                    TLRPCusers_getFullUser$users_getFullUser *retryGetFullUser = [[TLRPCusers_getFullUser$users_getFullUser alloc] init];
-                    TLInputUser$inputUser *legacyInputUser = [[TLInputUser$inputUser alloc] init];
-                    legacyInputUser.user_id = uid;
-                    legacyInputUser.access_hash = user.phoneNumberHash;
-                    retryGetFullUser.n_id = legacyInputUser;
-                    TGLog(@"AUTH getFullUser retry legacy uid=%lld hash=%lld after=%@", uid, user.phoneNumberHash, error.errorDescription);
-                    
-                    [[TGTelegramNetworking instance] performRpc:retryGetFullUser completionBlock:^(TLUserFull *retryResult, __unused int64_t retryResponseTime, MTRpcError *retryError)
-                    {
-                        if (retryError == nil)
-                            [actor extendedUserDataRequestSuccess:retryResult];
-                        else
-                            [actor extendedUserDataRequestFailed];
-                    } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
-                    return;
-                }
+                    if (fallbackError != nil)
+                        [actor extendedUserDataRequestFailed];
+                    else
+                        [actor extendedUserDataRequestSuccess:fallbackResult];
+                } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
+                return;
             }
             [actor extendedUserDataRequestFailed];
         }
@@ -3433,12 +3285,12 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     int32_t const ptsLimit = ptsTotalLimit;
 
     TLRPCupdates_getDifference$updates_getDifference *getDifference = [[TLRPCupdates_getDifference$updates_getDifference alloc] init];
-    getDifference.pts = pts;
-    getDifference.pts_limit = ptsLimit;
-    getDifference.pts_total_limit = ptsTotalLimit;
-    getDifference.date = date;
-    getDifference.qts = qts;
     getDifference.qts_limit = 100;
+    getDifference.qts = qts;
+    getDifference.date = date;
+    getDifference.pts_total_limit = ptsTotalLimit;
+    getDifference.pts_limit = ptsLimit;
+    getDifference.pts = pts;
 
     if (pts == 0)
     {
@@ -3470,34 +3322,29 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
         {
             [requestBuilder stateDeltaRequestSuccess:(TLupdates_Difference *)response];
         }
-        else if ([[[TGTelegramNetworking instance] extractNetworkErrorType:error] isEqualToString:@"PERSISTENT_TIMESTAMP_EMPTY"])
-        {
-            IOS6NotificationProbe(@"DIFF", @"rpc_error type=PERSISTENT_TIMESTAMP_EMPTY code=%d", error.errorCode);
-            [self doRequestState:requestBuilder];
-        }
         else
         {
-            IOS6NotificationProbe(@"DIFF", @"rpc_error type=%@ code=%d description=%@ network=%d connecting=%d",
-                                  [[TGTelegramNetworking instance] extractNetworkErrorType:error] ?: @"unknown",
-                                  error.errorCode, error.errorDescription ?: @"none",
-                                  [[TGTelegramNetworking instance] isNetworkAvailable] ? 1 : 0,
-                                  [[TGTelegramNetworking instance] isConnecting] ? 1 : 0);
-            [requestBuilder stateDeltaRequestFailed];
+            NSString *deltaErrorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+            if ([deltaErrorType isEqualToString:@"PERSISTENT_TIMESTAMP_EMPTY"])
+                [self doRequestState:requestBuilder];
+            else
+                [requestBuilder stateDeltaRequestFailed];
         }
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit requestBuilder:(TGDialogListRequestBuilder *)requestBuilder
 {
-    return [self doRequestDialogsListWithOffset:offset limit:limit folderId:0 requestArchive:true requestBuilder:requestBuilder];
+    const int32_t mainFolderId = 0;
+    const bool includeArchive = true;
+    return [self doRequestDialogsListWithOffset:offset limit:limit folderId:mainFolderId requestArchive:includeArchive requestBuilder:requestBuilder];
 }
 
 - (NSObject *)ios6RequestPinnedDialogsForFolderId:(int32_t)folderId completion:(void (^)(TLmessages_PeerDialogs *))completion failure:(void (^)(NSError *))failure
 {
     if (_clientUserId == 0 || !_clientIsActivated)
     {
-        if (failure != nil)
-            failure(TGIOS6DialogListError(nil, 401, @"Authorization is not ready"));
+        OGCompatReportDialogAuthNotReady(failure);
         return nil;
     }
     TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs *request = [[TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs alloc] init];
@@ -3511,7 +3358,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
         }
         else if (failure != nil)
         {
-            failure(TGIOS6DialogListError(error, 400, [[NSString alloc] initWithFormat:@"Unexpected pinned dialogs response %@", result == nil ? @"nil" : NSStringFromClass([result class])]));
+            failure(OGCompatDialogListError(error, 400, [[NSString alloc] initWithFormat:@"Unexpected pinned dialogs response %@", result == nil ? @"nil" : NSStringFromClass([result class])]));
         }
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
@@ -3524,12 +3371,12 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doSetConversationArchived:(int64_t)conversationId accessHash:(int64_t)accessHash archived:(bool)archived completion:(void (^)(bool success))completion
 {
-    TGIOS6InputFolderPeer *folderPeer = [[TGIOS6InputFolderPeer alloc] init];
-    folderPeer.peer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
+    OGCompatInputFolderPeer *folderPeer = [[OGCompatInputFolderPeer alloc] init];
     folderPeer.folderId = archived ? 1 : 0;
+    folderPeer.peer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
 
-    TGIOS6EditPeerFoldersRequest *request = [[TGIOS6EditPeerFoldersRequest alloc] init];
-    request.folderPeers = @[folderPeer];
+    OGCompatEditPeerFoldersRpc *request = [[OGCompatEditPeerFoldersRpc alloc] init];
+    request.folderPeers = [NSArray arrayWithObject:folderPeer];
     return [[TGTelegramNetworking instance] performRpc:request completionBlock:^(__unused TLUpdates *updates, __unused int64_t responseTime, MTRpcError *error)
     {
         if (completion != nil)
@@ -3537,7 +3384,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (void)ios6RefreshArchivePeerIds
+- (void)refreshArchivePeerIds
 {
     if (_clientUserId == 0 || !_clientIsActivated)
         return;
@@ -3559,12 +3406,13 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     }
 
     TLRPCmessages_getDialogs *getDialogs = [[TLRPCmessages_getDialogs alloc] init];
-    getDialogs.flags |= (1 << 1);
-    if (offset.date != 0 || offset.peerId != 0 || offset.messageId != 0)
-        getDialogs.flags |= (1 << 0);
+    bool pagedRequest = offset.date != 0 || offset.peerId != 0 || offset.messageId != 0;
+    int32_t dialogRequestFlags = 1 << 1;
+    if (pagedRequest)
+        dialogRequestFlags |= 1 << 0;
+    getDialogs.flags = dialogRequestFlags;
     getDialogs.folder_id = folderId;
     getDialogs.offset_date = offset.date;
-    getDialogs.offset_id = 0;
     getDialogs.offset_id = offset.messageId;
     getDialogs.offset_peer = offset.peerId == 0 ? [[TLInputPeer$inputPeerEmpty alloc] init] : [self createInputPeerForConversation:offset.peerId accessHash:offset.accessHash];
     getDialogs.limit = limit;
@@ -3579,32 +3427,11 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
                 [requestBuilder dialogListRequestNotModified:((TLmessages_Dialogs$messages_dialogsSlice *)dialogs).count];
                 return;
             }
-            int dialogIndex = 0;
-            for (id dialog in dialogs.dialogs)
-            {
-                dialogIndex++;
-            }
-            int chatIndex = 0;
-            for (id chat in dialogs.chats)
-            {
-                chatIndex++;
-            }
-            int userIndex = 0;
-            for (id user in dialogs.users)
-            {
-                userIndex++;
-            }
-            
-            bool initialMainFolderRequest = requestArchive && folderId == 0 && offset.date == 0 && offset.peerId == 0 && offset.messageId == 0;
-            if (initialMainFolderRequest)
-            {
-                [self ios6RefreshArchivePeerIds];
+            bool firstMainPage = folderId == 0 && requestArchive && offset.messageId == 0 && offset.peerId == 0 && offset.date == 0;
+            if (firstMainPage)
+                [self refreshArchivePeerIds];
+            if (firstMainPage || requestBuilder != nil)
                 [requestBuilder dialogListRequestSuccess:dialogs];
-            }
-            else if (requestBuilder != nil)
-            {
-                [requestBuilder dialogListRequestSuccess:dialogs];
-            }
         }
         else
         {
@@ -3618,8 +3445,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 {
     if (_clientUserId == 0 || !_clientIsActivated)
     {
-        if (failure != nil)
-            failure(TGIOS6DialogListError(nil, 401, @"Authorization is not ready"));
+        OGCompatReportDialogAuthNotReady(failure);
         return nil;
     }
     TLRPCmessages_getDialogs *request = [[TLRPCmessages_getDialogs alloc] init];
@@ -3628,33 +3454,25 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     request.offset_date = offset.date;
     request.offset_id = offset.messageId;
     request.offset_peer = inputPeer ?: (offset.peerId == 0 ? [[TLInputPeer$inputPeerEmpty alloc] init] : [self createInputPeerForConversation:offset.peerId accessHash:offset.accessHash]);
-    int maximumPageLimit = 100;
-    switch (devicePerformanceClass())
-    {
-        case TGPerformanceClassConstrained: maximumPageLimit = 20; break;
-        case TGPerformanceClassBalanced: maximumPageLimit = 80; break;
-        case TGPerformanceClassFast: maximumPageLimit = 100; break;
-        case TGPerformanceClassHigh: maximumPageLimit = 100; break;
-    }
-    request.limit = MIN(MAX(1, limit), maximumPageLimit);
+    request.limit = MIN(MAX(1, limit), OGCompatDialogPageCeiling());
     request.n_hash = 0;
     return [[TGTelegramNetworking instance] performRpc:request completionBlock:^(TLmessages_Dialogs *dialogs, __unused int64_t responseTime, MTRpcError *error)
     {
         if (error != nil || (![dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogs class]] && ![dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]]))
         {
             if (failure != nil)
-                failure(TGIOS6DialogListError(error, 400, [[NSString alloc] initWithFormat:@"Unexpected dialogs response %@", dialogs == nil ? @"nil" : NSStringFromClass([dialogs class])]));
+                failure(OGCompatDialogListError(error, 400, [[NSString alloc] initWithFormat:@"Unexpected dialogs response %@", dialogs == nil ? @"nil" : NSStringFromClass([dialogs class])]));
             return;
         }
         bool hasMore = [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]] && dialogs.dialogs.count >= (NSUInteger)request.limit;
         int totalCount = [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]] ? ((TLmessages_Dialogs$messages_dialogsSlice *)dialogs).count : (int)dialogs.dialogs.count;
         OGPlatformDiagnosticLog(@"DIALOGS page response folder=%d count=%u limit=%d total=%d has_more=%d", folderId, (unsigned int)dialogs.dialogs.count, request.limit, totalCount, hasMore ? 1 : 0);
         TLInputPeer *nextPeer = nil;
-        TGDialogListRemoteOffset *nextOffset = hasMore ? TGIOS6DialogsRemoteOffset(dialogs, _clientUserId, &nextPeer) : nil;
+        TGDialogListRemoteOffset *nextOffset = hasMore ? OGCompatDialogsRemoteOffset(dialogs, _clientUserId, &nextPeer) : nil;
         if (hasMore && (nextOffset == nil || [nextOffset compare:offset] == NSOrderedSame))
         {
             if (failure != nil)
-                failure(TGIOS6DialogListError(nil, 400, nextOffset == nil ? @"No usable dialog pagination offset" : @"Dialog pagination offset did not advance"));
+                failure(OGCompatDialogListError(nil, 400, nextOffset == nil ? @"No usable dialog pagination offset" : @"Dialog pagination offset did not advance"));
             return;
         }
         if (completion != nil)
@@ -3870,16 +3688,16 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 - (TLInputPeer *)createInputPeerForConversation:(int64_t)conversationId accessHash:(int64_t)accessHash
 {
     if (conversationId == 0)
-    {
         return [[TLInputPeer$inputPeerEmpty alloc] init];
-    }
-    else if (TGPeerIdIsChannel(conversationId))
+
+    if (TGPeerIdIsChannel(conversationId))
     {
-        TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
-        if (conversation != nil && conversation.accessHash != 0 && conversation.accessHash != accessHash)
+        TGConversation *storedConversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
+        int64_t storedHash = storedConversation != nil ? storedConversation.accessHash : 0;
+        if (storedHash != 0 && storedHash != accessHash)
         {
-            TGLog(@"AUTH inputPeer accessHash repair peer=%lld old=%lld db=%lld", conversationId, accessHash, conversation.accessHash);
-            accessHash = conversation.accessHash;
+            TGLog(@"AUTH inputPeer accessHash repair peer=%lld old=%lld db=%lld", conversationId, accessHash, storedHash);
+            accessHash = storedHash;
         }
 
         TLInputPeer$inputPeerChannel *channelPeer = [[TLInputPeer$inputPeerChannel alloc] init];
@@ -3887,23 +3705,22 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
         channelPeer.access_hash = accessHash;
         return channelPeer;
     }
-    else if (TGPeerIdIsGroup(conversationId))
+
+    if (TGPeerIdIsGroup(conversationId))
     {
         TLInputPeer$inputPeerChat *chatPeer = [[TLInputPeer$inputPeerChat alloc] init];
         chatPeer.chat_id = TGGroupIdFromPeerId(conversationId);
         return chatPeer;
     }
-    else if (conversationId == _clientUserId)
+
+    if (conversationId == _clientUserId)
+        return [[TLInputPeer$inputPeerSelf alloc] init];
+
+    if (TGPeerIdIsUser(conversationId))
     {
-        TLInputPeer$inputPeerSelf *selfPeer = [[TLInputPeer$inputPeerSelf alloc] init];
-        return selfPeer;
-    }
-    else if (TGPeerIdIsUser(conversationId))
-    {
-        TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
-        int64_t userAccessHash = accessHash;
-        if (user != nil && user.phoneNumberHash != 0)
-            userAccessHash = user.phoneNumberHash;
+        TGUser *storedUser = [TGDatabaseInstance() loadUser:conversationId];
+        int64_t storedUserHash = storedUser != nil ? storedUser.phoneNumberHash : 0;
+        int64_t userAccessHash = storedUserHash != 0 ? storedUserHash : accessHash;
 
         if (userAccessHash != 0)
         {
@@ -3959,22 +3776,26 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     }
 }
 
+- (void)og_compat_reportInvalidPeer:(NSString *)reason forHistoryActor:(TGConversationHistoryAsyncRequestActor *)actor
+{
+    if ([actor respondsToSelector:@selector(conversationHistoryRequestInvalidPeer:)])
+        [actor conversationHistoryRequestInvalidPeer:reason];
+    else
+        [actor conversationHistoryRequestFailed];
+}
+
 - (NSObject *)doRequestConversationHistory:(int64_t)conversationId accessHash:(int64_t)accessHash maxMid:(int)maxMid orOffset:(int)offset limit:(int)limit actor:(TGConversationHistoryAsyncRequestActor *)actor
 {
-    NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:conversationId name:murMurHash32(@"ios6InvalidPeer")];
-    if (invalidPeerMarker.length != 0 && TGPeerIdIsChannel(conversationId))
+    if (OGCompatChannelFlaggedInvalid(conversationId))
     {
-        if ([actor respondsToSelector:@selector(conversationHistoryRequestInvalidPeer:)])
-            [actor conversationHistoryRequestInvalidPeer:@"IOS6_INVALID_PEER_CACHED"];
-        else
-            [actor conversationHistoryRequestFailed];
+        [self og_compat_reportInvalidPeer:@"INVALID_PEER_CACHED" forHistoryActor:actor];
         return nil;
     }
     
     TLRPCmessages_getHistory$messages_getHistory *getHistory = [[TLRPCmessages_getHistory$messages_getHistory alloc] init];
     getHistory.peer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
     getHistory.min_id = 1;
-    getHistory.max_id = maxMid > 0 ? maxMid : INT32_MAX;
+    getHistory.max_id = maxMid <= 0 ? INT32_MAX : maxMid;
     if (maxMid >= 0)
         getHistory.offset_id = maxMid;
     getHistory.add_offset = offset;
@@ -3984,37 +3805,20 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     {
         if (error == nil)
         {
-            NSMutableString *ids = [[NSMutableString alloc] init];
-            int32_t minId = INT_MAX;
-            int32_t maxId = 0;
-            for (TLMessage *message in messages.messages)
-            {
-                if (message.n_id > 0)
-                {
-                    if (ids.length != 0)
-                        [ids appendString:@","];
-                    [ids appendFormat:@"%d", message.n_id];
-                    minId = MIN(minId, message.n_id);
-                    maxId = MAX(maxId, message.n_id);
-                }
-            }
             [actor conversationHistoryRequestSuccess:messages];
         }
         else
         {
-            NSString *errorDescription = [error.errorDescription uppercaseString];
-            if (error.errorCode == 400 && ([errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHAT_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound))
+            bool invalidPeerError = error.errorCode == 400 && (OGCompatErrorTextContains(error, @"PEER_ID_INVALID") || OGCompatErrorTextContains(error, @"CHAT_ID_INVALID") || OGCompatErrorTextContains(error, @"CHANNEL_INVALID"));
+            if (invalidPeerError)
             {
                 if (TGPeerIdIsChannel(conversationId))
                 {
-                    uint8_t one = 1;
-                    [TGDatabaseInstance() setConversationCustomProperty:conversationId name:murMurHash32(@"ios6InvalidPeer") value:[NSData dataWithBytes:&one length:1]];
+                    uint8_t marker = 1;
+                    [TGDatabaseInstance() setConversationCustomProperty:conversationId name:murMurHash32(@"ios6InvalidPeer") value:[NSData dataWithBytes:&marker length:1]];
                 }
                 
-                if ([actor respondsToSelector:@selector(conversationHistoryRequestInvalidPeer:)])
-                    [actor conversationHistoryRequestInvalidPeer:error.errorDescription];
-                else
-                    [actor conversationHistoryRequestFailed];
+                [self og_compat_reportInvalidPeer:error.errorDescription forHistoryActor:actor];
             }
             else
                 [actor conversationHistoryRequestFailed];
@@ -4078,6 +3882,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     sendMessage.forumTopicId = actor.preparedMessage.forumTopicId;
     sendMessage.sendAs = [actor.preparedMessage.sendAs inputPeer];
     sendMessage.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
+    sendMessage.allowPaidStars = actor.preparedMessage.allowPaidStars;
     CFAbsoluteTime sendStart = CFAbsoluteTimeGetCurrent();
     
     return [[TGTelegramNetworking instance] performRpc:sendMessage completionBlock:^(id result, __unused int64_t responseTime, MTRpcError *error)
@@ -4165,6 +3970,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     sendContextBotResult.reply_to_msg_id = replyMessageId;
     sendContextBotResult.forumTopicId = actor.preparedMessage.forumTopicId;
     sendContextBotResult.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
+    sendContextBotResult.allowPaidStars = actor.preparedMessage.allowPaidStars;
     
     sendContextBotResult.n_id = botContextResult.resultId;
     sendContextBotResult.query_id = botContextResult.queryId;
@@ -4205,6 +4011,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     sendMedia.forumTopicId = actor.preparedMessage.forumTopicId;
     sendMedia.sendAs = [actor.preparedMessage.sendAs inputPeer];
     sendMedia.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
+    sendMedia.allowPaidStars = actor.preparedMessage.allowPaidStars;
     sendMedia.message = messageText;
     if (entities.count != 0) {
         sendMedia.entities = entities;
@@ -4248,6 +4055,10 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     sendMultiMedia.forumTopicId = ((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage.forumTopicId;
     sendMultiMedia.sendAs = [((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage.sendAs inputPeer];
     sendMultiMedia.monoforumPeer = [self monoforumInputPeerForPreparedMessage:((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage];
+    int64_t allowPaidStars = 0;
+    for (TGModernSendCommonMessageActor *actor in actors)
+        allowPaidStars += actor.preparedMessage.allowPaidStars;
+    sendMultiMedia.allowPaidStars = allowPaidStars;
     
     
     return [[TGTelegramNetworking instance] performRpc:sendMultiMedia completionBlock:^(id message, __unused int64_t responseTime, TLError *error)
@@ -4302,11 +4113,12 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     TLMetaRpc *request = nil;
     TLInputPeer *monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
 
-    if (topMessageId != 0 || monoforumPeer != nil || actor.preparedMessage.sendAs != nil)
+    if (topMessageId != 0 || monoforumPeer != nil || actor.preparedMessage.sendAs != nil || actor.preparedMessage.allowPaidStars > 0)
     {
         TGIOS6ForwardMessagesToThreadRpc *forwardMessages = [[TGIOS6ForwardMessagesToThreadRpc alloc] init];
         forwardMessages.toPeer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
         forwardMessages.sendAs = [actor.preparedMessage.sendAs inputPeer];
+        forwardMessages.allowPaidStars = actor.preparedMessage.allowPaidStars;
         forwardMessages.fromPeer = [self createInputPeerForConversation:fromPeer accessHash:fromPeerAccessHash];
         forwardMessages.messageIds = @[@(messageId)];
         forwardMessages.randomIds = @[@(tmpId)];
@@ -4419,7 +4231,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     if (TGPeerIdIsChannel(conversationId)) {
         TLRPCchannels_editTitle$channels_editTitle *editTitle = [[TLRPCchannels_editTitle$channels_editTitle alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        TGIOS6FillInputChannel(inputChannel, conversationId, accessHash);
+        OGCompatFillInputChannel(inputChannel, conversationId, accessHash);
         editTitle.channel = inputChannel;
         editTitle.title = title;
         
@@ -4458,7 +4270,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     if (TGPeerIdIsChannel(conversationId)) {
         TLRPCchannels_editPhoto$channels_editPhoto *editPhoto = [[TLRPCchannels_editPhoto$channels_editPhoto alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        TGIOS6FillInputChannel(inputChannel, conversationId, accessHash);
+        OGCompatFillInputChannel(inputChannel, conversationId, accessHash);
         editPhoto.channel = inputChannel;
         editPhoto.photo = photo;
         
@@ -4744,8 +4556,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
 
 - (NSObject *)doRequestConversationData:(int64_t)conversationId actor:(TGExtendedChatDataRequestActor *)actor
 {
-    NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:conversationId name:murMurHash32(@"ios6InvalidPeer")];
-    if (invalidPeerMarker.length != 0 && TGPeerIdIsChannel(conversationId))
+    if (OGCompatChannelFlaggedInvalid(conversationId))
     {
         [actor chatFullRequestFailed];
         return nil;
@@ -4826,7 +4637,7 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     
     if (muteUntil != nil) {
         peerNotifySettings.flags |= (1 << 2);
-        peerNotifySettings.mute_until = muteUntil.intValue;
+        peerNotifySettings.mute_until = [muteUntil intValue];
     }
     
     if (soundId != nil)
@@ -5235,13 +5046,15 @@ static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChan
     if (TGPeerIdIsChannel(peerId)) {
         TLRPCchannels_getMessages$channels_getMessages *getMessages = [[TLRPCchannels_getMessages$channels_getMessages alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        TGIOS6FillInputChannel(inputChannel, peerId, accessHash);
+        OGCompatFillInputChannel(inputChannel, peerId, accessHash);
         getMessages.channel = inputChannel;
-        getMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(mids);
+        NSArray *channelMessageIds = OGInputMessageIdsFromMessageIds(mids);
+        getMessages.n_id = channelMessageIds;
         rpc = getMessages;
     } else {
         TLRPCmessages_getMessages$messages_getMessages *getMessages = [[TLRPCmessages_getMessages$messages_getMessages alloc] init];
-        getMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(mids);
+        NSArray *plainMessageIds = OGInputMessageIdsFromMessageIds(mids);
+        getMessages.n_id = plainMessageIds;
         rpc = getMessages;
     }
     

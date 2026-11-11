@@ -35,6 +35,7 @@
 @property (nonatomic) int32_t forumTopicId;
 @property (nonatomic, strong) TGSendAsPeer *sendAs;
 @property (nonatomic) int64_t monoforumPeerId;
+@property (nonatomic) int64_t allowPaidStars;
 @property (nonatomic, readonly) int32_t replyMessageId;
 @property (nonatomic, strong) TGBotContextResultAttachment *botContextResult;
 @property (nonatomic, strong) TGReplyMarkupAttachment *replyMarkup;

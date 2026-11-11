@@ -590,12 +590,9 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
     
     return [initialPts mapToSignal:^SSignal *(NSNumber *nInitialPts) {
         TLRPCmessages_getPeerDialogs$messages_getPeerDialogs *getPeerDialogs = [[TLRPCmessages_getPeerDialogs$messages_getPeerDialogs alloc] init];
-        NSMutableArray *inputDialogPeers = [[NSMutableArray alloc] init];
+        NSMutableArray *inputDialogPeers = [NSMutableArray arrayWithCapacity:peers.count];
         for (TGConversation *peer in peers) {
-            int64_t accessHash = peer.accessHash;
-            if (TGPeerIdIsUser(peer.conversationId)) {
-                accessHash = [TGDatabaseInstance() loadUser:peer.conversationId].phoneNumberHash;
-            }
+            int64_t accessHash = TGPeerIdIsUser(peer.conversationId) ? [TGDatabaseInstance() loadUser:peer.conversationId].phoneNumberHash : peer.accessHash;
             TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peer.conversationId accessHash:accessHash];
             if (inputPeer != nil) {
                 TLInputDialogPeer$inputDialogPeer *inputDialogPeer = [[TLInputDialogPeer$inputDialogPeer alloc] init];
@@ -610,7 +607,7 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
                 return [SSignal fail:@true];
             } else {
                 NSMutableDictionary *readStates = [[NSMutableDictionary alloc] init];
-                NSMutableDictionary *resetPeerUnseenMentionsStates = [[NSMutableDictionary alloc] init];
+                NSMutableDictionary *mentionStatesByPeer = [[NSMutableDictionary alloc] init];
                 
                 for (TGConversation *conversation in peers) {
                     readStates[@(conversation.conversationId)] = (TGPeerReadState *)[NSNull null];
@@ -630,18 +627,18 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
                         
                         readStates[@(peerId)] = [[TGPeerReadState alloc] initWithMaxReadMessageId:dialog.read_inbox_max_id maxOutgoingReadMessageId:dialog.read_outbox_max_id maxKnownMessageId:dialog.top_message unreadCount:dialog.unread_count unreadMark:(dialog.flags & (1 << 3))];
                         
-                        resetPeerUnseenMentionsStates[@(peerId)] = [[TGUnseenPeerMentionsState alloc] initWithVersion:0 count:dialog.unread_mentions_count maxIdWithPrecalculatedCount:dialog.top_message];
+                        mentionStatesByPeer[@(peerId)] = [[TGUnseenPeerMentionsState alloc] initWithVersion:0 count:dialog.unread_mentions_count maxIdWithPrecalculatedCount:dialog.top_message];
                     }
                 }
                 
-                return [SSignal single:@{@"readStates": readStates, @"mentionStates": resetPeerUnseenMentionsStates}];
+                return [SSignal single:@{@"readStates": readStates, @"mentionStates": mentionStatesByPeer}];
             }
         }];
         
         SSignal *appliedReadStates = [[maybeAppliedReadStates onNext:^(NSDictionary *dict) {
-            NSDictionary *readStates = dict[@"readStates"];
-            NSMutableDictionary *resetPeerUnseenMentionsStates = dict[@"mentionStates"];
-            [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:readStates resetPeerUnseenMentionsStates:resetPeerUnseenMentionsStates clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+            NSDictionary *readStates = [dict objectForKey:@"readStates"];
+            NSMutableDictionary *mentionStates = [dict objectForKey:@"mentionStates"];
+            [TGDatabaseInstance() transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:readStates resetPeerUnseenMentionsStates:mentionStates clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
         }] retryIf:^bool(id error) {
             if ([error respondsToSelector:@selector(boolValue)] && [error boolValue]) {
                 return true;
@@ -658,14 +655,11 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
 
 + (SSignal *)validatePeerReadStates:(SSignal *)peers {
     return [peers mapToQueue:^SSignal *(NSArray *peers) {
-        NSMutableArray *globalPeers = [[NSMutableArray alloc] init];
-        NSMutableArray *channelPeers = [[NSMutableArray alloc] init];
+        NSMutableArray *directPeers = [NSMutableArray array];
+        NSMutableArray *broadcastPeers = [NSMutableArray array];
         for (TGConversation *conversation in peers) {
-            if (TGPeerIdIsUser(conversation.conversationId) || TGPeerIdIsGroup(conversation.conversationId)) {
-                [globalPeers addObject:conversation];
-            } else {
-                [channelPeers addObject:conversation];
-            }
+            bool isDirect = TGPeerIdIsUser(conversation.conversationId) || TGPeerIdIsGroup(conversation.conversationId);
+            [isDirect ? directPeers : broadcastPeers addObject:conversation];
         }
         
         return [self _validateGlobalPeerReadStates:peers];
@@ -808,7 +802,7 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
             return OGPeerDialogsDatabaseSignal(__FILE__, __LINE__, ^id {
                 [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
                 NSMutableDictionary *multipleMessagesByConversation = [[NSMutableDictionary alloc] init];
-                NSMutableDictionary *updatePeerDrafts = [[NSMutableDictionary alloc] init];
+                NSMutableDictionary *updatePeerDrafts = [NSMutableDictionary dictionary];
                 
                 for (TGMessage *message in completeMessages)
                 {

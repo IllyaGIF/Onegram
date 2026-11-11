@@ -25,6 +25,7 @@ NSString *const TGOnegramSettingGeneralExactNumbers = @"Onegram.General.ExactNum
 NSString *const TGOnegramSettingGeneralExactLastSeen = @"Onegram.General.ExactLastSeen";
 NSString *const TGOnegramSettingGeneralFilterZalgo = @"Onegram.General.FilterZalgo";
 NSString *const TGOnegramSettingGeneralNewChats = @"Onegram.General.NewChats";
+NSString *const TGOnegramSettingGeneralMessageMenuStyle = @"Onegram.General.MessageMenuStyle";
 NSString *const TGOnegramSettingGeneralHidePhone = @"Onegram.General.HidePhone";
 NSString *const TGOnegramSettingInterfaceModern = @"Onegram.Interface.Modern";
 NSString *const TGOnegramSettingGeneralShowPeerIds = @"Onegram.General.ShowPeerIds";
@@ -41,6 +42,7 @@ NSString *const TGOnegramSettingChatListTitleMode = @"Onegram.ChatList.TitleMode
 NSString *const TGOnegramSettingChatListCustomTitle = @"Onegram.ChatList.CustomTitle";
 NSString *const TGOnegramSettingChatListHideSearch = @"Onegram.ChatList.HideSearch";
 NSString *const TGOnegramSettingChatListHideAllChatsTab = @"Onegram.ChatList.HideAllChatsTab";
+NSString *const TGOnegramSettingChatListFolderTags = @"Onegram.ChatList.FolderTags";
 NSString *const TGOnegramSettingMessagesBubbleRadius = @"Onegram.Messages.BubbleRadius";
 NSString *const TGOnegramSettingMessagesStickerScale = @"Onegram.Messages.StickerScale";
 NSString *const TGOnegramSettingMessagesHideStickerTime = @"Onegram.Messages.HideStickerTime";
@@ -51,7 +53,7 @@ NSString *const TGOnegramSettingMessagesDoubleTapIncoming = @"Onegram.Messages.D
 NSString *const TGOnegramSettingMessagesDoubleTapOutgoing = @"Onegram.Messages.DoubleTapOutgoing";
 NSString *const TGOnegramSettingMessagesQuickReaction = @"Onegram.Messages.QuickReaction";
 NSString *const TGOnegramSettingMessagesEditedPencil = @"Onegram.Messages.EditedPencil";
-NSString *const TGOnegramSettingMessagesMenuScale = @"Onegram.Messages.MenuScale";
+NSString *const TGOnegramSettingMessagesMenuScale = @"Onegram.Messages.MenuSize";
 NSString *const TGOnegramSettingMessagesMenuHiddenActions = @"Onegram.Messages.MenuHiddenActions";
 NSString *const TGOnegramSettingAppearanceAvatarRoundness = @"Onegram.Appearance.AvatarRoundness";
 NSString *const TGOnegramSettingAppearanceRoundChatAvatar = @"Onegram.Appearance.RoundChatAvatar";
@@ -245,6 +247,7 @@ NSString *TGOnegramExactCountString(int64_t count)
             TGOnegramSettingGeneralFilterZalgo: @false,
             TGOnegramSettingGeneralHidePhone: @false,
             TGOnegramSettingGeneralNewChats: @true,
+            TGOnegramSettingGeneralMessageMenuStyle: @0,
             TGOnegramSettingInterfaceModern: @false,
             TGOnegramSettingGeneralShowPeerIds: @false,
             TGOnegramSettingGeneralHideArchive: @false,
@@ -260,6 +263,7 @@ NSString *TGOnegramExactCountString(int64_t count)
             TGOnegramSettingChatListCustomTitle: @"",
             TGOnegramSettingChatListHideSearch: @false,
             TGOnegramSettingChatListHideAllChatsTab: @false,
+            TGOnegramSettingChatListFolderTags: @0,
             TGOnegramSettingMessagesBubbleRadius: @(-1),
             TGOnegramSettingMessagesStickerScale: @100,
             TGOnegramSettingMessagesHideStickerTime: @false,
@@ -271,7 +275,7 @@ NSString *TGOnegramExactCountString(int64_t count)
             TGOnegramSettingMessagesQuickReaction: @"❤️",
             TGOnegramSettingMessagesEditedPencil: @false,
             TGOnegramSettingMessagesMenuHiddenActions: @[],
-            TGOnegramSettingMessagesMenuScale: @85,
+            TGOnegramSettingMessagesMenuScale: @100,
             TGOnegramSettingAppearanceAvatarRoundness: @(-1),
             TGOnegramSettingAppearanceRoundChatAvatar: @false,
             TGOnegramSettingAppearanceSnowfall: @(-1),
@@ -297,9 +301,10 @@ NSString *TGOnegramExactCountString(int64_t count)
             TGOnegramSettingGeneralTimeZoneOffset: TGOnegramSettingRangeValue(-720, 840),
             TGOnegramSettingTranslatorProvider: TGOnegramSettingRangeValue(0, 3),
             TGOnegramSettingChatListTitleMode: TGOnegramSettingRangeValue(0, 3),
+            TGOnegramSettingChatListFolderTags: TGOnegramSettingRangeValue(0, 2),
             TGOnegramSettingMessagesBubbleRadius: TGOnegramSettingRangeValue(-1, 16),
             TGOnegramSettingMessagesStickerScale: TGOnegramSettingRangeValue(50, 130),
-            TGOnegramSettingMessagesMenuScale: TGOnegramSettingRangeValue(70, 110),
+            TGOnegramSettingMessagesMenuScale: TGOnegramSettingRangeValue(70, 130),
             TGOnegramSettingMessagesDoubleTapIncoming: TGOnegramSettingRangeValue(0, 5),
             TGOnegramSettingMessagesDoubleTapOutgoing: TGOnegramSettingRangeValue(0, 6),
             TGOnegramSettingAppearanceAvatarRoundness: TGOnegramSettingRangeValue(-1, 100),

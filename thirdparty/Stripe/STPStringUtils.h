@@ -7,9 +7,10 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 
 typedef void(^STPTaggedSubstringCompletionBlock)(NSString *string, NSRange range);
-typedef void(^STPTaggedSubstringsCompletionBlock)(NSString *string, NSDictionary *tagMap);
+typedef void(^STPTaggedSubstringsCompletionBlock)(NSString *string, OG_COMPAT_GENERIC(NSDictionary, NSString *, NSValue *) *tagMap);
 
 @interface STPStringUtils : NSObject
 /**
@@ -50,6 +51,6 @@ typedef void(^STPTaggedSubstringsCompletionBlock)(NSString *string, NSDictionary
  *           complicated and we don't need it at the moment.
  */
 + (void)parseRangesFromString:(NSString *)string
-                     withTags:(NSSet *)tags
+                     withTags:(OG_COMPAT_GENERIC(NSSet, NSString *) *)tags
                    completion:(STPTaggedSubstringsCompletionBlock)completion;
 @end

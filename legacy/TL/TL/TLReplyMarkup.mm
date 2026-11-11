@@ -140,7 +140,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x48a30254;
+    return (int32_t)0xb2b15770;
 }
 
 - (int32_t)TLconstructorName
@@ -151,12 +151,19 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLReplyMarkup$replyInlineMarkup *object = [[TLReplyMarkup$replyInlineMarkup alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.rows = metaObject->getArray((int32_t)0x441aa5c6);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeVector;
@@ -167,4 +174,3 @@
 
 
 @end
-

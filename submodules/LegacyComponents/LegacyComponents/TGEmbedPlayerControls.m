@@ -16,6 +16,13 @@
 
 const CGFloat TGEmbedPlayerControlsPanelHeight = 32.0f;
 
+static UIView *OGEmbedTintedPlate(UIColor *color)
+{
+    UIView *plate = [[UIView alloc] initWithFrame:CGRectZero];
+    plate.backgroundColor = color;
+    return plate;
+}
+
 @interface TGEmbedPlayerControls ()
 {
     TGEmbedPlayerControlsType _type;
@@ -77,14 +84,13 @@ const CGFloat TGEmbedPlayerControlsPanelHeight = 32.0f;
         {
             if (iosMajorVersion() >= 8)
             {
-UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
-                _backgroundView = effectView;
-                _backgroundContentView = effectView;
-                
-                UIView *whiteView = [[UIView alloc] initWithFrame:effectView.bounds];
-                whiteView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                whiteView.backgroundColor = UIColorRGBA(0xffffff, 0.3f);
-                [effectView addSubview:whiteView];
+                UIView *panelPlate = [[UIView alloc] initWithFrame:CGRectZero];
+                UIView *tintView = OGEmbedTintedPlate(UIColorRGBA(0xffffff, 0.3f));
+                tintView.frame = panelPlate.bounds;
+                tintView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                [panelPlate addSubview:tintView];
+                _backgroundView = panelPlate;
+                _backgroundContentView = panelPlate;
             }
             else
             {
@@ -187,12 +193,11 @@ UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
             
             if (iosMajorVersion() >= 8)
             {
-UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
-                effectView.backgroundColor = UIColorRGBA(0xffffff, 0.3f);
-                effectView.clipsToBounds = true;
-                effectView.frame = CGRectMake(12.0f, 12.0f, 27.0f, 27.0f);
-                effectView.layer.cornerRadius = 13.5f;
-                [_fullscreenButtonWrapper addSubview:effectView];
+                UIView *roundPlate = OGEmbedTintedPlate(UIColorRGBA(0xffffff, 0.3f));
+                roundPlate.clipsToBounds = true;
+                roundPlate.frame = CGRectMake(12.0f, 12.0f, 27.0f, 27.0f);
+                roundPlate.layer.cornerRadius = 13.5f;
+                [_fullscreenButtonWrapper addSubview:roundPlate];
             }
             
             _fullscreenButton = [[TGModernButton alloc] initWithFrame:_fullscreenButtonWrapper.bounds];
@@ -222,23 +227,18 @@ UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
     
     if (iosMajorVersion() >= 8)
     {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id effect = nil;
-#endif
+        UIView *backPlate = [[UIView alloc] initWithFrame:CGRectZero];
+        backPlate.alpha = 1.0f;
+        backPlate.clipsToBounds = true;
+        backPlate.frame = CGRectMake(0.0f, 0.0f, 72.0f, 72.0f);
+        backPlate.layer.cornerRadius = 36.0f;
+        [self addSubview:backPlate];
         
-        UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
-        effectView.alpha = 1.0f;
-        effectView.clipsToBounds = true;
-        effectView.frame = CGRectMake(0.0f, 0.0f, 72.0f, 72.0f);
-        effectView.layer.cornerRadius = 36.0f;
-        [self addSubview:effectView];
+        UIView *tintView = OGEmbedTintedPlate([UIColor colorWithWhite:1.0f alpha:0.6f]);
+        tintView.frame = backPlate.bounds;
+        [backPlate addSubview:tintView];
         
-        UIView *vibrancyView = [[UIView alloc] initWithFrame:CGRectZero];
-        vibrancyView.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.6f];
-        vibrancyView.frame = effectView.bounds;
-        [effectView addSubview:vibrancyView];
-        
-        _largePlayButtonBack = effectView;
+        _largePlayButtonBack = backPlate;
         
         if (!force)
             _largePlayButtonBack.hidden = true;
@@ -269,7 +269,7 @@ UIView *effectView = [[UIView alloc] initWithFrame:CGRectZero];
         _largePlayButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0, 0, 72, 72)];
         [_largePlayButton setImage:largePlayIcon forState:UIControlStateNormal];
         [_largePlayButton addTarget:self action:@selector(playButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-        [effectView addSubview:_largePlayButton];
+        [backPlate addSubview:_largePlayButton];
         
         _showingLargeButton = force;
     }

@@ -42,18 +42,16 @@ FOUNDATION_EXPORT UIViewController *TGCreateLoginQRController(void);
 
 extern NSString *TGDeviceProximityStateChangedNotification;
 
-extern NSString *const TGIOS6BackgroundNotificationsEnabledKey;
-#ifdef __cplusplus
-extern "C" bool TGIOS6BackgroundNotificationsEnabled(void);
-#else
-extern bool TGIOS6BackgroundNotificationsEnabled(void);
-#endif
+extern NSString *const OGBackgroundNotificationsEnabledKey;
+extern NSString *const OGAPNsNotificationsEnabledKey;
 
-extern NSString *const TGIOS6APNsNotificationsEnabledKey;
 #ifdef __cplusplus
-extern "C" bool TGIOS6APNsNotificationsEnabled(void);
-#else
-extern bool TGIOS6APNsNotificationsEnabled(void);
+extern "C" {
+#endif
+bool OGBackgroundNotificationsEnabled(void);
+bool OGAPNsNotificationsEnabled(void);
+#ifdef __cplusplus
+}
 #endif
 
 @protocol TGDeviceTokenListener <NSObject>
@@ -199,9 +197,9 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 - (void)updatePushRegistration;
 
-- (void)applyIOS6BackgroundNotificationsEnabled:(bool)enabled;
-- (void)applyIOS6APNsNotificationsEnabled:(bool)enabled;
 - (void)ios6RegisterLocalNotificationSettings;
+- (void)applyAPNsNotificationsEnabled:(bool)enabled;
+- (void)applyBackgroundNotificationsEnabled:(bool)enabled;
 
 - (NSString *)applicationName;
 

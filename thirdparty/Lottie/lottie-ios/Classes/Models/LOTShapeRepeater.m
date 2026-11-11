@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeRepeater.m
 //  Lottie
@@ -22,21 +22,21 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *copies = [jsonDictionary objectForKey:@2];
+  NSDictionary *copies = jsonDictionary[@"c"];
   if (copies) {
     _copies = [[LOTKeyframeGroup alloc] initWithData:copies];
   }
   
-  NSDictionary *offset = [jsonDictionary objectForKey:@2];
+  NSDictionary *offset = jsonDictionary[@"o"];
   if (offset) {
     _offset = [[LOTKeyframeGroup alloc] initWithData:offset];
   }
   
-  NSDictionary *transform = [jsonDictionary objectForKey:@2];
+  NSDictionary *transform = jsonDictionary[@"tr"];
   
   NSDictionary *rotation = transform[@"r"];
   if (rotation) {

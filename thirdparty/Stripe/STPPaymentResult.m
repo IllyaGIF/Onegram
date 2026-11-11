@@ -14,7 +14,7 @@
 
 @implementation STPPaymentResult
 
-- (instancetype)initWithSource:(id<STPSource>)source {
+- (instancetype _Nonnull)initWithSource:(id<STPSource>)source {
     self = [super init];
     if (self) {
         _source = source;

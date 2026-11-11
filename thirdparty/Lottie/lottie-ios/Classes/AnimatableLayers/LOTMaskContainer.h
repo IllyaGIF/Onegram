@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTMaskContainer.h
 //  Lottie
@@ -12,8 +12,8 @@
 
 @interface LOTMaskContainer : CALayer
 
-- (instancetype )initWithMasks:(NSArray * )masks;
+- (instancetype _Nonnull)initWithMasks:(OG_COMPAT_GENERIC(NSArray, LOTMask *) * _Nonnull)masks;
 
-@property (nonatomic, strong) NSNumber *currentFrame;
+@property (nonatomic, strong) NSNumber *_Nullable currentFrame;
 
 @end

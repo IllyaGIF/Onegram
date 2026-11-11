@@ -40,16 +40,16 @@
     
     TGInstantPagePresentation *_presentation;
     TGInstantPageLayout *_currentLayout;
-    NSArray *_currentLayoutTiles;
-    NSArray *_currentLayoutItemsWithViews;
-    NSArray *_currentLayoutItemsWithText;
-    NSArray *_currentLayoutItemsWithLinks;
-    NSDictionary *_distanceThresholdGroupCount;
+    NSArray *_layoutTiles;
+    NSArray *_layoutViewItems;
+    NSArray *_layoutTextItems;
+    NSArray *_layoutLinkItems;
+    NSDictionary *_groupDistanceThresholds;
     
-    NSMutableDictionary *_visibleTiles;
-    NSMutableDictionary *_visibleItemsWithViews;
-    NSMutableDictionary *_visibleTextSelectionViews;
-    NSMutableDictionary *_visibleLinkSelectionViews;
+    NSMutableDictionary *_shownTiles;
+    NSMutableDictionary *_shownViewItems;
+    NSMutableDictionary *_shownTextSelections;
+    NSMutableDictionary *_shownLinkSelections;
     
     TGMenuContainerView *_menuContainerView;
     
@@ -91,10 +91,10 @@
         
         self.backgroundColor = [UIColor whiteColor];
         
-        _visibleTiles = [[NSMutableDictionary alloc] init];
-        _visibleItemsWithViews = [[NSMutableDictionary alloc] init];
-        _visibleTextSelectionViews = [[NSMutableDictionary alloc] init];
-        _visibleLinkSelectionViews = [[NSMutableDictionary alloc] init];
+        _shownTiles = [[NSMutableDictionary alloc] init];
+        _shownViewItems = [[NSMutableDictionary alloc] init];
+        _shownTextSelections = [[NSMutableDictionary alloc] init];
+        _shownLinkSelections = [[NSMutableDictionary alloc] init];
         
         [self addSubview:_scrollView];
         [self addSubview:_navigationBar];
@@ -318,7 +318,7 @@
     if (_currentLayout) {
         [self updateLayout];
         
-        for (UIView<TGInstantPageDisplayView> *itemView in _visibleItemsWithViews.allValues) {
+        for (UIView<TGInstantPageDisplayView> *itemView in _shownViewItems.allValues) {
             if ([itemView respondsToSelector:@selector(updatePresentation:)]) {
                 [itemView updatePresentation:presentation];
             }
@@ -346,30 +346,30 @@
         orientation = UIInterfaceOrientationLandscapeLeft;
     UIEdgeInsets safeAreaInset = [TGViewController safeAreaInsetForOrientation:orientation];
     _currentLayout = [TGInstantPageLayout makeLayoutForWebPage:_webPage peerId:_peerId messageId:_messageId boundingWidth:self.bounds.size.width safeAreaInset:safeAreaInset presentation:self.presentation showFeedbackButton:!self.disableActions];
-    [_visibleTiles enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGInstantPageTileView *tileView, __unused BOOL *stop) {
+    [_shownTiles enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGInstantPageTileView *tileView, __unused BOOL *stop) {
         [tileView removeFromSuperview];
     }];
-    [_visibleTiles removeAllObjects];
+    [_shownTiles removeAllObjects];
     
-    [_visibleTextSelectionViews enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGInstantPageTextSelectionView *textView, __unused BOOL *stop) {
+    [_shownTextSelections enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGInstantPageTextSelectionView *textView, __unused BOOL *stop) {
         [textView removeFromSuperview];
     }];
-    [_visibleTextSelectionViews removeAllObjects];
+    [_shownTextSelections removeAllObjects];
     
-    [_visibleLinkSelectionViews enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, NSArray *linkViews, __unused BOOL *stop) {
+    [_shownLinkSelections enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, NSArray *linkViews, __unused BOOL *stop) {
         for (UIView *linkView in linkViews) {
             [linkView removeFromSuperview];
         }
     }];
-    [_visibleLinkSelectionViews removeAllObjects];
+    [_shownLinkSelections removeAllObjects];
     
-    for (UIView<TGInstantPageDisplayView> *itemView in _visibleItemsWithViews.allValues) {
+    for (UIView<TGInstantPageDisplayView> *itemView in _shownViewItems.allValues) {
         if ([itemView respondsToSelector:@selector(updateSafeAreaInset:)]) {
             [itemView updateSafeAreaInset:safeAreaInset];
         }
     }
     
-    _currentLayoutTiles = [TGInstantPageTile tilesWithLayout:_currentLayout boundingWidth:self.bounds.size.width];
+    _layoutTiles = [TGInstantPageTile tilesWithLayout:_currentLayout boundingWidth:self.bounds.size.width];
     NSMutableArray *currentLayoutItemsWithViews = [[NSMutableArray alloc] init];
     NSMutableArray *currentLayoutItemsWithText = [[NSMutableArray alloc] init];
     NSMutableArray *currentLayoutItemsWithLinks = [[NSMutableArray alloc] init];
@@ -387,10 +387,10 @@
             [currentLayoutItemsWithLinks addObject:item];
         }
     }
-    _currentLayoutItemsWithViews = currentLayoutItemsWithViews;
-    _distanceThresholdGroupCount = distanceThresholdGroupCount;
-    _currentLayoutItemsWithText = currentLayoutItemsWithText;
-    _currentLayoutItemsWithLinks = currentLayoutItemsWithLinks;
+    _layoutViewItems = currentLayoutItemsWithViews;
+    _groupDistanceThresholds = distanceThresholdGroupCount;
+    _layoutTextItems = currentLayoutItemsWithText;
+    _layoutLinkItems = currentLayoutItemsWithLinks;
     
     _scrollView.contentSize = _currentLayout.contentSize;
     [self updateNavigationBar];
@@ -447,7 +447,7 @@
         return;
     }
 
-    for (UIView<TGInstantPageDisplayView> *itemView in [_visibleItemsWithViews allValues]) {
+    for (UIView<TGInstantPageDisplayView> *itemView in [_shownViewItems allValues]) {
         if ([embedItem matchesView:itemView]) {
             [itemView cancelPIP];
             break;
@@ -474,7 +474,7 @@
         CGFloat safeAreaInset = _statusBarHeight > 20.0f ? _statusBarHeight - 14.0f : _statusBarHeight;
         CGFloat expandedHeight = safeAreaInset + 44.0f;
         _scrollView.contentInset = UIEdgeInsetsMake(expandedHeight, 0.0f, _safeAreaInset.bottom, 0.0f);
-        if ((_visibleItemsWithViews.count == 0 && _visibleTiles.count == 0) || _scrollView.contentOffset.y < FLT_EPSILON) {
+        if ((_shownViewItems.count == 0 && _shownTiles.count == 0) || _scrollView.contentOffset.y < FLT_EPSILON) {
             _scrollView.contentOffset = CGPointMake(0.0f, -expandedHeight);
         }
         if (_initialAnchor != nil) {
@@ -525,12 +525,12 @@
     }
     
     NSInteger tileIndex = -1;
-    for (TGInstantPageTile *tile in _currentLayoutTiles) {
+    for (TGInstantPageTile *tile in _layoutTiles) {
         tileIndex++;
         if (CGRectIntersectsRect(tile.frame, visibleBounds)) {
             [visibleTileIndices addObject:@(tileIndex)];
             
-            if (_visibleTiles[@(tileIndex)] == nil) {
+            if (_shownTiles[@(tileIndex)] == nil) {
                 TGInstantPageTileView *tileView = [[TGInstantPageTileView alloc] initWithTile:tile];
                 tileView.frame = tile.frame;
                 tileView.tag = 4321;
@@ -540,26 +540,26 @@
                     [_scrollView insertSubview:tileView aboveSubview:topView];
                 }
                 topView = tileView;
-                _visibleTiles[@(tileIndex)] = tileView;
+                _shownTiles[@(tileIndex)] = tileView;
             }
         }
     }
     
     NSInteger itemIndex = -1;
-    for (id<TGInstantPageLayoutItem> item in _currentLayoutItemsWithViews) {
+    for (id<TGInstantPageLayoutItem> item in _layoutViewItems) {
         itemIndex++;
-        CGFloat itemThreshold = [item distanceThresholdWithGroupCount:_distanceThresholdGroupCount];
+        CGFloat itemThreshold = [item distanceThresholdWithGroupCount:_groupDistanceThresholds];
         CGRect itemFrame = item.frame;
         itemFrame.origin.y -= itemThreshold;
         itemFrame.size.height += itemThreshold + itemThreshold;
         if (CGRectIntersectsRect(itemFrame, visibleBounds)) {
             [visibleItemIndices addObject:@(itemIndex)];
             
-            UIView<TGInstantPageDisplayView> *itemView = _visibleItemsWithViews[@(itemIndex)];
+            UIView<TGInstantPageDisplayView> *itemView = _shownViewItems[@(itemIndex)];
             if (itemView != nil) {
                 if (![item matchesView:itemView]) {
                     [itemView removeFromSuperview];
-                    [_visibleItemsWithViews removeObjectForKey:@(itemIndex)];
+                    [_shownViewItems removeObjectForKey:@(itemIndex)];
                     itemView = nil;
                 }
             }
@@ -573,7 +573,7 @@
                     [_scrollView insertSubview:itemView aboveSubview:topView];
                 }
                 topView = itemView;
-                _visibleItemsWithViews[@(itemIndex)] = itemView;
+                _shownViewItems[@(itemIndex)] = itemView;
                 if ([itemView respondsToSelector:@selector(setOpenMedia:)]) {
                     [itemView setOpenMedia:_openMediaWrapper];
                 }
@@ -606,30 +606,30 @@
     }
     
     itemIndex = -1;
-    for (id<TGInstantPageLayoutItem> item in _currentLayoutItemsWithText) {
+    for (id<TGInstantPageLayoutItem> item in _layoutTextItems) {
         itemIndex++;
         CGRect itemFrame = item.frame;
         if (CGRectIntersectsRect(itemFrame, visibleBounds)) {
             [visibleItemTextIndices addObject:@(itemIndex)];
             
-            if (_visibleTextSelectionViews[@(itemIndex)] == nil) {
+            if (_shownTextSelections[@(itemIndex)] == nil) {
                 TGInstantPageTextSelectionView *selectionView = [item textSelectionView];
                 [selectionView setColor:_presentation.textSelectionColor];
                 selectionView.itemLongPressed = _textItemLongPressed;
                 [_scrollView addSubview:selectionView];
-                _visibleTextSelectionViews[@(itemIndex)] = selectionView;
+                _shownTextSelections[@(itemIndex)] = selectionView;
             }
         }
     }
     
     itemIndex = -1;
-    for (id<TGInstantPageLayoutItem> item in _currentLayoutItemsWithLinks) {
+    for (id<TGInstantPageLayoutItem> item in _layoutLinkItems) {
         itemIndex++;
         CGRect itemFrame = item.frame;
         if (CGRectIntersectsRect(itemFrame, visibleBounds)) {
             [visibleItemLinkIndices addObject:@(itemIndex)];
             
-            if (_visibleLinkSelectionViews[@(itemIndex)] == nil) {
+            if (_shownLinkSelections[@(itemIndex)] == nil) {
                 NSArray *linkViews = [item linkSelectionViews];
                 for (TGInstantPageLinkSelectionView *linkView in linkViews) {
                     [linkView setColor:_presentation.textSelectionColor];
@@ -638,22 +638,22 @@
                     
                     [_scrollView addSubview:linkView];
                 }
-                _visibleLinkSelectionViews[@(itemIndex)] = linkViews;
+                _shownLinkSelections[@(itemIndex)] = linkViews;
             }
         }
     }
     
     NSMutableArray *removeTileIndices = [[NSMutableArray alloc] init];
-    [_visibleTiles enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, TGInstantPageTileView *tileView, __unused BOOL *stop) {
+    [_shownTiles enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, TGInstantPageTileView *tileView, __unused BOOL *stop) {
         if (![visibleTileIndices containsObject:nIndex]) {
             [tileView removeFromSuperview];
             [removeTileIndices addObject:nIndex];
         }
     }];
-    [_visibleTiles removeObjectsForKeys:removeTileIndices];
+    [_shownTiles removeObjectsForKeys:removeTileIndices];
     
     NSMutableArray *removeItemIndices = [[NSMutableArray alloc] init];
-    [_visibleItemsWithViews enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, __unused BOOL *stop) {
+    [_shownViewItems enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, __unused BOOL *stop) {
         if (![visibleItemIndices containsObject:nIndex]) {
             [itemView removeFromSuperview];
             [removeItemIndices addObject:nIndex];
@@ -665,19 +665,19 @@
             [itemView setIsVisible:CGRectIntersectsRect(visibleBounds, itemFrame)];
         }
     }];
-    [_visibleItemsWithViews removeObjectsForKeys:removeItemIndices];
+    [_shownViewItems removeObjectsForKeys:removeItemIndices];
     
     NSMutableArray *removeItemTextIndices = [[NSMutableArray alloc] init];
-    [_visibleTextSelectionViews enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, TGInstantPageTextSelectionView *textView, __unused BOOL *stop) {
+    [_shownTextSelections enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, TGInstantPageTextSelectionView *textView, __unused BOOL *stop) {
         if (![visibleItemTextIndices containsObject:nIndex]) {
             [textView removeFromSuperview];
             [removeItemTextIndices addObject:nIndex];
         }
     }];
-    [_visibleTextSelectionViews removeObjectsForKeys:removeItemTextIndices];
+    [_shownTextSelections removeObjectsForKeys:removeItemTextIndices];
     
     NSMutableArray *removeItemLinkIndices = [[NSMutableArray alloc] init];
-    [_visibleLinkSelectionViews enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, NSArray *linkViews, __unused BOOL *stop) {
+    [_shownLinkSelections enumerateKeysAndObjectsUsingBlock:^(NSNumber *nIndex, NSArray *linkViews, __unused BOOL *stop) {
         if (![visibleItemLinkIndices containsObject:nIndex]) {
             for (UIView *linkView in linkViews) {
                 [linkView removeFromSuperview];
@@ -685,7 +685,7 @@
             [removeItemLinkIndices addObject:nIndex];
         }
     }];
-    [_visibleLinkSelectionViews removeObjectsForKeys:removeItemLinkIndices];
+    [_shownLinkSelections removeObjectsForKeys:removeItemLinkIndices];
 }
 
 - (void)setStatusBarHeight:(CGFloat)statusBarHeight {
@@ -717,7 +717,7 @@
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)__unused scrollView {
-    for (UIView<TGInstantPageDisplayView> *itemView in [_visibleItemsWithViews allValues]) {
+    for (UIView<TGInstantPageDisplayView> *itemView in [_shownViewItems allValues]) {
         if ([itemView respondsToSelector:@selector(updateScreenPosition:screenSize:)]) {
             [itemView updateScreenPosition:[itemView convertRect:itemView.bounds toView:self] screenSize:self.bounds.size];
         }
@@ -801,7 +801,7 @@
 
 - (UIView *)transitionViewForMedia:(TGInstantPageMedia *)media {
     __block UIView *result = nil;
-    [_visibleItemsWithViews enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, BOOL *stop) {
+    [_shownViewItems enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, BOOL *stop) {
         if ([itemView respondsToSelector:@selector(transitionViewForMedia:)]) {
             UIView *view = [itemView transitionViewForMedia:media];
             if (view != nil) {
@@ -814,7 +814,7 @@
 }
 
 - (void)updateHiddenMedia:(TGInstantPageMedia *)media {
-    [_visibleItemsWithViews enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, __unused BOOL *stop) {
+    [_shownViewItems enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *nIndex, UIView<TGInstantPageDisplayView> *itemView, __unused BOOL *stop) {
         if ([itemView respondsToSelector:@selector(updateHiddenMedia:)]) {
             [itemView updateHiddenMedia:media];
         }
@@ -932,7 +932,7 @@
         }
     }
 
-    for (TGInstantPageTextSelectionView *textView in _visibleTextSelectionViews.allValues) {
+    for (TGInstantPageTextSelectionView *textView in _shownTextSelections.allValues) {
         [textView setHighlighted:false];
     }
 }

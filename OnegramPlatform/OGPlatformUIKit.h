@@ -18,6 +18,7 @@ FOUNDATION_EXPORT void OGPlatformApplyNavigationBarTitleStyle(UINavigationBar *n
 
 FOUNDATION_EXPORT void OGPlatformSetLabelMinimumScaleFactor(UILabel *label, CGFloat minimumScaleFactor);
 FOUNDATION_EXPORT void OGPlatformSetTextFieldSelectionRange(UITextField *textField, NSRange range);
+FOUNDATION_EXPORT CGRect OGPlatformTextViewStartCaretRect(UITextView *textView);
 FOUNDATION_EXPORT void OGPlatformSetTextFieldInputAccessoryView(UITextField *textField, UIView *accessoryView);
 FOUNDATION_EXPORT void OGPlatformSetTextFieldInputView(UITextField *textField, UIView *inputView);
 FOUNDATION_EXPORT UIView *OGPlatformTextInputView(id textInput);

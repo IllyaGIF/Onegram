@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -19,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
                  completion:(STPTokenCompletionBlock)completion;
 
 @property (nonatomic, readwrite) NSURL *apiURL;
-@property (nonatomic, readwrite) id urlSession;
+@property (nonatomic, readwrite) OGStripeURLSession urlSession;
 
 @end
 

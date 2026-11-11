@@ -42,55 +42,36 @@ static NSString *pathForPhotoDirectory(TGImageMediaAttachment *imageAttachment) 
 }
 
 static id<MediaResource> imageUrlResource(NSString *url, int fileSize, NSString *legacyCacheUrl, NSString *legacyFilePath, TGMediaOriginInfo *originInfo, int64_t identifier) {
-    if (url != nil) {
-        if ([url hasPrefix:@"peerphoto:"]) {
-            NSArray *components = [url componentsSeparatedByString:@":"];
-            if (components.count >= 7) {
-                int32_t datacenterId = [[components objectAtIndex:1] intValue];
-                int32_t peerType = [[components objectAtIndex:2] intValue];
-                int64_t peerId = [[components objectAtIndex:3] longLongValue];
-                int64_t accessHash = [[components objectAtIndex:4] longLongValue];
-                int64_t photoId = [[components objectAtIndex:5] longLongValue];
-                bool big = [[components objectAtIndex:6] intValue] != 0;
-                return [[CloudPeerPhotoMediaResource alloc] initWithDatacenterId:datacenterId peerId:peerId accessHash:accessHash photoId:photoId peerType:peerType big:big mediaType:@(TGNetworkMediaTypeTagImage) identifier:identifier];
-            }
-        }
-        if ([url hasPrefix:@"photo:"]) {
-            NSArray *components = [url componentsSeparatedByString:@":"];
-            if (components.count >= 7) {
-                int32_t datacenterId = [[components objectAtIndex:1] intValue];
-                int64_t fileId = [[components objectAtIndex:2] longLongValue];
-                int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-                int32_t parsedFileSize = [[components objectAtIndex:4] intValue];
-                NSString *thumbSize = [components objectAtIndex:5];
-                NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-                return [[CloudPhotoMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:thumbSize size:parsedFileSize == 0 ? nil : @(parsedFileSize) mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
-            }
-        }
-        if ([url hasPrefix:@"documentthumb:"]) {
-            NSArray *components = [url componentsSeparatedByString:@":"];
-            if (components.count >= 7) {
-                int32_t datacenterId = [[components objectAtIndex:1] intValue];
-                int64_t fileId = [[components objectAtIndex:2] longLongValue];
-                int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-                int32_t parsedFileSize = [[components objectAtIndex:4] intValue];
-                NSString *thumbSize = [components objectAtIndex:5];
-                NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-                return [[CloudDocumentMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:thumbSize size:parsedFileSize == 0 ? nil : @(parsedFileSize) mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
-            }
-        }
-        int datacenterId = 0;
-        int64_t volumeId = 0;
-        int localId = 0;
-        int64_t secret = 0;
-        if (extractFileUrlComponents(url, &datacenterId, &volumeId, &localId, &secret)) {
-            return [[CloudFileMediaResource alloc] initWithDatacenterId:datacenterId volumeId:volumeId localId:localId secret:secret size:fileSize == 0 ? nil : @(fileSize) legacyCacheUrl:legacyCacheUrl legacyCachePath:legacyFilePath mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
-        } else {
-            return nil;
-        }
-    } else {
+    if (url == nil)
         return nil;
+    
+    NSArray *parts = [url componentsSeparatedByString:@":"];
+    NSString *kind = parts[0];
+    if (parts.count >= 7) {
+        int32_t datacenterId = [parts[1] intValue];
+        if ([kind isEqualToString:@"peerphoto"]) {
+            return [[CloudPeerPhotoMediaResource alloc] initWithDatacenterId:datacenterId peerId:[parts[3] longLongValue] accessHash:[parts[4] longLongValue] photoId:[parts[5] longLongValue] peerType:[parts[2] intValue] big:[parts[6] intValue] != 0 mediaType:@(TGNetworkMediaTypeTagImage) identifier:identifier];
+        }
+        bool isDocumentThumb = [kind isEqualToString:@"documentthumb"];
+        if (isDocumentThumb || [kind isEqualToString:@"photo"]) {
+            int64_t fileId = [parts[2] longLongValue];
+            int64_t accessHash = [parts[3] longLongValue];
+            int32_t declaredSize = [parts[4] intValue];
+            NSNumber *size = declaredSize != 0 ? @(declaredSize) : nil;
+            NSData *fileReference = [NSData dataWithHexString:parts[6]];
+            if (isDocumentThumb)
+                return [[CloudDocumentMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:parts[5] size:size mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
+            return [[CloudPhotoMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:parts[5] size:size mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
+        }
     }
+    
+    int datacenterId = 0;
+    int64_t volumeId = 0;
+    int localId = 0;
+    int64_t secret = 0;
+    if (!extractFileUrlComponents(url, &datacenterId, &volumeId, &localId, &secret))
+        return nil;
+    return [[CloudFileMediaResource alloc] initWithDatacenterId:datacenterId volumeId:volumeId localId:localId secret:secret size:fileSize == 0 ? nil : @(fileSize) legacyCacheUrl:legacyCacheUrl legacyCachePath:legacyFilePath mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
 }
 
 static id<MediaResource> imageThumbnailResource(TGImageMediaAttachment *image, CGSize *resultingSize) {

@@ -683,7 +683,6 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
                                 
                                 if (value.rights.timeout != 0 && value.rights.timeout != INT32_MAX) {
                                     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-                                    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:currentNativeLocalization().code];
                                     [formatter setDateFormat:@"E, d MMM HH:mm"];
                                     formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:effectiveLocalization().code];
                                     NSString *dateStringPlain = [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:value.rights.timeout]];

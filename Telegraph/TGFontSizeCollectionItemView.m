@@ -64,9 +64,9 @@
     _fontMinIconView.image = presentation.images.fontSizeSmallIcon;
     _fontMaxIconView.image = presentation.images.fontSizeLargeIcon;
     _sliderView.trackColor = presentation.pallete.collectionMenuAccentColor;
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    _sliderView.opaque = !classicIOS6Style;
-    _sliderView.backgroundColor = classicIOS6Style ? [UIColor clearColor] : presentation.pallete.collectionMenuCellBackgroundColor;
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
+    _sliderView.opaque = !classicThemeStyle;
+    _sliderView.backgroundColor = classicThemeStyle ? [UIColor clearColor] : presentation.pallete.collectionMenuCellBackgroundColor;
     [_sliderView setNeedsDisplay];
     _sliderView.backColor = presentation.pallete.collectionMenuAccessoryColor;
 }

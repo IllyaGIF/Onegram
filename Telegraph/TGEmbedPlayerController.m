@@ -24,18 +24,24 @@ const CGFloat TGEmbedSwipeMinimumVelocity = 600.0f;
 const CGFloat TGEmbedSwipeVelocityThreshold = 700.0f;
 const CGFloat TGEmbedSwipeDistanceThreshold = 128.0f;
 
-@interface NSObject (TGEmbedPlayerControllerCompat)
+@interface NSObject (OGCompatEmbedPlayer)
 + (id)effectWithStyle:(NSInteger)style;
 - (id)initWithEffect:(id)effect;
 - (UIView *)contentView;
-- (void)setNeedsUpdateOfHomeIndicatorAutoHidden;
 @end
 
-static inline UIView *TGEmbedPanelContentView(UIView *view)
+static UIView *OGCompatEmbedPanelContent(UIView *panel)
 {
-    if ([view respondsToSelector:@selector(contentView)])
-        return [(id)view contentView];
-    return view;
+    return [panel respondsToSelector:@selector(contentView)] ? [(id)panel contentView] : panel;
+}
+
+static UIView *OGCompatEmbedBlurPanel(void)
+{
+    Class effectClass = NSClassFromString(@"UIBlurEffect");
+    Class effectViewClass = NSClassFromString(@"UIVisualEffectView");
+    if (effectClass == nil || effectViewClass == nil)
+        return [[UIView alloc] initWithFrame:CGRectZero];
+    return [[effectViewClass alloc] initWithEffect:[effectClass effectWithStyle:0]];
 }
 
 @interface TGEmbedPlayerController ()
@@ -83,6 +89,13 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
 @end
 
 @implementation TGEmbedPlayerController
+
+- (void)og_compat_refreshHomeIndicator
+{
+    SEL refresh = NSSelectorFromString(@"setNeedsUpdateOfHomeIndicatorAutoHidden");
+    if ([self respondsToSelector:refresh])
+        ((void (*)(id, SEL))[self methodForSelector:refresh])(self, refresh);
+}
 
 - (instancetype)initWithParentController:(TGViewController *)parentController playerView:(TGEmbedPlayerView *)playerView transitionSourceFrame:(CGRect (^)(void))transitionSourceFrame
 {
@@ -154,12 +167,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_wrapperView addTarget:self action:@selector(handleTap:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_wrapperView];
     
-    Class blurEffectClass = NSClassFromString(@"UIBlurEffect");
-    Class visualEffectViewClass = NSClassFromString(@"UIVisualEffectView");
-    if (blurEffectClass != nil && visualEffectViewClass != nil)
-        _topPanelView = [[visualEffectViewClass alloc] initWithEffect:[blurEffectClass effectWithStyle:0]];
-    else
-        _topPanelView = [[UIView alloc] initWithFrame:CGRectZero];
+    _topPanelView = OGCompatEmbedBlurPanel();
     _topPanelView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     _topPanelView.frame = CGRectMake(0, 0, self.view.bounds.size.width, 50);
     _topPanelView.alpha = 0.0f;
@@ -174,7 +182,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_doneButton setTitle:TGLocalized(@"Common.Done") forState:UIControlStateNormal];
     [_doneButton addTarget:self action:@selector(closeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
     [_doneButton sizeToFit];
-    [TGEmbedPanelContentView(_topPanelView) addSubview:_doneButton];
+    [OGCompatEmbedPanelContent(_topPanelView) addSubview:_doneButton];
     
     CGFloat doneButtonWidth = MAX(74.0f, _doneButton.frame.size.width);
     _doneButton.frame = CGRectMake(-0.5f, _topPanelView.frame.size.height - 31 - TGScreenPixel, doneButtonWidth, 30.0f);
@@ -186,7 +194,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     _positionLabel.textAlignment = NSTextAlignmentCenter;
     _positionLabel.textColor = [UIColor blackColor];
     _positionLabel.userInteractionEnabled = false;
-    [TGEmbedPanelContentView(_topPanelView) addSubview:_positionLabel];
+    [OGCompatEmbedPanelContent(_topPanelView) addSubview:_positionLabel];
     
     _remainingLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.view.frame.size.width - 104.0f, _topPanelView.frame.size.height - 37.0f, 56, 44.0f)];
     _remainingLabel.backgroundColor = [UIColor clearColor];
@@ -195,7 +203,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     _remainingLabel.textAlignment = NSTextAlignmentCenter;
     _remainingLabel.textColor = [UIColor blackColor];
     _remainingLabel.userInteractionEnabled = false;
-    [TGEmbedPanelContentView(_topPanelView) addSubview:_remainingLabel];
+    [OGCompatEmbedPanelContent(_topPanelView) addSubview:_remainingLabel];
     
     __weak TGEmbedPlayerController *weakSelf = self;
     _scrubber = [[TGEmbedPlayerScrubber alloc] initWithFrame:CGRectMake(CGRectGetMaxX(_positionLabel.frame) - 7.0f, _topPanelView.frame.size.height - 16.0f - TGScreenPixel, 100, 3)];
@@ -205,7 +213,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
         if (strongSelf != nil)
             [strongSelf->_playerView seekToFractPosition:position];
     };
-    [TGEmbedPanelContentView(_topPanelView) addSubview:_scrubber];
+    [OGCompatEmbedPanelContent(_topPanelView) addSubview:_scrubber];
     
     if ([_playerView supportsPIP] && !TGIsPad())
     {
@@ -213,13 +221,10 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
         [_pipButton setImage:TGTintedImage(TGComponentsImageNamed(@"EmbedVideoPIPIcon"), [UIColor blackColor]) forState:UIControlStateNormal];
         [_pipButton setImage:TGTintedImage(TGComponentsImageNamed(@"EmbedVideoPIPIcon"), [UIColor whiteColor]) forState:UIControlStateHighlighted];
         [_pipButton addTarget:self action:@selector(pipButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-        [TGEmbedPanelContentView(_topPanelView) addSubview:_pipButton];
+        [OGCompatEmbedPanelContent(_topPanelView) addSubview:_pipButton];
     }
 
-    if (blurEffectClass != nil && visualEffectViewClass != nil)
-        _bottomPanelView = [[visualEffectViewClass alloc] initWithEffect:[blurEffectClass effectWithStyle:0]];
-    else
-        _bottomPanelView = [[UIView alloc] initWithFrame:CGRectZero];
+    _bottomPanelView = OGCompatEmbedBlurPanel();
     _bottomPanelView.alpha = 0.0f;
     _bottomPanelView.userInteractionEnabled = false;
     [_wrapperView addSubview:_bottomPanelView];
@@ -230,7 +235,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_playButton setImage:[UIImage imageNamed:@"EmbedPlayButton"] forState:UIControlStateNormal];
     [_playButton setImage:TGTintedImage([UIImage imageNamed:@"EmbedPlayButton"], [UIColor whiteColor]) forState:UIControlStateHighlighted];
     [_playButton addTarget:self action:@selector(playButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_playButton];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_playButton];
     
     _pauseButton = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, 50, 45)];
     _pauseButton.adjustsImageWhenHighlighted = false;
@@ -238,7 +243,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_pauseButton setImage:[UIImage imageNamed:@"EmbedPauseButton"] forState:UIControlStateNormal];
     [_pauseButton setImage:TGTintedImage([UIImage imageNamed:@"EmbedPauseButton"], [UIColor whiteColor]) forState:UIControlStateHighlighted];
     [_pauseButton addTarget:self action:@selector(pauseButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_pauseButton];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_pauseButton];
     
     _scanBackwardButton = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, 50, 45)];
     _scanBackwardButton.adjustsImageWhenHighlighted = false;
@@ -246,7 +251,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_scanBackwardButton setImage:[UIImage imageNamed:@"EmbedScanBackwardButton"] forState:UIControlStateNormal];
     [_scanBackwardButton setImage:TGTintedImage([UIImage imageNamed:@"EmbedScanBackwardButton"], [UIColor whiteColor]) forState:UIControlStateHighlighted];
     [_scanBackwardButton addTarget:self action:@selector(scanBackwardButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_scanBackwardButton];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_scanBackwardButton];
     
     _scanForwardButton = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, 50, 45)];
     _scanForwardButton.adjustsImageWhenHighlighted = false;
@@ -254,7 +259,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_scanForwardButton setImage:[UIImage imageNamed:@"EmbedScanForwardButton"] forState:UIControlStateNormal];
     [_scanForwardButton setImage:TGTintedImage([UIImage imageNamed:@"EmbedScanForwardButton"], [UIColor whiteColor]) forState:UIControlStateHighlighted];
     [_scanForwardButton addTarget:self action:@selector(scanForwardButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_scanForwardButton];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_scanForwardButton];
     
     static UIImage *minimumTrackImage = nil;
     static UIImage *maximumTrackImage = nil;
@@ -296,7 +301,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     _volumeView = volumeView;
 #endif
     
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_volumeView];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_volumeView];
     
     _exitFullscreenButton = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, 50, 50)];
     _exitFullscreenButton.adjustsImageWhenHighlighted = false;
@@ -304,7 +309,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     [_exitFullscreenButton setImage:[UIImage imageNamed:@"EmbedExitFullScreenButton"] forState:UIControlStateNormal];
     [_exitFullscreenButton setImage:TGTintedImage([UIImage imageNamed:@"EmbedExitFullScreenButton"], [UIColor whiteColor]) forState:UIControlStateHighlighted];
     [_exitFullscreenButton addTarget:self action:@selector(closeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [TGEmbedPanelContentView(_bottomPanelView) addSubview:_exitFullscreenButton];
+    [OGCompatEmbedPanelContent(_bottomPanelView) addSubview:_exitFullscreenButton];
     
     if ([_playerView _controlsType] == TGEmbedPlayerControlsTypeSimple)
     {
@@ -383,8 +388,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     {
         [[TGLegacyComponentsContext shared] setApplicationStatusBarAlpha:0.0f];
         _controlsHidden = true;
-        if ([self respondsToSelector:@selector(setNeedsUpdateOfHomeIndicatorAutoHidden)])
-            [(id)self setNeedsUpdateOfHomeIndicatorAutoHidden];
+        [self og_compat_refreshHomeIndicator];
     }
 }
 
@@ -463,8 +467,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     }];
     
     _controlsHidden = false;
-    if ([self respondsToSelector:@selector(setNeedsUpdateOfHomeIndicatorAutoHidden)])
-        [(id)self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    [self og_compat_refreshHomeIndicator];
 }
 
 - (void)dismissFullscreen:(bool)fromRotation duration:(NSTimeInterval)duration
@@ -489,8 +492,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
             [[TGLegacyComponentsContext shared] setApplicationStatusBarAlpha:1.0f];
         
         _controlsHidden = false;
-        if ([self respondsToSelector:@selector(setNeedsUpdateOfHomeIndicatorAutoHidden)])
-            [(id)self setNeedsUpdateOfHomeIndicatorAutoHidden];
+        [self og_compat_refreshHomeIndicator];
     }
     
     [UIView animateWithDuration:duration animations:^{
@@ -534,8 +536,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
         [[TGLegacyComponentsContext shared] setApplicationStatusBarAlpha:1.0f];
     
     _controlsHidden = false;
-    if ([self respondsToSelector:@selector(setNeedsUpdateOfHomeIndicatorAutoHidden)])
-        [(id)self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    [self og_compat_refreshHomeIndicator];
 }
 
 - (void)animateView:(UIView *)view to:(CGRect)toFrame completion:(void (^)(bool))completion
@@ -661,11 +662,11 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     
     if (animated)
     {
-        TGSetLayerRasterizationScale(_scrubber.layer, TGScreenScaling());
-        TGSetLayerShouldRasterize(_scrubber.layer, true);
+        OGCompatLayerSetRasterizationScale(_scrubber.layer, TGScreenScaling());
+        OGCompatLayerSetShouldRasterize(_scrubber.layer, true);
         
-        TGSetLayerRasterizationScale(_volumeView.layer, TGScreenScaling());
-        TGSetLayerShouldRasterize(_volumeView.layer, true);
+        OGCompatLayerSetRasterizationScale(_volumeView.layer, TGScreenScaling());
+        OGCompatLayerSetShouldRasterize(_volumeView.layer, true);
         
         _topPanelView.userInteractionEnabled = !hidden;
         _bottomPanelView.userInteractionEnabled = !hidden;
@@ -682,8 +683,8 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
             _bottomPanelView.alpha = hidden ? 0.0f : 1.0f;
         } completion:^(__unused BOOL finished)
         {
-            TGSetLayerShouldRasterize(_scrubber.layer, false);
-            TGSetLayerShouldRasterize(_volumeView.layer, false);
+            OGCompatLayerSetShouldRasterize(_scrubber.layer, false);
+            OGCompatLayerSetShouldRasterize(_volumeView.layer, false);
         }];
     }
     else
@@ -694,8 +695,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
         _bottomPanelView.alpha = hidden ? 0.0f : 1.0f;
     }
     
-    if ([self respondsToSelector:@selector(setNeedsUpdateOfHomeIndicatorAutoHidden)])
-        [(id)self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    [self og_compat_refreshHomeIndicator];
 }
 
 - (void)updateState:(TGEmbedPlayerState *)state

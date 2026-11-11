@@ -777,3 +777,35 @@
 
 
 @end
+
+@implementation TLMessageEntity$messageEntityCustomEmoji : TLMessageEntity
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0xc8cf05f8;
+}
+
+- (int32_t)TLconstructorName
+{
+    return -1;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
+{
+    return nil;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    [os writeInt32:self.offset];
+    [os writeInt32:self.length];
+    [os writeInt64:_document_id];
+}
+
+
+@end

@@ -313,51 +313,66 @@ id TGWeakObjectHashTable(void)
     return [[TGWeakObjectSet alloc] init];
 }
 
-static void TGInstallCompatibilityInstanceMethodFromClass(Class cls, SEL selector, Class sourceClass, SEL fallbackSelector)
+typedef struct
 {
-    if (cls == Nil || class_getInstanceMethod(cls, selector) != NULL)
-        return;
-    
-    Method fallbackMethod = class_getInstanceMethod(sourceClass, fallbackSelector);
-    if (fallbackMethod != NULL)
+    __unsafe_unretained Class target;
+    SEL selector;
+    __unsafe_unretained Class source;
+    SEL fallback;
+    bool isClassMethod;
+} OGCompatEntry;
+
+#define OG_COMPAT_INSTANCE(cls, sel, fallbackSel) { (cls), (sel), (cls), (fallbackSel), false }
+#define OG_COMPAT_INSTANCE_FROM(cls, sourceCls, sel, fallbackSel) { (cls), (sel), (sourceCls), (fallbackSel), false }
+#define OG_COMPAT_CLASS(cls, sel, fallbackSel) { (cls), (sel), (cls), (fallbackSel), true }
+
+static void OGCompatInstallEntries(const OGCompatEntry *entries, NSUInteger count)
+{
+    for (NSUInteger i = 0; i < count; i++)
     {
-        class_addMethod(cls, selector, method_getImplementation(fallbackMethod), method_getTypeEncoding(fallbackMethod));
+        const OGCompatEntry *entry = &entries[i];
+        if (entry->target == Nil)
+            continue;
+        
+        Method existing = NULL;
+        Method fallback = NULL;
+        Class destination = entry->target;
+        if (entry->isClassMethod)
+        {
+            existing = class_getClassMethod(entry->target, entry->selector);
+            fallback = class_getClassMethod(entry->source, entry->fallback);
+            destination = object_getClass((id)entry->target);
+        }
+        else
+        {
+            existing = class_getInstanceMethod(entry->target, entry->selector);
+            fallback = class_getInstanceMethod(entry->source, entry->fallback);
+        }
+        
+        if (existing == NULL && fallback != NULL)
+            class_addMethod(destination, entry->selector, method_getImplementation(fallback), method_getTypeEncoding(fallback));
     }
 }
 
-static void TGInstallCompatibilityInstanceMethod(Class cls, SEL selector, SEL fallbackSelector)
+static void OGCompatInstallTextView(Class cls)
 {
-    TGInstallCompatibilityInstanceMethodFromClass(cls, selector, cls, fallbackSelector);
-}
-
-static void TGInstallTextViewCompatibility(Class cls)
-{
-    Class textViewClass = [UITextView class];
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(layoutManager), textViewClass, @selector(tg_ios6_layoutManager));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(attributedText), textViewClass, @selector(tg_ios5_attributedText));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setAttributedText:), textViewClass, @selector(tg_ios5_setAttributedText:));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(typingAttributes), textViewClass, @selector(tg_ios5_typingAttributes));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setTypingAttributes:), textViewClass, @selector(tg_ios5_setTypingAttributes:));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textContainer), textViewClass, @selector(tg_ios6_textContainer));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textStorage), textViewClass, @selector(tg_ios6_textStorage));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textContainerInset), textViewClass, @selector(tg_ios6_textContainerInset));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setTextContainerInset:), textViewClass, @selector(tg_ios6_setTextContainerInset:));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(isSelectable), textViewClass, @selector(tg_ios6_isSelectable));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setSelectable:), textViewClass, @selector(tg_ios6_setSelectable:));
-    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(initWithFrame:textContainer:), textViewClass, @selector(tg_ios6_initWithFrame:textContainer:));
-}
-
-static void TGInstallCompatibilityClassMethod(Class cls, SEL selector, SEL fallbackSelector)
-{
-    if (class_getClassMethod(cls, selector) != NULL)
-        return;
-    
-    Method fallbackMethod = class_getClassMethod(cls, fallbackSelector);
-    if (fallbackMethod != NULL)
+    Class source = [UITextView class];
+    const OGCompatEntry entries[] =
     {
-        Class metaClass = object_getClass((id)cls);
-        class_addMethod(metaClass, selector, method_getImplementation(fallbackMethod), method_getTypeEncoding(fallbackMethod));
-    }
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(layoutManager), @selector(og_compat_layoutManager)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(attributedText), @selector(tg_ios5_attributedText)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(setAttributedText:), @selector(tg_ios5_setAttributedText:)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(typingAttributes), @selector(tg_ios5_typingAttributes)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(setTypingAttributes:), @selector(tg_ios5_setTypingAttributes:)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(textContainer), @selector(og_compat_textContainer)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(textStorage), @selector(og_compat_textStorage)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(textContainerInset), @selector(og_compat_textContainerInset)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(setTextContainerInset:), @selector(og_compat_setTextContainerInset:)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(isSelectable), @selector(og_compat_isSelectable)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(setSelectable:), @selector(og_compat_setSelectable:)),
+        OG_COMPAT_INSTANCE_FROM(cls, source, @selector(initWithFrame:textContainer:), @selector(og_compat_initWithFrame:textContainer:))
+    };
+    OGCompatInstallEntries(entries, sizeof(entries) / sizeof(entries[0]));
 }
 
 static id TGIOS5ArrayObjectAtIndexedSubscript(id self, SEL __unused _cmd, NSUInteger index)
@@ -616,9 +631,23 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
 + (void)TG_performWithoutAnimation:(void (^)(void))actionsWithoutAnimation;
 
 - (UIView *)TG_snapshotViewAfterScreenUpdates:(BOOL)afterUpdates;
-- (UIView *)TG_resizableSnapshotViewFromRect:(CGRect)rect afterScreenUpdates:(BOOL)afterUpdates withCapInsets:(UIEdgeInsets)capInsets;
+- (UIView *)og_compat_resizableSnapshotViewFromRect:(CGRect)rect afterScreenUpdates:(BOOL)afterUpdates withCapInsets:(UIEdgeInsets)capInsets;
 
 @end
+
+static UIImage *OGCompatLayerImage(CALayer *layer, CGRect rect, BOOL opaque)
+{
+    UIGraphicsBeginImageContextWithOptions(rect.size, opaque, 0.0f);
+    
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextTranslateCTM(context, -rect.origin.x, -rect.origin.y);
+    [layer renderInContext:context];
+    
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    
+    return image;
+}
 
 @implementation UIView (TGHacks)
 
@@ -681,25 +710,14 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
     return nil;
 }
 
-- (UIView *)TG_resizableSnapshotViewFromRect:(CGRect)rect afterScreenUpdates:(BOOL)__unused afterUpdates withCapInsets:(UIEdgeInsets)capInsets
+- (UIView *)og_compat_resizableSnapshotViewFromRect:(CGRect)rect afterScreenUpdates:(BOOL)__unused afterUpdates withCapInsets:(UIEdgeInsets)capInsets
 {
-    UIGraphicsBeginImageContextWithOptions(rect.size, self.opaque, 0.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, -rect.origin.x, -rect.origin.y);
-    
-    [self.layer renderInContext:context];
-    
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
+    UIImage *image = OGCompatLayerImage(self.layer, rect, self.opaque);
     if (image == nil)
         return nil;
     
-    if (!UIEdgeInsetsEqualToEdgeInsets(capInsets, UIEdgeInsetsZero))
-        image = [image resizableImageWithCapInsets:capInsets];
-    
-    UIImageView *imageView = [[UIImageView alloc] initWithImage:image];
+    BOOL stretchable = !UIEdgeInsetsEqualToEdgeInsets(capInsets, UIEdgeInsetsZero);
+    UIImageView *imageView = [[UIImageView alloc] initWithImage:stretchable ? [image resizableImageWithCapInsets:capInsets] : image];
     imageView.frame = CGRectMake(0.0f, 0.0f, rect.size.width, rect.size.height);
     
     return imageView;
@@ -814,68 +832,73 @@ static TGIOS4ResizableAxis TGIOS4ResizableAxisMake(CGFloat leading, CGFloat trai
     {
         TGInstallIOS5SubscriptingCompatibility();
     
-        TGInstallCompatibilityInstanceMethod([UIImage class], @selector(resizableImageWithCapInsets:), @selector(tg_ios4_resizableImageWithCapInsets:));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(setAccessibilityIgnoresInvertColors:), @selector(tg_ios6_setAccessibilityIgnoresInvertColors:));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(accessibilityIgnoresInvertColors), @selector(tg_ios6_accessibilityIgnoresInvertColors));
-        TGInstallCompatibilityClassMethod([UIView class], @selector(animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:), @selector(tg_ios6_animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:));
+        const OGCompatEntry entries[] =
+        {
+            OG_COMPAT_INSTANCE([UIImage class], @selector(resizableImageWithCapInsets:), @selector(tg_ios4_resizableImageWithCapInsets:)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(setAccessibilityIgnoresInvertColors:), @selector(og_compat_setAccessibilityIgnoresInvertColors:)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(accessibilityIgnoresInvertColors), @selector(og_compat_accessibilityIgnoresInvertColors)),
+            OG_COMPAT_CLASS([UIView class], @selector(animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:), @selector(og_compat_animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:)),
     
 #if !defined(ONEGRAM_ARMV6)
-        TGInstallCompatibilityInstanceMethod([AVPlayer class], @selector(setMuted:), @selector(tg_ios6_setMuted:));
-        TGInstallCompatibilityInstanceMethod([AVPlayer class], @selector(isMuted), @selector(tg_ios6_isMuted));
-        TGInstallCompatibilityClassMethod([AVCaptureDevice class], @selector(authorizationStatusForMediaType:), @selector(tg_ios6_authorizationStatusForMediaType:));
-        TGInstallCompatibilityClassMethod([AVCaptureDevice class], @selector(requestAccessForMediaType:completionHandler:), @selector(tg_ios6_requestAccessForMediaType:completionHandler:));
+            OG_COMPAT_INSTANCE([AVPlayer class], @selector(setMuted:), @selector(og_compat_setMuted:)),
+            OG_COMPAT_INSTANCE([AVPlayer class], @selector(isMuted), @selector(og_compat_isMuted)),
+            OG_COMPAT_CLASS([AVCaptureDevice class], @selector(authorizationStatusForMediaType:), @selector(og_compat_authorizationStatusForMediaType:)),
+            OG_COMPAT_CLASS([AVCaptureDevice class], @selector(requestAccessForMediaType:completionHandler:), @selector(og_compat_requestAccessForMediaType:completionHandler:)),
 #endif
-        TGInstallCompatibilityInstanceMethod([AVAudioSession class], @selector(requestRecordPermission:), @selector(tg_ios6_requestRecordPermission:));
+            OG_COMPAT_INSTANCE([AVAudioSession class], @selector(requestRecordPermission:), @selector(og_compat_requestRecordPermission:)),
     
-        TGInstallCompatibilityInstanceMethod([NSString class], @selector(sizeWithAttributes:), @selector(tg_ios6_sizeWithAttributes:));
-        TGInstallCompatibilityInstanceMethod([NSString class], @selector(drawAtPoint:withAttributes:), @selector(tg_ios6_drawAtPoint:withAttributes:));
-        TGInstallCompatibilityInstanceMethod([NSString class], @selector(boundingRectWithSize:options:attributes:context:), @selector(tg_ios6_boundingRectWithSize:options:attributes:context:));
+            OG_COMPAT_INSTANCE([NSString class], @selector(sizeWithAttributes:), @selector(og_compat_sizeWithAttributes:)),
+            OG_COMPAT_INSTANCE([NSString class], @selector(drawAtPoint:withAttributes:), @selector(og_compat_drawAtPoint:withAttributes:)),
+            OG_COMPAT_INSTANCE([NSString class], @selector(boundingRectWithSize:options:attributes:context:), @selector(og_compat_boundingRectWithSize:options:attributes:context:)),
     
-        TGInstallCompatibilityInstanceMethod([NSAttributedString class], @selector(boundingRectWithSize:options:context:), @selector(tg_ios6_boundingRectWithSize:options:context:));
-        TGInstallCompatibilityInstanceMethod([NSAttributedString class], @selector(boundingRectWithSize:options:attributes:context:), @selector(tg_ios6_boundingRectWithSize:options:attributes:context:));
+            OG_COMPAT_INSTANCE([NSAttributedString class], @selector(boundingRectWithSize:options:context:), @selector(og_compat_boundingRectWithSize:options:context:)),
+            OG_COMPAT_INSTANCE([NSAttributedString class], @selector(boundingRectWithSize:options:attributes:context:), @selector(og_compat_boundingRectWithSize:options:attributes:context:)),
 
-        TGInstallCompatibilityInstanceMethod([UILabel class], @selector(attributedText), @selector(tg_ios5_attributedText));
-        TGInstallCompatibilityInstanceMethod([UILabel class], @selector(setAttributedText:), @selector(tg_ios5_setAttributedText:));
-        TGInstallCompatibilityInstanceMethod([UILabel class], @selector(minimumScaleFactor), @selector(tg_ios5_minimumScaleFactor));
-        TGInstallCompatibilityInstanceMethod([UILabel class], @selector(setMinimumScaleFactor:), @selector(tg_ios5_setMinimumScaleFactor:));
-        TGInstallCompatibilityInstanceMethod([UITextField class], @selector(attributedPlaceholder), @selector(tg_ios5_attributedPlaceholder));
-        TGInstallCompatibilityInstanceMethod([UITextField class], @selector(setAttributedPlaceholder:), @selector(tg_ios5_setAttributedPlaceholder:));
+            OG_COMPAT_INSTANCE([UILabel class], @selector(attributedText), @selector(tg_ios5_attributedText)),
+            OG_COMPAT_INSTANCE([UILabel class], @selector(setAttributedText:), @selector(tg_ios5_setAttributedText:)),
+            OG_COMPAT_INSTANCE([UILabel class], @selector(minimumScaleFactor), @selector(tg_ios5_minimumScaleFactor)),
+            OG_COMPAT_INSTANCE([UILabel class], @selector(setMinimumScaleFactor:), @selector(tg_ios5_setMinimumScaleFactor:)),
+            OG_COMPAT_INSTANCE([UITextField class], @selector(attributedPlaceholder), @selector(tg_ios5_attributedPlaceholder)),
+            OG_COMPAT_INSTANCE([UITextField class], @selector(setAttributedPlaceholder:), @selector(tg_ios5_setAttributedPlaceholder:)),
     
-        TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(setContentInsetAdjustmentBehavior:), @selector(tg_ios6_setContentInsetAdjustmentBehavior:));
-        TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(contentInsetAdjustmentBehavior), @selector(tg_ios6_contentInsetAdjustmentBehavior));
+            OG_COMPAT_INSTANCE([UIScrollView class], @selector(setContentInsetAdjustmentBehavior:), @selector(og_compat_setContentInsetAdjustmentBehavior:)),
+            OG_COMPAT_INSTANCE([UIScrollView class], @selector(contentInsetAdjustmentBehavior), @selector(og_compat_contentInsetAdjustmentBehavior)),
 
-        TGInstallCompatibilityInstanceMethod([UITableView class], @selector(separatorInset), @selector(tg_ios6_separatorInset));
-        TGInstallCompatibilityInstanceMethod([UITableView class], @selector(setSeparatorInset:), @selector(tg_ios6_setSeparatorInset:));
-        TGInstallCompatibilityInstanceMethod([UITableViewCell class], @selector(separatorInset), @selector(tg_ios6_separatorInset));
-        TGInstallCompatibilityInstanceMethod([UITableViewCell class], @selector(setSeparatorInset:), @selector(tg_ios6_setSeparatorInset:));
+            OG_COMPAT_INSTANCE([UITableView class], @selector(separatorInset), @selector(og_compat_separatorInset)),
+            OG_COMPAT_INSTANCE([UITableView class], @selector(setSeparatorInset:), @selector(og_compat_setSeparatorInset:)),
+            OG_COMPAT_INSTANCE([UITableViewCell class], @selector(separatorInset), @selector(og_compat_separatorInset)),
+            OG_COMPAT_INSTANCE([UITableViewCell class], @selector(setSeparatorInset:), @selector(og_compat_setSeparatorInset:)),
     
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(setSemanticContentAttribute:), @selector(tg_ios6_setSemanticContentAttribute:));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(semanticContentAttribute), @selector(tg_ios6_semanticContentAttribute));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(tintColor), @selector(tg_ios6_tintColor));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(setTintColor:), @selector(tg_ios6_setTintColor:));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(layoutMargins), @selector(tg_ios6_layoutMargins));
-        TGInstallCompatibilityInstanceMethod([UIView class], @selector(setLayoutMargins:), @selector(tg_ios6_setLayoutMargins:));
-        TGInstallCompatibilityInstanceMethod([UINavigationBar class], @selector(barTintColor), @selector(tg_ios6_barTintColor));
-        TGInstallCompatibilityInstanceMethod([UINavigationBar class], @selector(setBarTintColor:), @selector(tg_ios6_setBarTintColor:));
+            OG_COMPAT_INSTANCE([UIView class], @selector(setSemanticContentAttribute:), @selector(og_compat_setSemanticContentAttribute:)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(semanticContentAttribute), @selector(og_compat_semanticContentAttribute)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(tintColor), @selector(og_compat_tintColor)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(setTintColor:), @selector(og_compat_setTintColor:)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(layoutMargins), @selector(og_compat_layoutMargins)),
+            OG_COMPAT_INSTANCE([UIView class], @selector(setLayoutMargins:), @selector(og_compat_setLayoutMargins:)),
+            OG_COMPAT_INSTANCE([UINavigationBar class], @selector(barTintColor), @selector(og_compat_barTintColor)),
+            OG_COMPAT_INSTANCE([UINavigationBar class], @selector(setBarTintColor:), @selector(og_compat_setBarTintColor:)),
     
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(prefersStatusBarHidden), @selector(tg_ios6_prefersStatusBarHidden));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(preferredScreenEdgesDeferringSystemGestures), @selector(tg_ios6_preferredScreenEdgesDeferringSystemGestures));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(setNeedsStatusBarAppearanceUpdate), @selector(tg_ios6_setNeedsStatusBarAppearanceUpdate));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(setNeedsUpdateOfHomeIndicatorAutoHidden), @selector(tg_ios6_setNeedsUpdateOfHomeIndicatorAutoHidden));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(automaticallyAdjustsScrollViewInsets), @selector(tg_ios6_automaticallyAdjustsScrollViewInsets));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(setAutomaticallyAdjustsScrollViewInsets:), @selector(tg_ios6_setAutomaticallyAdjustsScrollViewInsets:));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(preferredContentSize), @selector(tg_ios6_preferredContentSize));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(setPreferredContentSize:), @selector(tg_ios6_setPreferredContentSize:));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(traitCollection), @selector(tg_ios6_traitCollection));
-        TGInstallCompatibilityInstanceMethod([UIViewController class], @selector(transitionCoordinator), @selector(tg_ios6_transitionCoordinator));
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(prefersStatusBarHidden), @selector(og_compat_prefersStatusBarHidden)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(preferredStatusBarStyle), @selector(og_compat_preferredStatusBarStyle)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(preferredScreenEdgesDeferringSystemGestures), @selector(og_compat_preferredScreenEdgesDeferringSystemGestures)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(setNeedsStatusBarAppearanceUpdate), @selector(og_compat_setNeedsStatusBarAppearanceUpdate)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(setNeedsUpdateOfHomeIndicatorAutoHidden), @selector(og_compat_setNeedsUpdateOfHomeIndicatorAutoHidden)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(automaticallyAdjustsScrollViewInsets), @selector(og_compat_automaticallyAdjustsScrollViewInsets)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(setAutomaticallyAdjustsScrollViewInsets:), @selector(og_compat_setAutomaticallyAdjustsScrollViewInsets:)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(preferredContentSize), @selector(og_compat_preferredContentSize)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(setPreferredContentSize:), @selector(og_compat_setPreferredContentSize:)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(traitCollection), @selector(og_compat_traitCollection)),
+            OG_COMPAT_INSTANCE([UIViewController class], @selector(transitionCoordinator), @selector(og_compat_transitionCoordinator)),
     
-        TGInstallCompatibilityInstanceMethod([NSData class], @selector(initWithBase64EncodedString:options:), @selector(tg_ios6_initWithBase64EncodedString:options:));
-        TGInstallCompatibilityInstanceMethod([NSData class], @selector(initWithBase64Encoding:), @selector(tg_ios6_initWithBase64Encoding:));
-        TGInstallCompatibilityInstanceMethod([NSData class], @selector(base64Encoding), @selector(tg_ios6_base64Encoding));
+            OG_COMPAT_INSTANCE([NSData class], @selector(initWithBase64EncodedString:options:), @selector(og_compat_initWithBase64EncodedString:options:)),
+            OG_COMPAT_INSTANCE([NSData class], @selector(initWithBase64Encoding:), @selector(og_compat_initWithBase64Encoding:)),
+            OG_COMPAT_INSTANCE([NSData class], @selector(base64Encoding), @selector(og_compat_base64Encoding))
+        };
+        OGCompatInstallEntries(entries, sizeof(entries) / sizeof(entries[0]));
     
-        TGInstallTextViewCompatibility([UITextView class]);
+        OGCompatInstallTextView([UITextView class]);
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
-        TGInstallTextViewCompatibility(NSClassFromString(@"_UICompatibilityTextView"));
+        OGCompatInstallTextView(NSClassFromString(@"_UICompatibilityTextView"));
 #endif
     }
 }
@@ -896,7 +919,7 @@ static TGIOS4ResizableAxis TGIOS4ResizableAxisMake(CGFloat leading, CGFloat trai
     {
         InjectClassMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_performWithoutAnimation:), @selector(performWithoutAnimation:));
         InjectInstanceMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_snapshotViewAfterScreenUpdates:), @selector(snapshotViewAfterScreenUpdates:));
-        InjectInstanceMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:), @selector(resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:));
+        InjectInstanceMethodFromAnotherClass([UIView class], [UIView class], @selector(og_compat_resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:), @selector(resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:));
     }
 }
 
@@ -1335,22 +1358,22 @@ CGFloat TGAnimationSpeedFactor()
     return 1.0f;
 }
 
-@implementation UIView (LegacyComponentsInvertColorsCompatibility)
+@implementation UIView (OGCompatInvertColors)
 
-- (void)tg_ios6_setAccessibilityIgnoresInvertColors:(BOOL)__unused accessibilityIgnoresInvertColors
+- (void)og_compat_setAccessibilityIgnoresInvertColors:(BOOL)__unused accessibilityIgnoresInvertColors
 {
 }
 
-- (BOOL)tg_ios6_accessibilityIgnoresInvertColors
+- (BOOL)og_compat_accessibilityIgnoresInvertColors
 {
     return false;
 }
 
 @end
 
-@implementation UIView (LegacyComponentsSpringAnimationCompatibility)
+@implementation UIView (OGCompatSpringAnimation)
 
-+ (void)tg_ios6_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay usingSpringWithDamping:(CGFloat)__unused dampingRatio initialSpringVelocity:(CGFloat)__unused velocity options:(UIViewAnimationOptions)options animations:(void (^)(void))animations completion:(void (^)(BOOL finished))completion
++ (void)og_compat_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay usingSpringWithDamping:(CGFloat)__unused dampingRatio initialSpringVelocity:(CGFloat)__unused velocity options:(UIViewAnimationOptions)options animations:(void (^)(void))animations completion:(void (^)(BOOL finished))completion
 {
     [self animateWithDuration:duration delay:delay options:options animations:animations completion:completion];
 }
@@ -1359,27 +1382,27 @@ CGFloat TGAnimationSpeedFactor()
 
 #if !defined(ONEGRAM_ARMV6)
 
-@implementation AVPlayer (LegacyComponentsMutedCompatibility)
+@implementation AVPlayer (OGCompatMuted)
 
-- (void)tg_ios6_setMuted:(BOOL)__unused muted
+- (void)og_compat_setMuted:(BOOL)__unused muted
 {
 }
 
-- (BOOL)tg_ios6_isMuted
+- (BOOL)og_compat_isMuted
 {
     return false;
 }
 
 @end
 
-@implementation AVCaptureDevice (LegacyComponentsAuthorizationCompatibility)
+@implementation AVCaptureDevice (OGCompatAuthorization)
 
-+ (AVAuthorizationStatus)tg_ios6_authorizationStatusForMediaType:(NSString *)__unused mediaType
++ (AVAuthorizationStatus)og_compat_authorizationStatusForMediaType:(NSString *)__unused mediaType
 {
     return AVAuthorizationStatusAuthorized;
 }
 
-+ (void)tg_ios6_requestAccessForMediaType:(NSString *)__unused mediaType completionHandler:(void (^)(BOOL granted))handler
++ (void)og_compat_requestAccessForMediaType:(NSString *)__unused mediaType completionHandler:(void (^)(BOOL granted))handler
 {
     if (handler != nil)
         handler(true);
@@ -1389,9 +1412,9 @@ CGFloat TGAnimationSpeedFactor()
 
 #endif
 
-@implementation AVAudioSession (LegacyComponentsRecordPermissionCompatibility)
+@implementation AVAudioSession (OGCompatRecordPermission)
 
-- (void)tg_ios6_requestRecordPermission:(void (^)(BOOL granted))response
+- (void)og_compat_requestRecordPermission:(void (^)(BOOL granted))response
 {
     if (response != nil)
         response(true);
@@ -1399,47 +1422,37 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
-@implementation NSString (LegacyComponentsDrawingCompatibility)
-
-- (CGSize)tg_ios6_sizeWithAttributes:(NSDictionary *)attrs
+static UIFont *OGCompatAttributeFont(NSDictionary *attributes)
 {
-    UIFont *font = [attrs objectForKey:NSFontAttributeName];
-    
-    if (font == nil)
-        font = [UIFont systemFontOfSize:[UIFont systemFontSize]];
-    
-    return [self sizeWithFont:font];
+    UIFont *font = [attributes objectForKey:NSFontAttributeName];
+    return font != nil ? font : [UIFont systemFontOfSize:[UIFont systemFontSize]];
 }
 
-- (void)tg_ios6_drawAtPoint:(CGPoint)point withAttributes:(NSDictionary *)attrs
+@implementation NSString (OGCompatStringDrawing)
+
+- (CGSize)og_compat_sizeWithAttributes:(NSDictionary *)attrs
 {
-    UIFont *font = [attrs objectForKey:NSFontAttributeName];
+    return [self sizeWithFont:OGCompatAttributeFont(attrs)];
+}
+
+- (void)og_compat_drawAtPoint:(CGPoint)point withAttributes:(NSDictionary *)attrs
+{
     UIColor *color = [attrs objectForKey:NSForegroundColorAttributeName];
-    
-    if (font == nil)
-        font = [UIFont systemFontOfSize:[UIFont systemFontSize]];
-    
     if (color != nil)
         [color set];
     
-    [self drawAtPoint:point withFont:font];
+    [self drawAtPoint:point withFont:OGCompatAttributeFont(attrs)];
 }
 
-- (CGRect)tg_ios6_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)__unused options attributes:(NSDictionary *)attributes context:(id)__unused context
+- (CGRect)og_compat_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)__unused options attributes:(NSDictionary *)attributes context:(id)__unused context
 {
-    UIFont *font = [attributes objectForKey:NSFontAttributeName];
-    
-    if (font == nil)
-        font = [UIFont systemFontOfSize:[UIFont systemFontSize]];
-    
-    CGSize result = [self sizeWithFont:font constrainedToSize:size lineBreakMode:NSLineBreakByWordWrapping];
-    
-    return CGRectMake(0.0f, 0.0f, result.width, result.height);
+    CGSize fitted = [self sizeWithFont:OGCompatAttributeFont(attributes) constrainedToSize:size lineBreakMode:NSLineBreakByWordWrapping];
+    return (CGRect){CGPointZero, fitted};
 }
 
 @end
 
-@implementation UILabel (LegacyComponentsAttributedTextCompatibility)
+@implementation UILabel (OGCompatAttributedText)
 
 - (NSAttributedString *)tg_ios5_attributedText
 {
@@ -1470,7 +1483,7 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
-@implementation UITextField (LegacyComponentsAttributedPlaceholderCompatibility)
+@implementation UITextField (OGCompatAttributedPlaceholder)
 
 - (NSAttributedString *)tg_ios5_attributedPlaceholder
 {
@@ -1484,244 +1497,227 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
-@implementation NSAttributedString (LegacyComponentsDrawingCompatibility)
+@implementation NSAttributedString (OGCompatAttributedStringDrawing)
 
-- (CGRect)tg_ios6_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)__unused options context:(id)__unused context
+- (CGRect)og_compat_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)__unused options context:(id)__unused context
 {
-    CGSize result = [self.string sizeWithFont:[UIFont systemFontOfSize:[UIFont systemFontSize]] constrainedToSize:size lineBreakMode:NSLineBreakByWordWrapping];
-    
-    return CGRectMake(0.0f, 0.0f, result.width, result.height);
+    return [self.string og_compat_boundingRectWithSize:size options:0 attributes:nil context:nil];
 }
 
-- (CGRect)tg_ios6_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)options attributes:(NSDictionary *)attributes context:(id)context
+- (CGRect)og_compat_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)options attributes:(NSDictionary *)attributes context:(id)context
 {
     return [self.string boundingRectWithSize:size options:options attributes:attributes context:context];
 }
 
 @end
 
-@implementation UIScrollView (LegacyComponentsContentInsetAdjustmentCompatibility)
+@implementation UIScrollView (OGCompatContentInsetAdjustment)
 
-- (void)tg_ios6_setContentInsetAdjustmentBehavior:(UIScrollViewContentInsetAdjustmentBehavior)__unused contentInsetAdjustmentBehavior
+- (void)og_compat_setContentInsetAdjustmentBehavior:(UIScrollViewContentInsetAdjustmentBehavior)__unused contentInsetAdjustmentBehavior
 {
 }
 
-- (UIScrollViewContentInsetAdjustmentBehavior)tg_ios6_contentInsetAdjustmentBehavior
+- (UIScrollViewContentInsetAdjustmentBehavior)og_compat_contentInsetAdjustmentBehavior
 {
     return UIScrollViewContentInsetAdjustmentNever;
 }
 
 @end
 
-@implementation UITableView (LegacyComponentsSeparatorInsetCompatibility)
+@implementation UITableView (OGCompatSeparatorInset)
 
-- (UIEdgeInsets)tg_ios6_separatorInset
+- (UIEdgeInsets)og_compat_separatorInset
 {
     return UIEdgeInsetsZero;
 }
 
-- (void)tg_ios6_setSeparatorInset:(UIEdgeInsets)__unused separatorInset
+- (void)og_compat_setSeparatorInset:(UIEdgeInsets)__unused separatorInset
 {
 }
 
 @end
 
 
-@implementation UITableViewCell (LegacyComponentsSeparatorInsetCompatibility)
+@implementation UITableViewCell (OGCompatSeparatorInset)
 
-- (UIEdgeInsets)tg_ios6_separatorInset
+- (UIEdgeInsets)og_compat_separatorInset
 {
     return UIEdgeInsetsZero;
 }
 
-- (void)tg_ios6_setSeparatorInset:(UIEdgeInsets)__unused separatorInset
+- (void)og_compat_setSeparatorInset:(UIEdgeInsets)__unused separatorInset
 {
 }
 
 @end
 
-@implementation UIView (LegacyComponentsSemanticContentCompatibility)
+@implementation UIView (OGCompatSemanticContent)
 
-- (void)tg_ios6_setSemanticContentAttribute:(UISemanticContentAttribute)__unused semanticContentAttribute
+- (void)og_compat_setSemanticContentAttribute:(UISemanticContentAttribute)__unused semanticContentAttribute
 {
 }
 
-- (UISemanticContentAttribute)tg_ios6_semanticContentAttribute
+- (UISemanticContentAttribute)og_compat_semanticContentAttribute
 {
     return UISemanticContentAttributeForceLeftToRight;
 }
 
-- (UIColor *)tg_ios6_tintColor
+- (UIColor *)og_compat_tintColor
 {
     return nil;
 }
 
-- (void)tg_ios6_setTintColor:(UIColor *)__unused tintColor
+- (void)og_compat_setTintColor:(UIColor *)__unused tintColor
 {
 }
 
-- (UIEdgeInsets)tg_ios6_layoutMargins
+- (UIEdgeInsets)og_compat_layoutMargins
 {
     return UIEdgeInsetsZero;
 }
 
-- (void)tg_ios6_setLayoutMargins:(UIEdgeInsets)__unused layoutMargins
+- (void)og_compat_setLayoutMargins:(UIEdgeInsets)__unused layoutMargins
 {
 }
 
 @end
 
-@implementation UINavigationBar (LegacyComponentsBarTintCompatibility)
+@implementation UINavigationBar (OGCompatBarTint)
 
-- (UIColor *)tg_ios6_barTintColor
+- (UIColor *)og_compat_barTintColor
 {
     return self.tintColor;
 }
 
-- (void)tg_ios6_setBarTintColor:(UIColor *)barTintColor
+- (void)og_compat_setBarTintColor:(UIColor *)barTintColor
 {
     self.tintColor = barTintColor;
 }
 
 @end
 
-@implementation UIViewController (LegacyComponentsStatusBarCompatibility)
+@implementation UIViewController (OGCompatStatusBar)
 
-- (BOOL)tg_ios6_prefersStatusBarHidden
+- (BOOL)og_compat_prefersStatusBarHidden
 {
     return false;
 }
 
-- (UIRectEdge)tg_ios6_preferredScreenEdgesDeferringSystemGestures
+- (UIStatusBarStyle)og_compat_preferredStatusBarStyle
+{
+    return [[LegacyComponentsGlobals provider] statusBarStyle];
+}
+
+- (UIRectEdge)og_compat_preferredScreenEdgesDeferringSystemGestures
 {
     return UIRectEdgeNone;
 }
 
-- (void)tg_ios6_setNeedsStatusBarAppearanceUpdate
+- (void)og_compat_setNeedsStatusBarAppearanceUpdate
 {
 }
 
-- (void)tg_ios6_setNeedsUpdateOfHomeIndicatorAutoHidden
+- (void)og_compat_setNeedsUpdateOfHomeIndicatorAutoHidden
 {
 }
 
-- (BOOL)tg_ios6_automaticallyAdjustsScrollViewInsets
+- (BOOL)og_compat_automaticallyAdjustsScrollViewInsets
 {
     return false;
 }
 
-- (void)tg_ios6_setAutomaticallyAdjustsScrollViewInsets:(BOOL)__unused automaticallyAdjustsScrollViewInsets
+- (void)og_compat_setAutomaticallyAdjustsScrollViewInsets:(BOOL)__unused automaticallyAdjustsScrollViewInsets
 {
 }
 
-- (CGSize)tg_ios6_preferredContentSize
+- (CGSize)og_compat_preferredContentSize
 {
     return CGSizeZero;
 }
 
-- (void)tg_ios6_setPreferredContentSize:(CGSize)__unused preferredContentSize
+- (void)og_compat_setPreferredContentSize:(CGSize)__unused preferredContentSize
 {
 }
 
-- (UITraitCollection *)tg_ios6_traitCollection
+- (UITraitCollection *)og_compat_traitCollection
 {
     return nil;
 }
 
-- (id<UIViewControllerTransitionCoordinator>)tg_ios6_transitionCoordinator
+- (id<UIViewControllerTransitionCoordinator>)og_compat_transitionCoordinator
 {
     return nil;
 }
 
 @end
 
-@implementation NSData (LegacyComponentsBase64Compatibility)
+static const char OGCompatBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-- (instancetype)tg_ios6_initWithBase64EncodedString:(NSString *)base64String options:(NSDataBase64DecodingOptions)__unused options
+@implementation NSData (OGCompatBase64)
+
+- (instancetype)og_compat_initWithBase64EncodedString:(NSString *)base64String options:(NSDataBase64DecodingOptions)__unused options
 {
-    return [self tg_ios6_initWithBase64Encoding:base64String];
+    return [self og_compat_initWithBase64Encoding:base64String];
 }
 
-- (instancetype)tg_ios6_initWithBase64Encoding:(NSString *)base64String
+- (instancetype)og_compat_initWithBase64Encoding:(NSString *)base64String
 {
-    static unsigned char table[256];
-    
+    static unsigned char decodeTable[256];
     static dispatch_once_t onceToken;
-    
     dispatch_once(&onceToken, ^
-                  {
-                      memset(table, 0x80, sizeof(table));
-                      
-                      const char *chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                      
-                      for (int i = 0; i < 64; i++)
-                          table[(unsigned char)chars[i]] = (unsigned char)i;
-                      
-                      table[(unsigned char)'='] = 0;
-                  });
-    
-    NSMutableData *result = [[NSMutableData alloc] init];
-    
-    const char *input = [base64String UTF8String];
-    
-    uint32_t val = 0;
-    int valb = -8;
-    
-    for (const unsigned char *c = (const unsigned char *)input; *c != 0; c++)
     {
-        if (*c == '=')
-            break;
-        
-        unsigned char decoded = table[*c];
-        
-        if (decoded & 0x80)
+        memset(decodeTable, 0x80, sizeof(decodeTable));
+        for (int i = 0; i < 64; i++)
+            decodeTable[(unsigned char)OGCompatBase64Alphabet[i]] = (unsigned char)i;
+        decodeTable[(unsigned char)'='] = 0;
+    });
+    
+    NSMutableData *decoded = [[NSMutableData alloc] init];
+    uint32_t accumulator = 0;
+    int bits = -8;
+    
+    for (const unsigned char *c = (const unsigned char *)[base64String UTF8String]; *c != 0 && *c != '='; c++)
+    {
+        unsigned char sextet = decodeTable[*c];
+        if (sextet & 0x80)
             continue;
         
-        val = (val << 6) | decoded;
-        
-        valb += 6;
-        
-        if (valb >= 0)
+        accumulator = (accumulator << 6) | sextet;
+        bits += 6;
+        if (bits >= 0)
         {
-            unsigned char byte = (unsigned char)((val >> valb) & 0xff);
-            
-            [result appendBytes:&byte length:1];
-            
-            valb -= 8;
+            unsigned char byte = (unsigned char)((accumulator >> bits) & 0xff);
+            [decoded appendBytes:&byte length:1];
+            bits -= 8;
         }
     }
     
-    return [self initWithData:result];
+    return [self initWithData:decoded];
 }
 
-- (NSString *)tg_ios6_base64Encoding
+- (NSString *)og_compat_base64Encoding
 {
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
     const unsigned char *input = (const unsigned char *)[self bytes];
-    
     NSUInteger length = [self length];
+    NSMutableString *encoded = [[NSMutableString alloc] initWithCapacity:((length + 2) / 3) * 4];
     
-    NSMutableString *result = [[NSMutableString alloc] initWithCapacity:((length + 2) / 3) * 4];
-    
-    for (NSUInteger i = 0; i < length; i += 3)
+    for (NSUInteger offset = 0; offset < length; offset += 3)
     {
-        NSUInteger value = input[i] << 16;
+        NSUInteger remaining = length - offset;
+        NSUInteger group = input[offset] << 16;
+        if (remaining > 1)
+            group |= input[offset + 1] << 8;
+        if (remaining > 2)
+            group |= input[offset + 2];
         
-        if (i + 1 < length)
-            value |= input[i + 1] << 8;
-        
-        if (i + 2 < length)
-            value |= input[i + 2];
-        
-        [result appendFormat:@"%c%c%c%c",
-         table[(value >> 18) & 0x3f],
-         table[(value >> 12) & 0x3f],
-         (i + 1 < length) ? table[(value >> 6) & 0x3f] : '=',
-         (i + 2 < length) ? table[value & 0x3f] : '='];
+        [encoded appendFormat:@"%c%c%c%c",
+         OGCompatBase64Alphabet[(group >> 18) & 0x3f],
+         OGCompatBase64Alphabet[(group >> 12) & 0x3f],
+         remaining > 1 ? OGCompatBase64Alphabet[(group >> 6) & 0x3f] : '=',
+         remaining > 2 ? OGCompatBase64Alphabet[group & 0x3f] : '='];
     }
     
-    return result;
+    return encoded;
 }
 
 @end
@@ -1785,7 +1781,7 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
-@implementation UITextView (LegacyComponentsTextKitDeclarations)
+@implementation UITextView (OGCompatTextKit)
 
 - (NSAttributedString *)tg_ios5_attributedText
 {
@@ -1810,41 +1806,41 @@ CGFloat TGAnimationSpeedFactor()
 {
 }
 
-- (NSLayoutManager *)tg_ios6_layoutManager
+- (NSLayoutManager *)og_compat_layoutManager
 {
     return nil;
 }
 
-- (NSTextContainer *)tg_ios6_textContainer
+- (NSTextContainer *)og_compat_textContainer
 {
     return nil;
 }
 
-- (NSTextStorage *)tg_ios6_textStorage
+- (NSTextStorage *)og_compat_textStorage
 {
     return nil;
 }
 
-- (UIEdgeInsets)tg_ios6_textContainerInset
+- (UIEdgeInsets)og_compat_textContainerInset
 {
     return self.contentInset;
 }
 
-- (void)tg_ios6_setTextContainerInset:(UIEdgeInsets)textContainerInset
+- (void)og_compat_setTextContainerInset:(UIEdgeInsets)textContainerInset
 {
     self.contentInset = textContainerInset;
 }
 
-- (BOOL)tg_ios6_isSelectable
+- (BOOL)og_compat_isSelectable
 {
     return self.editable;
 }
 
-- (void)tg_ios6_setSelectable:(BOOL)__unused selectable
+- (void)og_compat_setSelectable:(BOOL)__unused selectable
 {
 }
 
-- (instancetype)tg_ios6_initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)__unused textContainer
+- (instancetype)og_compat_initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)__unused textContainer
 {
     return [self initWithFrame:frame];
 }
@@ -1854,7 +1850,7 @@ CGFloat TGAnimationSpeedFactor()
 #endif
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
-static Class TGIOS6WebKitRuntimeClass(NSString *name, Class compatibilityClass)
+static Class OGCompatWebKitRuntimeClass(NSString *name, Class compatibilityClass)
 {
     Class systemClass = NSClassFromString(name);
     if (systemClass == Nil)
@@ -1867,32 +1863,32 @@ static Class TGIOS6WebKitRuntimeClass(NSString *name, Class compatibilityClass)
     return systemClass;
 }
 
-#define TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS(systemName) \
+#define OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS(systemName) \
 + (id)allocWithZone:(NSZone *)zone \
 { \
-    Class systemClass = TGIOS6WebKitRuntimeClass(@systemName, self); \
+    Class systemClass = OGCompatWebKitRuntimeClass(@systemName, self); \
     if (systemClass != Nil) \
         return [systemClass allocWithZone:zone]; \
     return [super allocWithZone:zone]; \
 } \
 + (id)forwardingTargetForSelector:(SEL)selector \
 { \
-    Class systemClass = TGIOS6WebKitRuntimeClass(@systemName, self); \
+    Class systemClass = OGCompatWebKitRuntimeClass(@systemName, self); \
     if (systemClass != Nil && [systemClass respondsToSelector:selector]) \
         return systemClass; \
     return nil; \
 }
 
 @implementation WKFrameInfo
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKFrameInfo")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKFrameInfo")
 @end
 
 @implementation WKNavigation
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKNavigation")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKNavigation")
 @end
 
 @implementation WKNavigationAction
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKNavigationAction")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKNavigationAction")
 
 - (NSURLRequest *)request
 {
@@ -1907,7 +1903,7 @@ TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKNavigationAction")
 @end
 
 @implementation WKUserScript
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKUserScript")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKUserScript")
 
 - (instancetype)initWithSource:(NSString *)__unused source injectionTime:(WKUserScriptInjectionTime)__unused injectionTime forMainFrameOnly:(BOOL)__unused forMainFrameOnly
 {
@@ -1917,11 +1913,11 @@ TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKUserScript")
 @end
 
 @implementation WKPreferences
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKPreferences")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKPreferences")
 @end
 
 @implementation WKUserContentController
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKUserContentController")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKUserContentController")
 
 - (void)addUserScript:(WKUserScript *)__unused userScript
 {
@@ -1934,11 +1930,11 @@ TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKUserContentController")
 @end
 
 @implementation WKWebViewConfiguration
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKWebViewConfiguration")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKWebViewConfiguration")
 @end
 
 @implementation WKWebView
-TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKWebView")
+OG_COMPAT_WEBKIT_RUNTIME_PROXY_METHODS("WKWebView")
 
 - (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)__unused configuration
 {

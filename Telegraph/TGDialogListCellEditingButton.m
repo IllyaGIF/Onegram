@@ -64,8 +64,7 @@
     _animationView.hidden = true;
     _iconView.image = image;
     _iconView.hidden = _labelOnly;
-    _labelView.transform = CGAffineTransformIdentity;
-    _labelView.alpha = 1.0f;
+    [self og_compat_restLabel];
     _labelView.text = title;
     [_labelView sizeToFit];
     
@@ -99,7 +98,7 @@
     if (_animationView == nil) {
         _animationView = [self animationView];
         if (_animationView == nil) {
-            _labelView.alpha = 1.0f;
+            [self og_compat_restLabel];
             _iconView.hidden = _labelOnly;
             return;
         }
@@ -142,16 +141,19 @@
     
     [_animationView stop];
     _animationView.hidden = true;
+    [self og_compat_restLabel];
+    _iconView.hidden = _labelOnly;
+}
+
+- (void)og_compat_restLabel {
     _labelView.alpha = 1.0f;
     _labelView.transform = CGAffineTransformIdentity;
-    _iconView.hidden = _labelOnly;
 }
 
 - (void)skipAnimation {
     [_animationView stop];
     _animationView.hidden = true;
-    _labelView.alpha = 1.0f;
-    _labelView.transform = CGAffineTransformIdentity;
+    [self og_compat_restLabel];
     _iconView.hidden = _labelOnly;
 }
 
@@ -174,8 +176,7 @@
     [_animationView removeFromSuperview];
     _animationView = nil;
     
-    _labelView.alpha = 1.0f;
-    _labelView.transform = CGAffineTransformIdentity;
+    [self og_compat_restLabel];
     _labelView.text = title;
     [_labelView sizeToFit];
     

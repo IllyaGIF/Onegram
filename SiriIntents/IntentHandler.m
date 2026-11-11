@@ -298,24 +298,20 @@ static INPerson *personWithContact(CNContact *contact) {
     } completed:nil]];
 }
 
-- (NSArray *)matchedNativeContacts:(NSString *)query {
-    if ([CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts] == CNAuthorizationStatusAuthorized) {
-        CNContactStore *store = [[CNContactStore alloc] init];
-        NSArray *contacts = [store unifiedContactsMatchingPredicate:[CNContact predicateForContactsMatchingName:query] keysToFetch:@[CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey] error:nil];
-        return contacts;
-    } else {
+- (NSArray *)og_nativeContactsForPredicate:(NSPredicate *)predicate {
+    if ([CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts] != CNAuthorizationStatusAuthorized)
         return @[];
-    }
+    
+    CNContactStore *store = [[CNContactStore alloc] init];
+    return [store unifiedContactsMatchingPredicate:predicate keysToFetch:@[CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey] error:nil];
+}
+
+- (NSArray *)matchedNativeContacts:(NSString *)query {
+    return [self og_nativeContactsForPredicate:[CNContact predicateForContactsMatchingName:query]];
 }
 
 - (NSArray *)matchedNativeContactsByContactId:(NSString *)contactId {
-    if ([CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts] == CNAuthorizationStatusAuthorized) {
-        CNContactStore *store = [[CNContactStore alloc] init];
-        NSArray *contacts = [store unifiedContactsMatchingPredicate:[CNContact predicateForContactsWithIdentifiers:@[contactId]] keysToFetch:@[CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey] error:nil];
-        return contacts;
-    } else {
-        return @[];
-    }
+    return [self og_nativeContactsForPredicate:[CNContact predicateForContactsWithIdentifiers:@[contactId]]];
 }
 
 @end

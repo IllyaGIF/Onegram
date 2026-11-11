@@ -1,3 +1,6 @@
+#ifndef OG_COMPAT_WEBKIT_H
+#define OG_COMPAT_WEBKIT_H
+
 #import <UIKit/UIKit.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
@@ -22,20 +25,14 @@ typedef NSInteger WKNavigationActionPolicy;
 #define WKNavigationActionPolicyCancel 0
 #define WKNavigationActionPolicyAllow 1
 
-@class WKUserScript;
 @class WKScriptMessage;
-@class WKNavigation;
-@class WKNavigationAction;
+@class WKUserScript;
 
 @protocol WKNavigationDelegate <NSObject>
 @end
 
 @protocol WKScriptMessageHandler <NSObject>
 - (void)userContentController:(id)userContentController didReceiveScriptMessage:(WKScriptMessage *)message;
-@end
-
-@interface WKScriptMessage : NSObject
-@property (nonatomic, readonly) id body;
 @end
 
 @interface WKFrameInfo : NSObject
@@ -47,6 +44,10 @@ typedef NSInteger WKNavigationActionPolicy;
 @interface WKNavigationAction : NSObject
 @property (nonatomic, readonly) NSURLRequest *request;
 @property (nonatomic, readonly) WKFrameInfo *targetFrame;
+@end
+
+@interface WKScriptMessage : NSObject
+@property (nonatomic, readonly) id body;
 @end
 
 @interface WKUserScript : NSObject
@@ -72,13 +73,15 @@ typedef NSInteger WKNavigationActionPolicy;
 @end
 
 @interface WKWebView : UIView
-- (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration;
 @property (nonatomic, readonly) UIScrollView *scrollView;
 @property (nonatomic, readonly) double estimatedProgress;
 @property (nonatomic, assign) id<WKNavigationDelegate> navigationDelegate;
+- (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration;
 - (WKNavigation *)loadRequest:(NSURLRequest *)request;
 - (WKNavigation *)loadHTMLString:(NSString *)string baseURL:(NSURL *)baseURL;
 - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(void (^)(id result, NSError *error))completionHandler;
 @end
+
+#endif
 
 #endif

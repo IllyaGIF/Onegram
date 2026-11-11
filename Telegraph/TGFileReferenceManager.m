@@ -20,6 +20,15 @@
     return self;
 }
 
+- (void)releaseOriginInfoVariable:(SVariable *)variable forKey:(NSString *)key
+{
+    [_queue dispatch:^
+    {
+        if (_processedOriginInfos[key] == variable)
+            [_processedOriginInfos removeObjectForKey:key];
+    }];
+}
+
 - (SSignal *)updatedOriginInfo:(TGMediaOriginInfo *)originInfo
 {
     if (originInfo == nil)
@@ -41,20 +50,12 @@
             
             [disposable setDisposable:[info.signal startWithNext:^(id next)
             {
-                [_queue dispatch:^
-                {
-                    if (_processedOriginInfos[key] == info)
-                        [_processedOriginInfos removeObjectForKey:key];
-                }];
+                [self releaseOriginInfoVariable:info forKey:key];
                 [subscriber putNext:next];
                 [subscriber putCompletion];
             } error:^(id error)
             {
-                [_queue dispatch:^
-                {
-                    if (_processedOriginInfos[key] == info)
-                        [_processedOriginInfos removeObjectForKey:key];
-                }];
+                [self releaseOriginInfoVariable:info forKey:key];
                 [subscriber putError:error];
             } completed:nil]];
         }];

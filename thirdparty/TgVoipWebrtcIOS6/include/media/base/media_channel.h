@@ -1,12 +1,10 @@
-#ifndef TGIOS6_MEDIA_BASE_MEDIA_CHANNEL_H
-#define TGIOS6_MEDIA_BASE_MEDIA_CHANNEL_H
+#ifndef OG_COMPAT_MEDIA_BASE_MEDIA_CHANNEL_H
+#define OG_COMPAT_MEDIA_BASE_MEDIA_CHANNEL_H
 
 namespace cricket {
 
-class MediaChannel {
-public:
-	virtual ~MediaChannel() {
-	}
+struct MediaChannel {
+	virtual ~MediaChannel() = default;
 };
 
 } // namespace cricket

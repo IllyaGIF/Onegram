@@ -40,28 +40,26 @@ typedef enum {
 
 @end
 
-static bool TGIOS6FavoriteStickerDocumentIsUnsupported(TGDocumentMediaAttachment *document)
+static bool OGCompatIsWebmSticker(TGDocumentMediaAttachment *document)
 {
     if (![document isKindOfClass:[TGDocumentMediaAttachment class]])
         return false;
-    
-    NSString *mimeType = [document.mimeType lowercaseString];
-    NSString *extension = [[document.fileName pathExtension] lowercaseString];
-    return [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"webm"];
+
+    return [[document.mimeType lowercaseString] isEqualToString:@"video/webm"] || [[[document.fileName pathExtension] lowercaseString] isEqualToString:@"webm"];
 }
 
-static NSArray *TGIOS6FavoriteStaticStickerDocuments(NSArray *documents)
+static NSArray *OGCompatStaticStickers(NSArray *documents)
 {
     if (![documents isKindOfClass:[NSArray class]])
         return @[];
-    
-    NSMutableArray *result = [[NSMutableArray alloc] init];
+
+    NSMutableArray *kept = [[NSMutableArray alloc] init];
     for (TGDocumentMediaAttachment *document in documents)
     {
-        if (!TGIOS6FavoriteStickerDocumentIsUnsupported(document))
-            [result addObject:document];
+        if (!OGCompatIsWebmSticker(document))
+            [kept addObject:document];
     }
-    return result;
+    return kept;
 }
 
 @implementation TGFavoriteStickersSignal
@@ -195,7 +193,7 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
         } @catch (NSException *e) {
         }
         
-        array = TGIOS6FavoriteStaticStickerDocuments(array);
+        array = OGCompatStaticStickers(array);
         [self syncFavedIds:array];
         
         if (array == nil) {
@@ -226,7 +224,7 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
             NSMutableArray *array = [[NSMutableArray alloc] init];
             for (id desc in [favedStickers.stickers reverseObjectEnumerator]) {
                 TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:desc];
-                if (document.documentId != 0 && !TGIOS6FavoriteStickerDocumentIsUnsupported(document)) {
+                if (document.documentId != 0 && !OGCompatIsWebmSticker(document)) {
                     document.originInfo = [TGMediaOriginInfo mediaOriginInfoForDocumentFavoriteSticker:desc];
                     [array addObject:document];
                 }
@@ -351,7 +349,7 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
 
 + (void)setSticker:(TGDocumentMediaAttachment *)document faved:(bool)faved
 {
-    if (document.documentId == 0 || (faved && TGIOS6FavoriteStickerDocumentIsUnsupported(document))) {
+    if (document.documentId == 0 || (faved && OGCompatIsWebmSticker(document))) {
         return;
     }
     

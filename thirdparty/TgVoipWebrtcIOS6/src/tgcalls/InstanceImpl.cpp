@@ -34,13 +34,12 @@ rtc::Thread *getManagerThread() {
 
 InstanceImpl::InstanceImpl(Descriptor &&descriptor)
 : _logSink(std::make_unique<LogSinkImpl>(descriptor.config.logPath)) {
-	fprintf(stderr, "IOS6WEBRTC cxx.instance.init.enter servers=%lu outgoing=%d protocol=%d logPath=%s\n",
+	OG_COMPAT_TRACE_STDERR("cxx.instance.init.enter servers=%lu outgoing=%d protocol=%d logPath=%s",
 		(unsigned long)descriptor.rtcServers.size(),
 		descriptor.encryptionKey.isOutgoing ? 1 : 0,
 		(int)descriptor.config.protocolVersion,
 		descriptor.config.logPath.data.c_str());
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.init.enter servers=%lu outgoing=%d protocol=%d",
+	OG_COMPAT_TRACE_SYSLOG("cxx.instance.init.enter servers=%lu outgoing=%d protocol=%d",
 		(unsigned long)descriptor.rtcServers.size(),
 		descriptor.encryptionKey.isOutgoing ? 1 : 0,
 		(int)descriptor.config.protocolVersion);
@@ -77,32 +76,20 @@ InstanceImpl::InstanceImpl(Descriptor &&descriptor)
     descriptorPtr->outgoingVideoSource = descriptor.outgoingVideoSource;
     descriptorPtr->incomingVideoSink = descriptor.incomingVideoSink;
 #endif
-	fprintf(stderr, "IOS6WEBRTC cxx.instance.manager.thread.before\n");
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.manager.thread.before");
+	OG_COMPAT_TRACE("cxx.instance.manager.thread.before");
 	_manager.reset(new ThreadLocalObject<Manager>(getManagerThread(), [descriptorPtr]() mutable {
-		fprintf(stderr, "IOS6WEBRTC cxx.instance.manager.construct.lambda\n");
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.manager.construct.lambda");
+		OG_COMPAT_TRACE("cxx.instance.manager.construct.lambda");
 		return std::make_shared<Manager>(getManagerThread(), std::move(*descriptorPtr));
 	}));
-	fprintf(stderr, "IOS6WEBRTC cxx.instance.manager.thread.after\n");
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.manager.thread.after");
+	OG_COMPAT_TRACE("cxx.instance.manager.thread.after");
 	_manager->perform([](Manager *manager) {
-		fprintf(stderr, "IOS6WEBRTC cxx.instance.manager.start.perform\n");
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.manager.start.perform");
+		OG_COMPAT_TRACE("cxx.instance.manager.start.perform");
 		manager->start();
 	});
 
-	fprintf(stderr, "IOS6WEBRTC cxx.instance.setNetwork.before type=%d\n", (int)networkType);
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.setNetwork.before type=%d", (int)networkType);
+	OG_COMPAT_TRACE("cxx.instance.setNetwork.before type=%d", (int)networkType);
     setNetworkType(networkType);
-	fprintf(stderr, "IOS6WEBRTC cxx.instance.init.exit\n");
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.init.exit");
+	OG_COMPAT_TRACE("cxx.instance.init.exit");
 }
 
 InstanceImpl::~InstanceImpl() {
@@ -204,9 +191,9 @@ void InstanceImpl::setAudioOutputDuckingEnabled(bool enabled) {
 }
 
 void InstanceImpl::addExternalAudioSamples(std::vector<uint8_t> &&samples) {
-    std::shared_ptr<std::vector<uint8_t>> samplesPtr(new std::vector<uint8_t>(std::move(samples)));
-    _manager->perform([samplesPtr](Manager *manager) mutable {
-        manager->addExternalAudioSamples(std::move(*samplesPtr));
+    auto sharedSamples = std::make_shared<std::vector<uint8_t>>(std::move(samples));
+    _manager->perform([sharedSamples](Manager *target) mutable {
+        target->addExternalAudioSamples(std::move(*sharedSamples));
     });
 }
 
@@ -241,11 +228,11 @@ void InstanceImpl::stop(std::function<void(FinalState)> completion) {
     
     std::string debugLog = _logSink->result();
 
-    std::shared_ptr<std::string> debugLogPtr(new std::string(std::move(debugLog)));
-    _manager->perform([completion, debugLogPtr](Manager *manager) {
-        manager->getNetworkStats([completion, debugLogPtr](TrafficStats stats, CallStats callStats) {
+    auto sharedLog = std::make_shared<std::string>(std::move(debugLog));
+    _manager->perform([completion, sharedLog](Manager *manager) {
+        manager->getNetworkStats([completion, sharedLog](TrafficStats stats, CallStats callStats) {
             FinalState finalState;
-            finalState.debugLog = *debugLogPtr;
+            finalState.debugLog = *sharedLog;
             finalState.isRatingSuggested = false;
             finalState.trafficStats = stats;
             finalState.callStats = callStats;

@@ -185,6 +185,17 @@
         } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChangeCommunity class]]) {
             self.actionType = TGMessageActionCommunityChanged;
             self.actionData = @{@"communityId": @(((TLMessageAction$messageActionChangeCommunity *)actionDesc).community_id)};
+        } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionPaidMessagesRefunded class]]) {
+            TLMessageAction$messageActionPaidMessagesRefunded *action = (TLMessageAction$messageActionPaidMessagesRefunded *)actionDesc;
+            self.actionType = TGMessageActionPaidMessagesRefunded;
+            self.actionData = @{@"count": @(action.count), @"stars": @(action.stars)};
+        } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionPaidMessagesPrice class]]) {
+            TLMessageAction$messageActionPaidMessagesPrice *action = (TLMessageAction$messageActionPaidMessagesPrice *)actionDesc;
+            self.actionType = TGMessageActionPaidMessagesPrice;
+            self.actionData = @{@"stars": @(action.stars), @"broadcastMessagesAllowed": @((action.flags & (1 << 0)) != 0)};
+        } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionNoPaidMessagesTokenUsed class]]) {
+            self.actionType = TGMessageActionNoPaidMessagesTokenUsed;
+            self.actionData = @{};
         } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionBotAllowed class]]) {
             self.actionType = TGMessageActionBotAllowed;
             self.actionData = @{@"domain": ((TLMessageAction$messageActionBotAllowed *)actionDesc).domain};

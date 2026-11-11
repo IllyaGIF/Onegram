@@ -18,12 +18,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  *  The user's email address.
  */
-@property(nonatomic, copy)NSString *email;
+@property(nonatomic, copy)NSString *_Nullable email;
 
 /**
  *  The user's phone number. When set, this property will automatically strip out any non-numeric characters from the string you specify.
  */
-@property(nonatomic, copy)NSString *phone;
+@property(nonatomic, copy)NSString *_Nullable phone;
 
 @end
 

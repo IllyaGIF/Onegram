@@ -7,7 +7,7 @@
  */
 
 #import "TGModernConversationAudioPlayer.h"
-#import "IOS6FeatureProbe.h"
+#import "OGFeatureProbe.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGTimerTarget.h"
@@ -31,7 +31,7 @@
     TGModernConversationAudioPlayerContext *_inlineMediaContext;
     
     bool _isPaused;
-    bool _isFinished;
+    bool _playbackEnded;
 }
 
 @end
@@ -133,7 +133,7 @@
     }
     
     _isPaused = false;
-    _isFinished = false;
+    _playbackEnded = false;
     
     if (_timer != nil)
     {
@@ -150,7 +150,7 @@
 - (void)play:(float)playbackPosition
 {
     _isPaused = false;
-    _isFinished = false;
+    _playbackEnded = false;
     
     if (_timer != nil)
     {
@@ -217,19 +217,19 @@
 
 - (bool)replaceWithFilePath:(NSString *)filePath
 {
-    if (!_music || _audioPlayer == nil || _stream != nil || ![_audioPlayer replaceWithPath:filePath])
+    bool replaceable = _music && _audioPlayer != nil && _stream == nil;
+    if (!replaceable || ![_audioPlayer replaceWithPath:filePath])
         return false;
     _filePath = [filePath copy];
     _isPaused = false;
-    _isFinished = false;
+    _playbackEnded = false;
     return true;
 }
 
 - (bool)prepareNextFilePath:(NSString *)filePath
 {
-    if (!_music || _audioPlayer == nil || _stream != nil)
-        return false;
-    return [_audioPlayer prepareNextPath:filePath];
+    bool preparable = _music && _audioPlayer != nil && _stream == nil;
+    return preparable && [_audioPlayer prepareNextPath:filePath];
 }
 
 - (float)playbackPosition
@@ -263,7 +263,7 @@
 
 - (bool)isFinished
 {
-    return _isFinished;
+    return _playbackEnded ? true : false;
 }
 
 - (void)audioPlayerDidPause:(TGAudioPlayer *)__unused audioPlayer {
@@ -284,7 +284,7 @@
 {
     UIApplication *application = [UIApplication sharedApplication];
     __block OGPlatformBackgroundTaskIdentifier backgroundTask = OGPlatformBackgroundTaskInvalid;
-    if (application.applicationState != UIApplicationStateActive)
+    if ([application applicationState] != UIApplicationStateActive)
     {
         dispatch_block_t beginTask = ^
         {
@@ -296,16 +296,16 @@
                     OGPlatformEndBackgroundTask(application, task);
             });
         };
-        if ([NSThread isMainThread])
-            beginTask();
-        else
+        if (![NSThread isMainThread])
             dispatch_sync(dispatch_get_main_queue(), beginTask);
+        else
+            beginTask();
     }
 
     TGDispatchOnMainThread(^
     {
         _isPaused = true;
-        _isFinished = true;
+        _playbackEnded = true;
         
         if (_timer != nil)
         {
@@ -315,7 +315,7 @@
         
         [_inlineMediaContext postUpdatePlaybackPosition:false];
         
-        if (!_music)
+        if (_music == false)
             [self cleanup];
         
         id<TGModernConversationAudioPlayerDelegate> delegate = _delegate;
@@ -324,7 +324,8 @@
 
         if (backgroundTask != OGPlatformBackgroundTaskInvalid)
         {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+            const int64_t releaseDelay = 8 * NSEC_PER_SEC;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, releaseDelay), dispatch_get_main_queue(), ^
             {
                 OGPlatformBackgroundTaskIdentifier task = backgroundTask;
                 backgroundTask = OGPlatformBackgroundTaskInvalid;

@@ -17,6 +17,6 @@
 /**
  *  The stripe ID of the source. When implementing your server backend, you should pass this property to the Create Charge method as the `source` parameter.
  */
-@property(nonatomic, readonly, copy)NSString *stripeID;
+@property(nonatomic, readonly, copy)NSString *_Nonnull stripeID;
 
 @end

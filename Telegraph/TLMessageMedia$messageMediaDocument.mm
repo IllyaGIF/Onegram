@@ -3,6 +3,17 @@
 #import "TLMetaClassStore.h"
 
 
+static id OGCompatReadNextObject(NSInputStream *is, id<TLSerializationEnvironment> environment, NSError **error)
+{
+    int32_t objectSignature = [is readInt32];
+    return TLMetaClassStore::constructObject(is, objectSignature, environment, nil, error);
+}
+
+static bool OGCompatFailed(NSError **error)
+{
+    return error != nil && *error != nil;
+}
+
 @implementation TLMessageMedia$messageMediaDocument
 
 - (int32_t)TLconstructorName {
@@ -23,13 +34,13 @@
     TLMessageMedia$messageMediaDocument *result = [[TLMessageMedia$messageMediaDocument alloc] init];
     
     int32_t flags = [is readInt32];
-    bool isLayer181MediaDocument = signature == (int32_t)0x4cf4d72d;
     result.flags = flags;
+    bool layer181 = signature == (int32_t)0x4cf4d72d;
+    bool layer189 = signature == (int32_t)0x52d8ccd9;
     
     if (flags & (1 << 0)) {
-        int32_t signature = [is readInt32];
-        result.document = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-        if (error != nil && *error != nil)
+        result.document = OGCompatReadNextObject(is, environment, error);
+        if (OGCompatFailed(error))
             return nil;
     }
     
@@ -37,27 +48,24 @@
         [is readString];
     }
     
-    if (isLayer181MediaDocument && (flags & (1 << 5))) {
-        int32_t signature = [is readInt32];
-        id document = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-        if (error != nil && *error != nil)
+    if (layer181 && (flags & (1 << 5))) {
+        id document = OGCompatReadNextObject(is, environment, error);
+        if (OGCompatFailed(error))
             return nil;
         if (document != nil)
             result.alt_documents = @[document];
     }
     
-    if (signature == (int32_t)0x52d8ccd9 && (flags & (1 << 5))) {
-        int32_t vectorSignature = [is readInt32];
-        if (vectorSignature != (int32_t)0x1cb5c415)
+    if (layer189 && (flags & (1 << 5))) {
+        if ([is readInt32] != (int32_t)0x1cb5c415)
             return nil;
         int32_t count = [is readInt32];
         if (count < 0)
             return nil;
         NSMutableArray *documents = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
         for (int32_t i = 0; i < count; i++) {
-            int32_t documentSignature = [is readInt32];
-            id document = TLMetaClassStore::constructObject(is, documentSignature, environment, nil, error);
-            if (error != nil && *error != nil)
+            id document = OGCompatReadNextObject(is, environment, error);
+            if (OGCompatFailed(error))
                 return nil;
             if (document != nil)
                 [documents addObject:document];
@@ -65,14 +73,13 @@
         result.alt_documents = documents;
     }
     
-    if (signature == (int32_t)0x52d8ccd9 && (flags & (1 << 9))) {
-        int32_t signature = [is readInt32];
-        TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-        if (error != nil && *error != nil)
+    if (layer189 && (flags & (1 << 9))) {
+        OGCompatReadNextObject(is, environment, error);
+        if (OGCompatFailed(error))
             return nil;
     }
     
-    if (signature == (int32_t)0x52d8ccd9 && (flags & (1 << 10))) {
+    if (layer189 && (flags & (1 << 10))) {
         [is readInt32];
     }
     

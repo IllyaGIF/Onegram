@@ -213,7 +213,7 @@ static UIColor *shadowColorForButton(int type)
     UIImage *_image;
     UIImage *_imageLandscape;
     UIImage *_imageHighlighted;
-    UIButton *_nativeClassicButton;
+    UIButton *_classicButton;
 }
 
 @property (nonatomic) bool landscapeInitialized;
@@ -294,7 +294,7 @@ static UIColor *shadowColorForButton(int type)
         self.text = @"";
         self.image = nil;
         
-        [self setupNativeClassicButtonIfNeeded];
+        [self installClassicButtonIfNeeded];
 
         _landscapeOffset = 0;
         
@@ -341,7 +341,7 @@ static UIColor *shadowColorForButton(int type)
         self.text = @"";
         self.image = nil;
         
-        [self setupNativeClassicButtonIfNeeded];
+        [self installClassicButtonIfNeeded];
 
         _landscapeOffset = 0;
         
@@ -359,22 +359,23 @@ static UIColor *shadowColorForButton(int type)
     return self;
 }
 
-- (void)setupNativeClassicButtonIfNeeded
+- (void)installClassicButtonIfNeeded
 {
-    if (!(TGCurrentInterfaceStyle() != 0) || _nativeClassicButton != nil)
+    if (_classicButton != nil || TGCurrentInterfaceStyle() == 0)
         return;
 
-    _nativeClassicButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    _nativeClassicButton.titleLabel.font = [UIFont boldSystemFontOfSize:12.0f];
-    [_nativeClassicButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [_nativeClassicButton setTitleColor:[[UIColor whiteColor] colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
-    [_nativeClassicButton addTarget:self action:@selector(nativeClassicButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [_nativeClassicButton setTitle:_text forState:UIControlStateNormal];
-    [_nativeClassicButton setImage:_image forState:UIControlStateNormal];
-    [self addSubview:_nativeClassicButton];
+    _classicButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    _classicButton.titleLabel.font = [UIFont boldSystemFontOfSize:12.0f];
+    [_classicButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_classicButton setTitleColor:[UIColor colorWithWhite:1.0f alpha:0.55f] forState:UIControlStateHighlighted];
+    [_classicButton setTitle:_text forState:UIControlStateNormal];
+    [_classicButton setImage:_image forState:UIControlStateNormal];
+    _classicButton.enabled = self.enabled;
+    [_classicButton addTarget:self action:@selector(classicButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_classicButton];
 }
 
-- (void)nativeClassicButtonPressed
+- (void)classicButtonTapped
 {
     [self sendActionsForControlEvents:UIControlEventTouchUpInside];
 }
@@ -386,15 +387,12 @@ static UIColor *shadowColorForButton(int type)
 
 - (void)updateBackground
 {
-    if ((TGCurrentInterfaceStyle() != 0) && _nativeClassicButton == nil)
-        [self setupNativeClassicButtonIfNeeded];
-
-    if (_nativeClassicButton != nil)
+    [self installClassicButtonIfNeeded];
+    if (_classicButton != nil)
     {
-        [self setBackgroundImage:nil forState:UIControlStateNormal];
-        [self setBackgroundImage:nil forState:UIControlStateHighlighted];
-        [self setBackgroundImage:nil forState:UIControlStateHighlighted | UIControlStateSelected];
-        [self setBackgroundImage:nil forState:UIControlStateSelected];
+        static const UIControlState backgroundStates[] = { UIControlStateNormal, UIControlStateHighlighted, UIControlStateHighlighted | UIControlStateSelected, UIControlStateSelected };
+        for (size_t i = 0; i < sizeof(backgroundStates) / sizeof(backgroundStates[0]); i++)
+            [self setBackgroundImage:nil forState:backgroundStates[i]];
         return;
     }
     UIImage *background = nil;
@@ -446,14 +444,9 @@ static UIColor *shadowColorForButton(int type)
 - (void)setText:(NSString *)text
 {
     _text = text;
+    [_classicButton setTitle:text forState:UIControlStateNormal];
     
-    if (_nativeClassicButton != nil)
-    {
-        [_nativeClassicButton setTitle:text forState:UIControlStateNormal];
-        [_nativeClassicButton setTitle:text forState:UIControlStateHighlighted];
-        _buttonLabelView.hidden = true;
-    }
-    else if (text == nil)
+    if (_classicButton != nil || text == nil)
     {
         _buttonLabelView.text = @"";
         _buttonLabelView.hidden = true;
@@ -473,13 +466,9 @@ static UIColor *shadowColorForButton(int type)
 - (void)setImage:(UIImage *)image
 {
     _image = image;
+    [_classicButton setImage:image forState:UIControlStateNormal];
     
-    if (_nativeClassicButton != nil)
-    {
-        [_nativeClassicButton setImage:image forState:UIControlStateNormal];
-        _buttonImageView.hidden = true;
-    }
-    else if (image == nil)
+    if (_classicButton != nil || image == nil)
     {
         _buttonImageView.image = nil;
         _buttonImageView.hidden = true;
@@ -567,10 +556,11 @@ static UIColor *shadowColorForButton(int type)
 
 - (void)sizeToFit
 {
-    if (_nativeClassicButton != nil)
+    if (_classicButton != nil)
     {
-        CGSize size = [_nativeClassicButton sizeThatFits:CGSizeMake(CGFLOAT_MAX, _isLandscape ? 25.0f : 30.0f)];
-        self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, MAX((CGFloat)_minWidth, size.width), _isLandscape ? 25.0f : 30.0f);
+        CGFloat classicHeight = _isLandscape ? 25.0f : 30.0f;
+        CGFloat classicWidth = MAX((CGFloat)_minWidth, [_classicButton sizeThatFits:CGSizeMake(CGFLOAT_MAX, classicHeight)].width);
+        self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, classicWidth, classicHeight);
         return;
     }
     float width = _paddingLeft + _paddingRight;
@@ -601,9 +591,9 @@ static UIColor *shadowColorForButton(int type)
     [super layoutSubviews];
     
     CGRect bounds = self.bounds;
-    if (_nativeClassicButton != nil)
+    if (_classicButton != nil)
     {
-        _nativeClassicButton.frame = bounds;
+        _classicButton.frame = bounds;
         return;
     }
     
@@ -660,7 +650,7 @@ static UIColor *shadowColorForButton(int type)
 - (void)setEnabled:(BOOL)enabled
 {
     _buttonLabelView.alpha = !enabled ? 0.6f : 1.0f;
-    _nativeClassicButton.enabled = enabled;
+    _classicButton.enabled = enabled;
     
     [super setEnabled:enabled];
 }
@@ -701,7 +691,7 @@ static UIColor *shadowColorForButton(int type)
         return nil;
     
     if (CGRectContainsPoint(CGRectInset(self.bounds, -_touchInset.width, -_touchInset.height), point))
-        return _nativeClassicButton != nil ? _nativeClassicButton : self;
+        return _classicButton ?: self;
     return nil;
 }
 

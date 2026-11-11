@@ -546,7 +546,7 @@
 
 @end
 
-@interface TLCodexFolderPeer : NSObject <TLObject>
+@interface TLFolderPeerEntry : NSObject <TLObject>
 
 @property (nonatomic, retain) TLPeer *peer;
 @property (nonatomic) int32_t folder_id;
@@ -571,7 +571,7 @@
 
 @end
 
-@interface TLUpdate$updateMessageReactionsCodex : TLUpdate
+@interface TLUpdate$updateMessageReactionsSummary : TLUpdate
 
 @property (nonatomic, retain) TLPeer *peer;
 @property (nonatomic) int32_t msg_id;

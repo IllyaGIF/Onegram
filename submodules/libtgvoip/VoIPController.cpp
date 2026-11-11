@@ -1034,9 +1034,9 @@ void VoIPController::ProcessIncomingPacket(NetworkPacket &packet, std::tr1::shar
 	if(useMTProto2 || retryWith2){
 		in.Seek(16); // peer tag
 
-		bool shortFormat = peerVersion >= 8 || (!peerVersion && connectionMaxLayer >= 92);
+		bool compactHeader = peerVersion >= 8 || (!peerVersion && connectionMaxLayer >= 92);
 		unsigned char fingerprint[8], msgKey[16];
-		if(!shortFormat){
+		if(!compactHeader){
 			in.ReadBytes(fingerprint, 8);
 			if(memcmp(fingerprint, keyFingerprint, 8)!=0){
 				LOGW("VOIP recv.drop.wrongFingerprint.v2 endpoint=%lld state=%d got=%02X%02X%02X%02X expected=%02X%02X%02X%02X", (long long)srcEndpoint->id, (int)state, fingerprint[0], fingerprint[1], fingerprint[2], fingerprint[3], keyFingerprint[0], keyFingerprint[1], keyFingerprint[2], keyFingerprint[3]);
@@ -1065,11 +1065,11 @@ void VoIPController::ProcessIncomingPacket(NetworkPacket &packet, std::tr1::shar
 		in=BufferInputStream(decrypted, decryptedLen);
 		//LOGD("received packet length: %d", in.ReadInt32());
 
-		size_t sizeSize = shortFormat ? 0 : 4;
+		size_t lenPrefixBytes = compactHeader ? 0 : 4;
 		BufferOutputStream buf(decryptedLen+32);
 		size_t x=isOutgoing ? 8 : 0;
 		buf.WriteBytes(encryptionKey+88+x, 32);
-		buf.WriteBytes(decrypted+sizeSize, decryptedLen-sizeSize);
+		buf.WriteBytes(decrypted+lenPrefixBytes, decryptedLen-lenPrefixBytes);
 		unsigned char msgKeyLarge[32];
 		crypto.sha256(buf.GetBuffer(), buf.GetLength(), msgKeyLarge);
 
@@ -1078,16 +1078,16 @@ void VoIPController::ProcessIncomingPacket(NetworkPacket &packet, std::tr1::shar
 			return;
 		}
 
-		uint32_t innerLen = shortFormat ? (uint32_t)in.ReadInt16() : (uint32_t)in.ReadInt32();
-		if(innerLen > decryptedLen - sizeSize){
+		uint32_t innerLen = compactHeader ? (uint32_t)in.ReadInt16() : (uint32_t)in.ReadInt32();
+		if(innerLen > decryptedLen - lenPrefixBytes){
 			LOGW("Received packet has wrong inner length (%d with total of %u)", (int)innerLen, (unsigned int)decryptedLen);
 			return;
 		}
-		if(decryptedLen - innerLen < (shortFormat ? 16 : 12)){
+		if(decryptedLen - innerLen < (compactHeader ? 16 : 12)){
 			LOGW("Received packet has too little padding (%u)", (unsigned int)(decryptedLen-innerLen));
 			return;
 		}
-		memcpy(buffer, decrypted + (shortFormat ? 2 : 4), innerLen);
+		memcpy(buffer, decrypted + (compactHeader ? 2 : 4), innerLen);
 		in=BufferInputStream(buffer, (size_t) innerLen);
 		if(retryWith2){
 			LOGD("Successfully decrypted packet in MTProto2.0 fallback, upgrading");
@@ -2136,18 +2136,18 @@ void VoIPController::SendPacket(unsigned char *data, size_t len, std::tr1::share
 	if(len>0){
 		if(useMTProto2){
 			BufferOutputStream inner(len+128);
-			bool shortFormat = peerVersion >= 8 || (!peerVersion && connectionMaxLayer >= 92);
-			size_t sizeSize = 4;
-			if(shortFormat){
+			bool compactHeader = peerVersion >= 8 || (!peerVersion && connectionMaxLayer >= 92);
+			size_t lenPrefixBytes = 4;
+			if(compactHeader){
 				inner.WriteInt16((uint16_t)len);
-				sizeSize = 0;
+				lenPrefixBytes = 0;
 			}else{
 				inner.WriteInt32((uint32_t)len);
 				out.WriteBytes(keyFingerprint, 8);
 			}
 			inner.WriteBytes(data, len);
 			size_t padLen=16-inner.GetLength()%16;
-			if(padLen < (shortFormat ? 16 : 12))
+			if(padLen < (compactHeader ? 16 : 12))
 				padLen+=16;
 			unsigned char padding[32];
 			crypto.rand_bytes((uint8_t *) padding, padLen);
@@ -2158,7 +2158,7 @@ void VoIPController::SendPacket(unsigned char *data, size_t len, std::tr1::share
 			BufferOutputStream buf(len+32);
 			size_t x=isOutgoing ? 0 : 8;
 			buf.WriteBytes(encryptionKey+88+x, 32);
-			buf.WriteBytes(inner.GetBuffer()+sizeSize, inner.GetLength()-sizeSize);
+			buf.WriteBytes(inner.GetBuffer()+lenPrefixBytes, inner.GetLength()-lenPrefixBytes);
 			unsigned char msgKeyLarge[32];
 			crypto.sha256(buf.GetBuffer(), buf.GetLength(), msgKeyLarge);
 			memcpy(msgKey, msgKeyLarge+8, 16);
@@ -2199,9 +2199,10 @@ void VoIPController::SendPacket(unsigned char *data, size_t len, std::tr1::share
 	pkt.data=out.GetBuffer();
 	pkt.protocol=ep->type==Endpoint::TYPE_TCP_RELAY ? PROTO_TCP : PROTO_UDP;
 	if(srcPacket.type==PKT_INIT || state==STATE_WAIT_INIT_ACK){
-		const unsigned char *expectedPrefix = (ep->type==Endpoint::TYPE_UDP_RELAY || ep->type==Endpoint::TYPE_TCP_RELAY) ? (const unsigned char *)ep->peerTag : (const unsigned char *)callID;
-		bool prefixMatches = pkt.length >= 16 && memcmp(pkt.data, expectedPrefix, 16) == 0;
-		LOGI("VOIP send.packet type=%u seq=%u endpoint=%lld relayType=%d addr=%s port=%u payload=%u encrypted=%u mtproto2=%d prefixMatch=%d prefix=%02X%02X%02X%02X expected=%02X%02X%02X%02X", (unsigned int)srcPacket.type, (unsigned int)srcPacket.seq, (long long)ep->id, (int)ep->type, ep->GetAddress().ToString().c_str(), (unsigned int)ep->port, (unsigned int)len, (unsigned int)pkt.length, (int)useMTProto2, prefixMatches ? 1 : 0, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3], expectedPrefix[0], expectedPrefix[1], expectedPrefix[2], expectedPrefix[3]);
+		bool viaRelay=ep->type==Endpoint::TYPE_UDP_RELAY || ep->type==Endpoint::TYPE_TCP_RELAY;
+		const unsigned char *wantedHead=viaRelay ? (const unsigned char *)ep->peerTag : (const unsigned char *)callID;
+		int headOk=(pkt.length>=16 && memcmp(pkt.data, wantedHead, 16)==0) ? 1 : 0;
+		LOGI("VOIP send.packet type=%u seq=%u endpoint=%lld relayType=%d addr=%s port=%u payload=%u encrypted=%u mtproto2=%d prefixMatch=%d prefix=%02X%02X%02X%02X expected=%02X%02X%02X%02X", (unsigned int)srcPacket.type, (unsigned int)srcPacket.seq, (long long)ep->id, (int)ep->type, ep->GetAddress().ToString().c_str(), (unsigned int)ep->port, (unsigned int)len, (unsigned int)pkt.length, (int)useMTProto2, headOk, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3], wantedHead[0], wantedHead[1], wantedHead[2], wantedHead[3]);
 	}
 	ActuallySendPacket(pkt, ep);
 }

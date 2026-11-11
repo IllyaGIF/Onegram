@@ -85,7 +85,7 @@ NSString *const STPIncorrectCVC = @"com.stripe.lib:IncorrectCVC";
     return [[self alloc] initWithDomain:StripeDomain code:code userInfo:userInfo];
 }
 
-+ (NSError *)stp_genericFailedToParseResponseError {
++ (NSError *_Nonnull)stp_genericFailedToParseResponseError {
     NSDictionary *userInfo = @{
                                NSLocalizedDescriptionKey: [self stp_unexpectedErrorMessage],
                                STPErrorMessageKey: @"The response from Stripe failed to get parsed into valid JSON."
@@ -103,35 +103,35 @@ NSString *const STPIncorrectCVC = @"com.stripe.lib:IncorrectCVC";
 
 #pragma mark Strings
 
-+ (NSString *)stp_cardErrorInvalidNumberUserMessage {
++ (NSString *_Nonnull)stp_cardErrorInvalidNumberUserMessage {
     return STPLocalizedString(@"Your_cards_number_is_invalid", @"Error when the card number is not valid");
 }
 
-+ (NSString *)stp_cardInvalidCVCUserMessage {
++ (NSString *_Nonnull)stp_cardInvalidCVCUserMessage {
     return STPLocalizedString(@"Your_cards_security_code_is_invalid", @"Error when the card's CVC is not valid");
 }
 
-+ (NSString *)stp_cardErrorInvalidExpMonthUserMessage {
++ (NSString *_Nonnull)stp_cardErrorInvalidExpMonthUserMessage {
     return STPLocalizedString(@"Your_cards_expiration_month_is_invalid", @"Error when the card's expiration month is not valid");
 }
 
-+ (NSString *)stp_cardErrorInvalidExpYearUserMessage {
++ (NSString *_Nonnull)stp_cardErrorInvalidExpYearUserMessage {
     return STPLocalizedString(@"Your_cards_expiration_year_is_invalid", @"Error when the card's expiration year is not valid");
 }
 
-+ (NSString *)stp_cardErrorExpiredCardUserMessage {
++ (NSString *_Nonnull)stp_cardErrorExpiredCardUserMessage {
     return STPLocalizedString(@"Your_card_has_expired", @"Error when the card has already expired");
 }
 
-+ (NSString *)stp_cardErrorDeclinedUserMessage {
++ (NSString *_Nonnull)stp_cardErrorDeclinedUserMessage {
     return STPLocalizedString(@"Your_card_was_declined", @"Error when the card was declined by the credit card networks");
 }
 
-+ (NSString *)stp_unexpectedErrorMessage {
++ (NSString *_Nonnull)stp_unexpectedErrorMessage {
     return STPLocalizedString(@"There was an unexpected error -- try again in a few seconds", @"Unexpected error, such as a 500 from Stripe or a JSON parse error");
 }
 
-+ (NSString *)stp_cardErrorProcessingErrorUserMessage {
++ (NSString *_Nonnull)stp_cardErrorProcessingErrorUserMessage {
     return STPLocalizedString(@"There was an error processing your card -- try again in a few seconds", @"Error when there is a problem processing the credit card");
 }
 

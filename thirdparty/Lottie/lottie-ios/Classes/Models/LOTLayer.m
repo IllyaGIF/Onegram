@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTLayer.m
 //  LottieAnimator
@@ -34,33 +34,33 @@
       withAssetGroup:(LOTAssetGroup *)assetGroup
        withFramerate:(NSNumber *)framerate {
 
-  _layerName = [[jsonDictionary objectForKey:@2] copy];
-  _layerID = [[jsonDictionary objectForKey:@2] copy];
+  _layerName = [jsonDictionary[@"nm"] copy];
+  _layerID = [jsonDictionary[@"ind"] copy];
   
-  NSNumber *layerType = [jsonDictionary objectForKey:@2];
+  NSNumber *layerType = jsonDictionary[@"ty"];
   _layerType = layerType.integerValue;
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _referenceID = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"refId"]) {
+    _referenceID = [jsonDictionary[@"refId"] copy];
   }
   
-  _parentID = [[jsonDictionary objectForKey:@2] copy];
+  _parentID = [jsonDictionary[@"parent"] copy];
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _startFrame = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"st"]) {
+    _startFrame = [jsonDictionary[@"st"] copy];
   }
-  _inFrame = [[jsonDictionary objectForKey:@2] copy];
-  _outFrame = [[jsonDictionary objectForKey:@2] copy];
+  _inFrame = [jsonDictionary[@"ip"] copy];
+  _outFrame = [jsonDictionary[@"op"] copy];
 
-  if ([jsonDictionary objectForKey:@2]) {
-    _timeStretch = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"sr"]) {
+    _timeStretch = [jsonDictionary[@"sr"] copy];
   } else {
     _timeStretch = @1;
   }
 
   if (_layerType == LOTLayerTypePrecomp) {
-    _layerHeight = [[jsonDictionary objectForKey:@2] copy];
-    _layerWidth = [[jsonDictionary objectForKey:@2] copy];
+    _layerHeight = [jsonDictionary[@"h"] copy];
+    _layerWidth = [jsonDictionary[@"w"] copy];
     [assetGroup buildAssetNamed:_referenceID withFramerate:framerate];
   } else if (_layerType == LOTLayerTypeImage) {
     [assetGroup buildAssetNamed:_referenceID withFramerate:framerate];
@@ -68,15 +68,15 @@
     _layerWidth = [_imageAsset.assetWidth copy];
     _layerHeight = [_imageAsset.assetHeight copy];
   } else if (_layerType == LOTLayerTypeSolid) {
-    _layerWidth = [jsonDictionary objectForKey:@2];
-    _layerHeight = [jsonDictionary objectForKey:@2];
-    NSString *solidColor = [jsonDictionary objectForKey:@2];
+    _layerWidth = jsonDictionary[@"sw"];
+    _layerHeight = jsonDictionary[@"sh"];
+    NSString *solidColor = jsonDictionary[@"sc"];
     _solidColor = [UIColor LOT_colorWithHexString:solidColor];
   }
   
   _layerBounds = CGRectMake(0, 0, _layerWidth.floatValue, _layerHeight.floatValue);
   
-  NSDictionary *ks = [jsonDictionary objectForKey:@2];
+  NSDictionary *ks = jsonDictionary[@"ks"];
   
   NSDictionary *opacity = ks[@"o"];
   if (opacity) {
@@ -86,7 +86,7 @@
     }];
   }
 
-  NSDictionary *timeRemap = [jsonDictionary objectForKey:@2];
+  NSDictionary *timeRemap = jsonDictionary[@"tm"];
   if (timeRemap) {
     _timeRemapping = [[LOTKeyframeGroup alloc] initWithData:timeRemap];
     [_timeRemapping remapKeyframesWithBlock:^CGFloat(CGFloat inValue) {
@@ -127,18 +127,18 @@
     }];
   }
   
-  _matteType = [[jsonDictionary objectForKey:@2] integerValue];
+  _matteType = [jsonDictionary[@"tt"] integerValue];
   
   
   NSMutableArray *masks = [NSMutableArray array];
-  for (NSDictionary *maskJSON in [jsonDictionary objectForKey:@2]) {
+  for (NSDictionary *maskJSON in jsonDictionary[@"masksProperties"]) {
     LOTMask *mask = [[LOTMask alloc] initWithJSON:maskJSON];
     [masks addObject:mask];
   }
   _masks = masks.count ? masks : nil;
   
   NSMutableArray *shapes = [NSMutableArray array];
-  for (NSDictionary *shapeJSON in [jsonDictionary objectForKey:@2]) {
+  for (NSDictionary *shapeJSON in jsonDictionary[@"shapes"]) {
     id shapeItem = [LOTShapeGroup shapeItemWithJSON:shapeJSON];
     if (shapeItem) {
       [shapes addObject:shapeItem];
@@ -146,7 +146,7 @@
   }
   _shapes = shapes;
     
-  NSArray *effects = [jsonDictionary objectForKey:@2];
+  NSArray *effects = jsonDictionary[@"ef"];
   if (effects.count > 0) {
     
     NSDictionary *effectNames = @{ @0: @"slider",

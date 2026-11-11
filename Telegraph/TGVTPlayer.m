@@ -6,38 +6,30 @@
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
 #import <VideoToolbox/VideoToolbox.h>
 #else
+#define OG_COMPAT_VT_UNSUPPORTED ((OSStatus)-1)
 typedef void *VTDecompressionSessionRef;
-typedef uint32_t VTDecodeInfoFlags;
 typedef uint32_t VTDecodeFrameFlags;
+typedef uint32_t VTDecodeInfoFlags;
 typedef void (*VTDecompressionOutputCallback)(void *, void *, OSStatus, VTDecodeInfoFlags, CVImageBufferRef, CMTime, CMTime);
 typedef struct {
     VTDecompressionOutputCallback decompressionOutputCallback;
     void *decompressionOutputRefCon;
 } VTDecompressionOutputCallbackRecord;
-static inline OSStatus VTDecompressionSessionCreate(CFAllocatorRef allocator, CMVideoFormatDescriptionRef videoFormatDescription, CFDictionaryRef videoDecoderSpecification, CFDictionaryRef destinationImageBufferAttributes, const VTDecompressionOutputCallbackRecord *outputCallback, VTDecompressionSessionRef *decompressionSessionOut)
+static inline OSStatus VTDecompressionSessionCreate(__unused CFAllocatorRef allocator, __unused CMVideoFormatDescriptionRef videoFormatDescription, __unused CFDictionaryRef videoDecoderSpecification, __unused CFDictionaryRef destinationImageBufferAttributes, __unused const VTDecompressionOutputCallbackRecord *outputCallback, VTDecompressionSessionRef *decompressionSessionOut)
 {
-    (void)allocator;
-    (void)videoFormatDescription;
-    (void)videoDecoderSpecification;
-    (void)destinationImageBufferAttributes;
-    (void)outputCallback;
     if (decompressionSessionOut != NULL)
         *decompressionSessionOut = NULL;
-    return -1;
+    return OG_COMPAT_VT_UNSUPPORTED;
 }
-static inline void VTDecompressionSessionInvalidate(VTDecompressionSessionRef session) { (void)session; }
-static inline OSStatus VTDecompressionSessionDecodeFrame(VTDecompressionSessionRef session, CMSampleBufferRef sampleBuffer, VTDecodeFrameFlags decodeFlags, void *sourceFrameRefCon, VTDecodeInfoFlags *infoFlagsOut)
+static inline OSStatus VTDecompressionSessionDecodeFrame(__unused VTDecompressionSessionRef session, __unused CMSampleBufferRef sampleBuffer, __unused VTDecodeFrameFlags decodeFlags, __unused void *sourceFrameRefCon, VTDecodeInfoFlags *infoFlagsOut)
 {
-    (void)session;
-    (void)sampleBuffer;
-    (void)decodeFlags;
-    (void)sourceFrameRefCon;
     if (infoFlagsOut != NULL)
         *infoFlagsOut = 0;
-    return -1;
+    return OG_COMPAT_VT_UNSUPPORTED;
 }
-static inline void VTDecompressionSessionFinishDelayedFrames(VTDecompressionSessionRef session) { (void)session; }
-static inline void VTDecompressionSessionWaitForAsynchronousFrames(VTDecompressionSessionRef session) { (void)session; }
+static inline void VTDecompressionSessionInvalidate(__unused VTDecompressionSessionRef session) {}
+static inline void VTDecompressionSessionFinishDelayedFrames(__unused VTDecompressionSessionRef session) {}
+static inline void VTDecompressionSessionWaitForAsynchronousFrames(__unused VTDecompressionSessionRef session) {}
 #endif
 #import <libkern/OSAtomic.h>
 
@@ -167,8 +159,7 @@ static int32_t nextSessionId = 0;
             NSArray *formatDescriptions = videoTrack.formatDescriptions;
             CMVideoFormatDescriptionRef formatDescription = (__bridge CMVideoFormatDescriptionRef)formatDescriptions.firstObject;
             VTDecompressionOutputCallbackRecord callbackRecord = {&TGVTPlayerDecompressionOutputCallback, (void *)(intptr_t)_sessionId};
-            NSDictionary *imageOutputDescription = nil;
-            VTDecompressionSessionCreate(kCFAllocatorDefault, formatDescription, NULL, (__bridge CFDictionaryRef)imageOutputDescription, &callbackRecord, &_decompressionSession);
+            VTDecompressionSessionCreate(kCFAllocatorDefault, formatDescription, NULL, NULL, &callbackRecord, &_decompressionSession);
             if (_decompressionSession == NULL) {
                 return;
             }

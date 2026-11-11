@@ -14,6 +14,31 @@
 
 NSString *TGMentionUidAttributeName = @"TGMentionUidAttributeName";
 NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
+NSString *TGCustomEmojiAttributeName = @"TGCustomEmojiAttributeName";
+
+@interface TGInputCustomEmoji : NSObject
+
+@property (nonatomic, readonly) int64_t documentId;
+@property (nonatomic, strong, readonly) NSString *alt;
+
+- (instancetype)initWithDocumentId:(int64_t)documentId alt:(NSString *)alt;
+
+@end
+
+@implementation TGInputCustomEmoji
+
+- (instancetype)initWithDocumentId:(int64_t)documentId alt:(NSString *)alt
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _documentId = documentId;
+        _alt = [alt copy];
+    }
+    return self;
+}
+
+@end
 
 @implementation TGAttributedTextRange
 
@@ -760,6 +785,56 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 #endif
 }
 
+- (void)insertCustomEmojiWithDocumentId:(int64_t)documentId alt:(NSString *)alt image:(UIImage *)image
+{
+    if (alt.length == 0)
+        return;
+    
+    NSRange selectedRange = _internalTextView.selectedRange;
+    if (iosMajorVersion() < 6)
+    {
+        NSMutableString *text = [NSMutableString stringWithString:self.text == nil ? @"" : self.text];
+        if (selectedRange.location > text.length)
+            selectedRange = NSMakeRange(text.length, 0);
+        if (NSMaxRange(selectedRange) > text.length)
+            selectedRange.length = text.length - selectedRange.location;
+        [text replaceCharactersInRange:selectedRange withString:alt];
+        [self setText:text];
+        [self selectRange:NSMakeRange(selectedRange.location + alt.length, 0) force:true];
+        return;
+    }
+    
+    NSMutableAttributedString *text = _internalTextView.attributedText == nil ? [[NSMutableAttributedString alloc] init] : [[NSMutableAttributedString alloc] initWithAttributedString:_internalTextView.attributedText];
+    if (selectedRange.location > text.length)
+        selectedRange = NSMakeRange(text.length, 0);
+    if (NSMaxRange(selectedRange) > text.length)
+        selectedRange.length = text.length - selectedRange.location;
+    
+    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] initWithDictionary:[self defaultAttributes] ?: @{}];
+    attributes[TGCustomEmojiAttributeName] = [[TGInputCustomEmoji alloc] initWithDocumentId:documentId alt:alt];
+    
+    NSAttributedString *insertion = nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    Class attachmentClass = iosMajorVersion() >= 7 && image != nil ? NSClassFromString(@"NSTextAttachment") : nil;
+    if (attachmentClass != nil)
+    {
+        UIFont *font = _intrinsicTextFont ?: TGSystemFontOfSize(17.0f);
+        CGFloat side = CGFloor(font.lineHeight * 1.05f);
+        NSTextAttachment *attachment = [[attachmentClass alloc] init];
+        attachment.image = image;
+        attachment.bounds = CGRectMake(0.0f, CGFloor(font.descender), side, side);
+        attributes[NSAttachmentAttributeName] = attachment;
+        insertion = [[NSAttributedString alloc] initWithString:@"\uFFFC" attributes:attributes];
+    }
+#endif
+    if (insertion == nil)
+        insertion = [[NSAttributedString alloc] initWithString:alt attributes:attributes];
+    
+    [text replaceCharactersInRange:selectedRange withAttributedString:insertion];
+    [self setAttributedText:text keepFormatting:true animated:true];
+    [self selectRange:NSMakeRange(selectedRange.location + insertion.length, 0) force:true];
+}
+
 - (NSString *)textWithEntities:(__autoreleasing NSArray **)entities
 {
     if (iosMajorVersion() < 6)
@@ -770,7 +845,44 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
         return self.text == nil ? @"" : self.text;
     }
     
-    NSAttributedString *string = self.attributedText;
+    NSAttributedString *sourceString = self.attributedText;
+    NSMutableAttributedString *expandedString = [[NSMutableAttributedString alloc] initWithAttributedString:sourceString ?: [[NSAttributedString alloc] init]];
+    NSMutableArray *customEmojiEntities = [[NSMutableArray alloc] init];
+    __block NSMutableArray *customEmojiRanges = [[NSMutableArray alloc] init];
+    [sourceString enumerateAttribute:TGCustomEmojiAttributeName inRange:NSMakeRange(0, sourceString.length) options:0 usingBlock:^(id value, NSRange range, __unused BOOL *stop)
+    {
+        if ([value isKindOfClass:[TGInputCustomEmoji class]])
+            [customEmojiRanges addObject:@[[NSValue valueWithRange:range], value]];
+    }];
+    for (NSInteger index = (NSInteger)customEmojiRanges.count - 1; index >= 0; index--)
+    {
+        NSRange range = [customEmojiRanges[index][0] rangeValue];
+        TGInputCustomEmoji *emoji = customEmojiRanges[index][1];
+        NSString *substring = [sourceString.string substringWithRange:range];
+        if ([substring rangeOfString:@"\uFFFC"].location == NSNotFound)
+        {
+            if ([substring hasPrefix:emoji.alt])
+                [customEmojiEntities insertObject:[[TGMessageEntityCustomEmoji alloc] initWithRange:NSMakeRange(range.location, emoji.alt.length) documentId:emoji.documentId] atIndex:0];
+            continue;
+        }
+        for (NSInteger i = (NSInteger)range.length - 1; i >= 0; i--)
+        {
+            NSUInteger location = range.location + (NSUInteger)i;
+            if ([sourceString.string characterAtIndex:location] != 0xFFFC)
+                continue;
+            NSMutableDictionary *textAttributes = [[NSMutableDictionary alloc] initWithDictionary:[expandedString attributesAtIndex:location effectiveRange:NULL] ?: @{}];
+            [textAttributes removeObjectForKey:NSAttachmentAttributeName];
+            [expandedString replaceCharactersInRange:NSMakeRange(location, 1) withAttributedString:[[NSAttributedString alloc] initWithString:emoji.alt attributes:textAttributes]];
+            NSUInteger delta = emoji.alt.length - 1;
+            NSMutableArray *shifted = [[NSMutableArray alloc] initWithCapacity:customEmojiEntities.count + 1];
+            [shifted addObject:[[TGMessageEntityCustomEmoji alloc] initWithRange:NSMakeRange(location, emoji.alt.length) documentId:emoji.documentId]];
+            for (TGMessageEntityCustomEmoji *entity in customEmojiEntities)
+                [shifted addObject:[[TGMessageEntityCustomEmoji alloc] initWithRange:NSMakeRange(entity.range.location + delta, entity.range.length) documentId:entity.documentId]];
+            [customEmojiEntities setArray:shifted];
+        }
+    }
+    
+    NSAttributedString *string = expandedString;
     
     NSMutableArray *result = [[NSMutableArray alloc] init];
     
@@ -806,6 +918,8 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
              }
          }];
     }
+    
+    [result addObjectsFromArray:customEmojiEntities];
     
     if (entities != NULL)
         *entities = result;

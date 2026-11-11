@@ -5,7 +5,58 @@
 
 #import "TL/TLMetaScheme.h"
 
-@interface CloudFileMediaResourceId : NSObject <MediaResourceId>
+static NSData *OGCompatEffectiveFileReference(TGMediaOriginInfo *originInfo, NSData *storedReference)
+{
+    NSData *originReference = [originInfo fileReference];
+    return originReference.length != 0 ? originReference : (storedReference ?: [NSData data]);
+}
+
+@interface OGCompatResourceIdBase : NSObject <NSCopying>
+
+@end
+
+@implementation OGCompatResourceIdBase
+
+- (instancetype)copyWithZone:(NSZone *)__unused zone {
+    return self;
+}
+
+@end
+
+@interface OGCompatThumbResourceId : OGCompatResourceIdBase
+
+@property (nonatomic, readonly) int64_t mediaId;
+@property (nonatomic, strong, readonly) NSString *sizeTag;
+
+- (instancetype)initWithMediaId:(int64_t)mediaId sizeTag:(NSString *)sizeTag;
+
+@end
+
+@implementation OGCompatThumbResourceId
+
+- (instancetype)initWithMediaId:(int64_t)mediaId sizeTag:(NSString *)sizeTag {
+    self = [super init];
+    if (self != nil) {
+        _sizeTag = sizeTag;
+        _mediaId = mediaId;
+    }
+    return self;
+}
+
+- (NSUInteger)hash {
+    return _sizeTag.hash ^ _mediaId;
+}
+
+- (BOOL)isEqual:(id)object {
+    if (![object isMemberOfClass:[self class]])
+        return NO;
+    OGCompatThumbResourceId *other = object;
+    return TGObjectCompare(_sizeTag, other->_sizeTag) && _mediaId == other->_mediaId;
+}
+
+@end
+
+@interface CloudFileMediaResourceId : OGCompatResourceIdBase <MediaResourceId>
 
 @property (nonatomic, readonly) int32_t datacenterId;
 @property (nonatomic, readonly) int64_t volumeId;
@@ -32,15 +83,14 @@
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudFileMediaResourceId class]] && _datacenterId == ((CloudFileMediaResourceId *)object)->_datacenterId && _volumeId == ((CloudFileMediaResourceId *)object)->_volumeId && _localId == ((CloudFileMediaResourceId *)object)->_localId && _secret == ((CloudFileMediaResourceId *)object)->_secret;
+    if (![object isKindOfClass:[CloudFileMediaResourceId class]])
+        return NO;
+    CloudFileMediaResourceId *other = object;
+    return _datacenterId == other->_datacenterId && _volumeId == other->_volumeId && _localId == other->_localId && _secret == other->_secret;
 }
 
 - (NSString *)uniqueId {
     return [[NSString alloc] initWithFormat:@"telegram-cloud-file-%d-%lld-%d-%lld", _datacenterId, _volumeId, _localId, _secret];
-}
-
-- (instancetype)copyWithZone:(NSZone *)__unused zone {
-    return self;
 }
 
 @end
@@ -54,18 +104,21 @@
         _volumeId = volumeId;
         _localId = localId;
         _secret = secret;
-        _size = size;
         _legacyCacheUrl = legacyCacheUrl;
         _legacyCachePath = legacyCachePath;
+        _size = size;
         _mediaType = mediaType;
         _originInfo = originInfo;
-                _identifier = identifier;
+        _identifier = identifier;
     }
     return self;
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudFileMediaResource class]] && _datacenterId == ((CloudFileMediaResource *)object)->_datacenterId && _volumeId == ((CloudFileMediaResource *)object)->_volumeId && _localId == ((CloudFileMediaResource *)object)->_localId && _secret == ((CloudFileMediaResource *)object)->_secret;
+    if (![object isKindOfClass:[CloudFileMediaResource class]])
+        return NO;
+    CloudFileMediaResource *other = object;
+    return _datacenterId == other->_datacenterId && _volumeId == other->_volumeId && _localId == other->_localId && _secret == other->_secret;
 }
 
 - (id<MediaResourceId>)resourceId {
@@ -83,230 +136,188 @@
 
 @end
 
-@interface CloudPhotoMediaResourceId : NSObject <MediaResourceId>
-
-@property (nonatomic, readonly) int64_t fileId;
-@property (nonatomic, strong, readonly) NSString *thumbSize;
+@interface OGCompatPhotoResourceId : OGCompatThumbResourceId <MediaResourceId>
 
 @end
 
-@implementation CloudPhotoMediaResourceId
-
-- (instancetype)initWithFileId:(int64_t)fileId thumbSize:(NSString *)thumbSize {
-    self = [super init];
-    if (self != nil) {
-        _fileId = fileId;
-        _thumbSize = thumbSize;
-    }
-    return self;
-}
-
-- (NSUInteger)hash {
-    return _fileId ^ _thumbSize.hash;
-}
-
-- (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudPhotoMediaResourceId class]] && _fileId == ((CloudPhotoMediaResourceId *)object)->_fileId && TGObjectCompare(_thumbSize, ((CloudPhotoMediaResourceId *)object)->_thumbSize);
-}
+@implementation OGCompatPhotoResourceId
 
 - (NSString *)uniqueId {
-    return [[NSString alloc] initWithFormat:@"telegram-cloud-photo-%lld-%@", _fileId, _thumbSize ?: @""];
-}
-
-- (instancetype)copyWithZone:(NSZone *)__unused zone {
-    return self;
+    return [NSString stringWithFormat:@"telegram-cloud-photo-%lld-%@", self.mediaId, self.sizeTag ?: @""];
 }
 
 @end
 
 @implementation CloudPhotoMediaResource
 
-- (instancetype)initWithDatacenterId:(int32_t)datacenterId fileId:(int64_t)fileId accessHash:(int64_t)accessHash fileReference:(NSData *)fileReference thumbSize:(NSString *)thumbSize size:(NSNumber *)size mediaType:(id)mediaType originInfo:(TGMediaOriginInfo *)originInfo identifier:(int64_t)identifier {
+- (instancetype)initWithDatacenterId:(int32_t)dc fileId:(int64_t)fid accessHash:(int64_t)hash fileReference:(NSData *)reference thumbSize:(NSString *)sizeTag size:(NSNumber *)byteSize mediaType:(id)kind originInfo:(TGMediaOriginInfo *)origin identifier:(int64_t)ident {
     self = [super init];
     if (self != nil) {
-        _datacenterId = datacenterId;
-        _fileId = fileId;
-        _accessHash = accessHash;
-        _fileReference = fileReference;
-        _thumbSize = thumbSize;
-        _size = size;
-        _mediaType = mediaType;
-        _originInfo = originInfo;
-        _identifier = identifier;
+        _identifier = ident;
+        _originInfo = origin;
+        _mediaType = kind;
+        _size = byteSize;
+        _thumbSize = sizeTag;
+        _fileReference = reference;
+        _accessHash = hash;
+        _fileId = fid;
+        _datacenterId = dc;
     }
     return self;
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudPhotoMediaResource class]] && _datacenterId == ((CloudPhotoMediaResource *)object)->_datacenterId && _fileId == ((CloudPhotoMediaResource *)object)->_fileId && _accessHash == ((CloudPhotoMediaResource *)object)->_accessHash && TGObjectCompare(_thumbSize, ((CloudPhotoMediaResource *)object)->_thumbSize);
+    if (![object isKindOfClass:[CloudPhotoMediaResource class]])
+        return NO;
+    CloudPhotoMediaResource *other = object;
+    return TGObjectCompare(_thumbSize, other->_thumbSize) && _fileId == other->_fileId && _accessHash == other->_accessHash && _datacenterId == other->_datacenterId;
 }
 
 - (id<MediaResourceId>)resourceId {
-    return [[CloudPhotoMediaResourceId alloc] initWithFileId:_fileId thumbSize:_thumbSize];
+    return [[OGCompatPhotoResourceId alloc] initWithMediaId:_fileId sizeTag:_thumbSize];
 }
 
 - (TLInputFileLocation *)apiInputLocation {
-    TLInputFileLocation$inputPhotoFileLocation *location = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
-    location.n_id = _fileId;
-    location.access_hash = _accessHash;
-    NSData *originFileReference = [_originInfo fileReference];
-    location.file_reference = originFileReference.length != 0 ? originFileReference : (_fileReference ?: [NSData data]);
+    TLInputFileLocation$inputPhotoFileLocation *location = [TLInputFileLocation$inputPhotoFileLocation new];
     location.thumb_size = _thumbSize ?: @"";
+    location.file_reference = OGCompatEffectiveFileReference(_originInfo, _fileReference);
+    location.access_hash = _accessHash;
+    location.n_id = _fileId;
     return location;
 }
 
 @end
 
-@interface CloudPeerPhotoMediaResourceId : NSObject <MediaResourceId>
+@interface OGCompatPeerPictureResourceId : OGCompatResourceIdBase <MediaResourceId>
 
-@property (nonatomic, readonly) int64_t peerId;
-@property (nonatomic, readonly) int64_t photoId;
-@property (nonatomic, readonly) bool big;
+@property (nonatomic, readonly) int64_t ownerId;
+@property (nonatomic, readonly) int64_t pictureId;
+@property (nonatomic, readonly) bool isLarge;
 
 @end
 
-@implementation CloudPeerPhotoMediaResourceId
+@implementation OGCompatPeerPictureResourceId
 
-- (instancetype)initWithPeerId:(int64_t)peerId photoId:(int64_t)photoId big:(bool)big {
+- (instancetype)initWithOwnerId:(int64_t)ownerId pictureId:(int64_t)pictureId isLarge:(bool)isLarge {
     self = [super init];
     if (self != nil) {
-        _peerId = peerId;
-        _photoId = photoId;
-        _big = big;
+        _isLarge = isLarge;
+        _pictureId = pictureId;
+        _ownerId = ownerId;
     }
     return self;
 }
 
 - (NSUInteger)hash {
-    return _peerId ^ _photoId ^ (_big ? 1 : 0);
+    return (_isLarge ? 1 : 0) ^ _pictureId ^ _ownerId;
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudPeerPhotoMediaResourceId class]] && _peerId == ((CloudPeerPhotoMediaResourceId *)object)->_peerId && _photoId == ((CloudPeerPhotoMediaResourceId *)object)->_photoId && _big == ((CloudPeerPhotoMediaResourceId *)object)->_big;
+    if (![object isKindOfClass:[OGCompatPeerPictureResourceId class]])
+        return NO;
+    OGCompatPeerPictureResourceId *other = object;
+    return _isLarge == other->_isLarge && _pictureId == other->_pictureId && _ownerId == other->_ownerId;
 }
 
 - (NSString *)uniqueId {
-    return [[NSString alloc] initWithFormat:@"telegram-peer-photo-%lld-%lld-%d", _peerId, _photoId, _big ? 1 : 0];
-}
-
-- (instancetype)copyWithZone:(NSZone *)__unused zone {
-    return self;
+    return [NSString stringWithFormat:@"telegram-peer-photo-%lld-%lld-%d", _ownerId, _pictureId, _isLarge ? 1 : 0];
 }
 
 @end
 
 @implementation CloudPeerPhotoMediaResource
 
-- (instancetype)initWithDatacenterId:(int32_t)datacenterId peerId:(int64_t)peerId accessHash:(int64_t)accessHash photoId:(int64_t)photoId peerType:(int32_t)peerType big:(bool)big mediaType:(id)mediaType identifier:(int64_t)identifier {
+- (instancetype)initWithDatacenterId:(int32_t)dc peerId:(int64_t)owner accessHash:(int64_t)hash photoId:(int64_t)picture peerType:(int32_t)ownerKind big:(bool)large mediaType:(id)kind identifier:(int64_t)ident {
     self = [super init];
     if (self != nil) {
-        _datacenterId = datacenterId;
-        _peerId = peerId;
-        _accessHash = accessHash;
-        _photoId = photoId;
-        _peerType = peerType;
-        _big = big;
-        _mediaType = mediaType;
-        _identifier = identifier;
+        _identifier = ident;
+        _mediaType = kind;
+        _big = large;
+        _peerType = ownerKind;
+        _photoId = picture;
+        _accessHash = hash;
+        _peerId = owner;
+        _datacenterId = dc;
     }
     return self;
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudPeerPhotoMediaResource class]] && _peerId == ((CloudPeerPhotoMediaResource *)object)->_peerId && _photoId == ((CloudPeerPhotoMediaResource *)object)->_photoId && _big == ((CloudPeerPhotoMediaResource *)object)->_big;
+    if (![object isKindOfClass:[CloudPeerPhotoMediaResource class]])
+        return NO;
+    CloudPeerPhotoMediaResource *other = object;
+    return _big == other->_big && _photoId == other->_photoId && _peerId == other->_peerId;
 }
 
 - (id<MediaResourceId>)resourceId {
-    return [[CloudPeerPhotoMediaResourceId alloc] initWithPeerId:_peerId photoId:_photoId big:_big];
+    return [[OGCompatPeerPictureResourceId alloc] initWithOwnerId:_peerId pictureId:_photoId isLarge:_big];
 }
 
 - (TLInputFileLocation *)apiInputLocation {
-    TLInputFileLocation$inputPeerPhotoFileLocation *location = [[TLInputFileLocation$inputPeerPhotoFileLocation alloc] init];
-    location.peer_id = _peerId;
-    location.access_hash = _accessHash;
-    location.photo_id = _photoId;
-    location.peer_type = _peerType;
+    TLInputFileLocation$inputPeerPhotoFileLocation *location = [TLInputFileLocation$inputPeerPhotoFileLocation new];
     location.big = _big;
+    location.peer_type = _peerType;
+    location.photo_id = _photoId;
+    location.access_hash = _accessHash;
+    location.peer_id = _peerId;
     return location;
 }
 
 @end
 
-@interface CloudDocumentMediaResourceId : NSObject <MediaResourceId>
-
-@property (nonatomic, readonly) int64_t fileId;
-@property (nonatomic, strong, readonly) NSString *thumbSize;
+@interface OGCompatDocumentResourceId : OGCompatThumbResourceId <MediaResourceId>
 
 @end
 
-@implementation CloudDocumentMediaResourceId
-
-- (instancetype)initWithFileId:(int64_t)fileId thumbSize:(NSString *)thumbSize {
-    self = [super init];
-    if (self != nil) {
-        _fileId = fileId;
-        _thumbSize = thumbSize;
-    }
-    return self;
-}
-
-- (NSUInteger)hash {
-    return _fileId ^ _thumbSize.hash;
-}
-
-- (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudDocumentMediaResourceId class]] && _fileId == ((CloudDocumentMediaResourceId *)object)->_fileId && TGObjectCompare(_thumbSize, ((CloudDocumentMediaResourceId *)object)->_thumbSize);
-}
+@implementation OGCompatDocumentResourceId
 
 - (NSString *)uniqueId {
-    return [[NSString alloc] initWithFormat:@"telegram-cloud-document-%lld-%@", _fileId, _thumbSize ?: @""];
-}
-
-- (instancetype)copyWithZone:(NSZone *)__unused zone {
-    return self;
+    return [NSString stringWithFormat:@"telegram-cloud-document-%lld-%@", self.mediaId, self.sizeTag ?: @""];
 }
 
 @end
 
 @implementation CloudDocumentMediaResource
 
-- (instancetype)initWithDatacenterId:(int32_t)datacenterId fileId:(int64_t)fileId accessHash:(int64_t)accessHash fileReference:(NSData *)fileReference thumbSize:(NSString *)thumbSize size:(NSNumber *)size mediaType:(id)mediaType originInfo:(TGMediaOriginInfo *)originInfo identifier:(int64_t)identifier {
+- (instancetype)initWithDatacenterId:(int32_t)dc fileId:(int64_t)fid accessHash:(int64_t)hash fileReference:(NSData *)reference thumbSize:(NSString *)sizeTag size:(NSNumber *)byteSize mediaType:(id)kind originInfo:(TGMediaOriginInfo *)origin identifier:(int64_t)ident {
     self = [super init];
     if (self != nil) {
-        _datacenterId = datacenterId;
-        _fileId = fileId;
-        _accessHash = accessHash;
-        _fileReference = fileReference;
-        _thumbSize = thumbSize;
-        _size = size;
-        _mediaType = mediaType;
-        _originInfo = originInfo;
-        _identifier = identifier;
+        _identifier = ident;
+        _originInfo = origin;
+        _mediaType = kind;
+        _size = byteSize;
+        _thumbSize = sizeTag;
+        _fileReference = reference;
+        _accessHash = hash;
+        _fileId = fid;
+        _datacenterId = dc;
     }
     return self;
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudDocumentMediaResource class]] && _datacenterId == ((CloudDocumentMediaResource *)object)->_datacenterId && _fileId == ((CloudDocumentMediaResource *)object)->_fileId && _accessHash == ((CloudDocumentMediaResource *)object)->_accessHash && TGObjectCompare(_thumbSize, ((CloudDocumentMediaResource *)object)->_thumbSize);
+    if (![object isKindOfClass:[CloudDocumentMediaResource class]])
+        return NO;
+    CloudDocumentMediaResource *other = object;
+    return TGObjectCompare(_thumbSize, other->_thumbSize) && _fileId == other->_fileId && _accessHash == other->_accessHash && _datacenterId == other->_datacenterId;
 }
 
 - (id<MediaResourceId>)resourceId {
-    return [[CloudDocumentMediaResourceId alloc] initWithFileId:_fileId thumbSize:_thumbSize];
+    return [[OGCompatDocumentResourceId alloc] initWithMediaId:_fileId sizeTag:_thumbSize];
 }
 
 - (TLInputFileLocation *)apiInputLocation {
-    TLInputFileLocation$inputDocumentFileLocation *location = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
-    location.n_id = _fileId;
-    location.access_hash = _accessHash;
-    NSData *originFileReference = [_originInfo fileReference];
-    location.file_reference = originFileReference.length != 0 ? originFileReference : (_fileReference ?: [NSData data]);
+    TLInputFileLocation$inputDocumentFileLocation *location = [TLInputFileLocation$inputDocumentFileLocation new];
     location.thumb_size = _thumbSize ?: @"";
+    location.file_reference = OGCompatEffectiveFileReference(_originInfo, _fileReference);
+    location.access_hash = _accessHash;
+    location.n_id = _fileId;
     return location;
 }
 
 @end
 
-@interface CloudSecureMediaResourceId : NSObject <MediaResourceId>
+@interface CloudSecureMediaResourceId : OGCompatResourceIdBase <MediaResourceId>
 
 @property (nonatomic, readonly) NSString *fileHash;
 @property (nonatomic, readonly) int64_t fileId;
@@ -331,7 +342,10 @@
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudSecureMediaResourceId class]] && TGObjectCompare(_fileHash, ((CloudSecureMediaResourceId *)object)->_fileHash) && _thumbnail == ((CloudSecureMediaResourceId *)object)->_thumbnail;
+    if (![object isKindOfClass:[CloudSecureMediaResourceId class]])
+        return NO;
+    CloudSecureMediaResourceId *other = object;
+    return TGObjectCompare(_fileHash, other->_fileHash) && _thumbnail == other->_thumbnail;
 }
 
 - (NSString *)uniqueId {
@@ -339,10 +353,6 @@
     if (_thumbnail)
         uniqueId = [uniqueId stringByAppendingString:@"-thumb"];
     return uniqueId;
-}
-
-- (instancetype)copyWithZone:(NSZone *)__unused zone {
-    return self;
 }
 
 @end
@@ -364,7 +374,10 @@
 }
 
 - (BOOL)isEqual:(id)object {
-    return [object isKindOfClass:[CloudSecureMediaResource class]] && [_fileHash isEqual:((CloudSecureMediaResource *)object)->_fileHash] && _thumbnail == ((CloudSecureMediaResource *)object)->_thumbnail;
+    if (![object isKindOfClass:[CloudSecureMediaResource class]])
+        return NO;
+    CloudSecureMediaResource *other = object;
+    return [_fileHash isEqual:other->_fileHash] && _thumbnail == other->_thumbnail;
 }
 
 - (id<MediaResourceId>)resourceId {

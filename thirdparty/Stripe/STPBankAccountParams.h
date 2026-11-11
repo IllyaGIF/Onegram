@@ -23,32 +23,32 @@ typedef NS_ENUM(NSInteger, STPBankAccountHolderType) {
 /**
  *  The account number for the bank account. Currently must be a checking account.
  */
-@property (nonatomic, copy) NSString *accountNumber;
+@property (nonatomic, copy) NSString *_Nullable accountNumber;
 
 /**
  *  The last 4 digits of the bank account's account number, if it's been set, otherwise nil.
  */
-- (NSString *)last4;
+- (NSString *_Nullable)last4;
 
 /**
  *  The routing number for the bank account. This should be the ACH routing number, not the wire routing number.
  */
-@property (nonatomic, copy) NSString *routingNumber;
+@property (nonatomic, copy) NSString *_Nullable routingNumber;
 
 /**
  *  Two-letter ISO code representing the country the bank account is located in.
  */
-@property (nonatomic, copy) NSString *country;
+@property (nonatomic, copy) NSString *_Nullable country;
 
 /**
  *  The default currency for the bank account.
  */
-@property (nonatomic, copy) NSString *currency;
+@property (nonatomic, copy) NSString *_Nullable currency;
 
 /**
  *  The name of the person or business that owns the bank account.
  */
-@property(nonatomic, copy) NSString *accountHolderName;
+@property(nonatomic, copy) NSString *_Nullable accountHolderName;
 
 /**
  *  The type of entity that holds the account. Defaults to STPBankAccountHolderTypeIndividual.

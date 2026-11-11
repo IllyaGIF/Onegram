@@ -46,26 +46,19 @@ static char TGAnimationCompletionDelegateKey;
 @end
 
 
-static CABasicAnimation *  makeSpringAnimation(NSString *  keyPath) {
-    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:keyPath];
-    animation.duration = 0.5;
-    animation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    return animation;
-}
-
-static CABasicAnimation *  makeExtendedSpringAnimation(NSString *  keyPath, CGFloat damping) {
-    (void)damping;
-    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:keyPath];
-    animation.duration = 0.5;
-    animation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    return animation;
+static CABasicAnimation *OGCompatSpringSubstitute(NSString *keyPath)
+{
+    CABasicAnimation *substitute = [CABasicAnimation animationWithKeyPath:keyPath];
+    substitute.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    substitute.duration = 0.5;
+    return substitute;
 }
 
 @implementation CALayer (AnimationUtils)
 
 - (void)animateFrom:(id)from to:(id)to keyPath:(NSString *)keyPath timingFunction:(NSString *)timingFunction duration:(NSTimeInterval)duration removeOnCompletion:(bool)removeOnCompletion completion:(void (^)(bool))completion {
     if ([timingFunction isEqualToString:kCAMediaTimingFunctionSpring]) {
-        CABasicAnimation *animation = makeSpringAnimation(keyPath);
+        CABasicAnimation *animation = OGCompatSpringSubstitute(keyPath);
         animation.fromValue = from;
         animation.toValue = to;
         animation.removedOnCompletion = removeOnCompletion;
@@ -107,7 +100,7 @@ static CABasicAnimation *  makeExtendedSpringAnimation(NSString *  keyPath, CGFl
 }
 
 - (void)animateSpringFrom:(id)from to:(id)to keyPath:(NSString *)keyPath duration:(NSTimeInterval)duration removeOnCompletion:(bool)removeOnCompletion completion:(void (^)(bool))completion {
-    CABasicAnimation *animation = makeExtendedSpringAnimation(keyPath, 75.0f);
+    CABasicAnimation *animation = OGCompatSpringSubstitute(keyPath);
     animation.fromValue = from;
     animation.toValue = to;
     animation.removedOnCompletion = removeOnCompletion;

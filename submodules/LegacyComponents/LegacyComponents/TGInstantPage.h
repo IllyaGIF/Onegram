@@ -79,7 +79,7 @@
 
 @interface TGRichTextCollection : TGRichText
 
-@property (nonatomic, strong, readonly) NSArray *texts;
+@property (readonly, strong, nonatomic) NSArray *texts;
 
 - (instancetype)initWithTexts:(NSArray *)texts;
 
@@ -178,7 +178,7 @@
 @interface TGInstantPageBlockList : TGInstantPageBlock
 
 @property (nonatomic, readonly) bool ordered;
-@property (nonatomic, strong, readonly) NSArray *items;
+@property (readonly, strong, nonatomic) NSArray *items;
 @property (nonatomic, strong, readonly) NSArray *indices;
 
 - (instancetype)initWithOrdered:(bool)ordered items:(NSArray *)items;
@@ -240,7 +240,7 @@
 
 @interface TGInstantPageBlockSlideshow : TGInstantPageBlock
 
-@property (nonatomic, strong, readonly) NSArray *items;
+@property (readonly, strong, nonatomic) NSArray *items;
 @property (nonatomic, strong, readonly) TGRichText *caption;
 
 - (instancetype)initWithItems:(NSArray *)items caption:(TGRichText *)caption;
@@ -249,7 +249,7 @@
 
 @interface TGInstantPageBlockCollage : TGInstantPageBlock
 
-@property (nonatomic, strong, readonly) NSArray *items;
+@property (readonly, strong, nonatomic) NSArray *items;
 @property (nonatomic, strong, readonly) TGRichText *caption;
 
 - (instancetype)initWithItems:(NSArray *)items caption:(TGRichText *)caption;
@@ -271,7 +271,7 @@
 @property (nonatomic, strong, readonly) TGRichText *caption;
 @property (nonatomic, strong, readonly) NSString *url;
 @property (nonatomic, readonly) int64_t webpageId;
-@property (nonatomic, strong, readonly) NSArray *blocks;
+@property (readonly, strong, nonatomic) NSArray *blocks;
 @property (nonatomic, readonly) int64_t authorPhotoId;
 
 - (instancetype)initWithAuthor:(NSString *)author date:(int32_t)date caption:(TGRichText *)caption url:(NSString *)url webpageId:(int64_t)webpageId blocks:(NSArray *)blocks authorPhotoId:(int64_t)authorPhotoId;
@@ -290,10 +290,10 @@
 @interface TGInstantPage : NSObject <NSCoding>
 
 @property (nonatomic, readonly) bool isPartial;
-@property (nonatomic, strong, readonly) NSArray *blocks;
-@property (nonatomic, strong, readonly) NSDictionary *images;
-@property (nonatomic, strong, readonly) NSDictionary *videos;
-@property (nonatomic, strong, readonly) NSDictionary *documents;
+@property (readonly, strong, nonatomic) NSArray *blocks;
+@property (readonly, strong, nonatomic) NSDictionary *images;
+@property (readonly, strong, nonatomic) NSDictionary *videos;
+@property (readonly, strong, nonatomic) NSDictionary *documents;
 
 - (instancetype)initWithIsPartial:(bool)isPartial blocks:(NSArray *)blocks images:(NSDictionary *)images videos:(NSDictionary *)videos documents:(NSDictionary *)documents;
 

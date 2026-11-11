@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -14,11 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface STPCardTuple : NSObject
 
-+ (instancetype)tupleWithSelectedCard:(STPCard *)selectedCard
-                                cards:(NSArray *)cards;
++ (instancetype)tupleWithSelectedCard:(STPCard *_Nullable)selectedCard
+                                cards:(OG_COMPAT_GENERIC(NSArray, STPCard *)*_Nullable)cards;
 
-@property(nonatomic, readonly)STPCard *selectedCard;
-@property(nonatomic, readonly)NSArray *cards;
+@property(nonatomic, readonly)STPCard *_Nullable selectedCard;
+@property(nonatomic, readonly)OG_COMPAT_GENERIC(NSArray, STPCard *) *cards;
 
 @end
 

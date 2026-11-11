@@ -45,47 +45,44 @@
 #   import <MTProtoKit/MTLogging.h>
 #endif
 
-static int base64_value(unichar c) {
-    if (c >= 'A' && c <= 'Z') return (int)(c - 'A');
-    if (c >= 'a' && c <= 'z') return (int)(c - 'a') + 26;
-    if (c >= '0' && c <= '9') return (int)(c - '0') + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    if (c == '=') return -2;
-    return -1;
+static int OGBase64Symbol(unichar character) {
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if (character == '=')
+        return -2;
+    if (character >= 128)
+        return -1;
+    const char *position = (const char *)memchr(alphabet, (int)character, 64);
+    return position == NULL ? -1 : (int)(position - alphabet);
 }
 
-static NSData *base64_decode(NSString *str) {
-    NSMutableData *data = [[NSMutableData alloc] initWithCapacity:[str length] * 3 / 4];
-    int quartet[4];
-    int quartetLength = 0;
+static NSData *OGBase64Decode(NSString *text) {
+    NSMutableData *decoded = [[NSMutableData alloc] initWithCapacity:[text length] * 3 / 4];
+    int group[4];
+    int filled = 0;
     
-    for (NSUInteger i = 0; i < [str length]; i++) {
-        int value = base64_value([str characterAtIndex:i]);
-        if (value == -1)
+    for (NSUInteger index = 0; index < [text length]; index++) {
+        int symbol = OGBase64Symbol([text characterAtIndex:index]);
+        if (symbol == -1)
             continue;
         
-        quartet[quartetLength++] = value;
-        if (quartetLength == 4) {
-            uint8_t bytes[3];
-            bytes[0] = (uint8_t)((quartet[0] << 2) | ((quartet[1] & 0x30) >> 4));
-            [data appendBytes:&bytes[0] length:1];
-            
-            if (quartet[2] != -2) {
-                bytes[1] = (uint8_t)(((quartet[1] & 0x0f) << 4) | ((quartet[2] & 0x3c) >> 2));
-                [data appendBytes:&bytes[1] length:1];
-            }
-            
-            if (quartet[3] != -2) {
-                bytes[2] = (uint8_t)(((quartet[2] & 0x03) << 6) | quartet[3]);
-                [data appendBytes:&bytes[2] length:1];
-            }
-            
-            quartetLength = 0;
+        group[filled++] = symbol;
+        if (filled < 4)
+            continue;
+        
+        uint8_t first = (uint8_t)((group[0] << 2) | ((group[1] & 0x30) >> 4));
+        [decoded appendBytes:&first length:1];
+        if (group[2] != -2) {
+            uint8_t second = (uint8_t)(((group[1] & 0x0f) << 4) | ((group[2] & 0x3c) >> 2));
+            [decoded appendBytes:&second length:1];
         }
+        if (group[3] != -2) {
+            uint8_t third = (uint8_t)(((group[2] & 0x03) << 6) | group[3]);
+            [decoded appendBytes:&third length:1];
+        }
+        filled = 0;
     }
     
-    return data;
+    return decoded;
 }
 
 @implementation MTBackupAddressSignals
@@ -152,7 +149,7 @@ static NSData *base64_decode(NSString *str) {
                         finalString = [finalString stringByAppendingString:[string stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"="]]];
                     }
                     
-                    NSData *result = base64_decode(finalString);
+                    NSData *result = OGBase64Decode(finalString);
                     NSMutableData *finalData = [[NSMutableData alloc] initWithData:result];
                     [finalData setLength:256];
                     MTBackupDatacenterData *datacenterData = MTIPDataDecode(finalData, phoneNumber);

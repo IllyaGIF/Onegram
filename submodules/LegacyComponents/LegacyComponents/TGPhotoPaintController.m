@@ -355,7 +355,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     _portraitSettingsView.changedColor = changedColor;
     _portraitSettingsView.finishedColorPicking = finishedColorPicking;
     _portraitSettingsView.settingsPressed = settingsPressed;
-    TGSetLayerRasterizationScale(_portraitSettingsView.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(_portraitSettingsView.layer, TGScreenScaling());
     _portraitSettingsView.interfaceOrientation = UIInterfaceOrientationPortrait;
     [_portraitToolsWrapperView addSubview:_portraitSettingsView];
     
@@ -364,7 +364,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     _landscapeSettingsView.changedColor = changedColor;
     _landscapeSettingsView.finishedColorPicking = finishedColorPicking;
     _landscapeSettingsView.settingsPressed = settingsPressed;
-    TGSetLayerRasterizationScale(_landscapeSettingsView.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(_landscapeSettingsView.layer, TGScreenScaling());
     _landscapeSettingsView.interfaceOrientation = UIInterfaceOrientationLandscapeLeft;
     [_landscapeToolsWrapperView addSubview:_landscapeSettingsView];
     
@@ -1527,8 +1527,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
 
 - (void)transitionIn
 {
-    TGSetLayerShouldRasterize(_portraitSettingsView.layer, true);
-    TGSetLayerShouldRasterize(_landscapeSettingsView.layer, true);
+    OGCompatLayerSetShouldRasterize(_portraitSettingsView.layer, true);
+    OGCompatLayerSetShouldRasterize(_landscapeSettingsView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {
@@ -1539,8 +1539,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
         _landscapeActionsView.alpha = 1.0f;
     } completion:^(__unused BOOL finished)
     {
-        TGSetLayerShouldRasterize(_portraitSettingsView.layer, false);
-        TGSetLayerShouldRasterize(_landscapeSettingsView.layer, false);
+        OGCompatLayerSetShouldRasterize(_portraitSettingsView.layer, false);
+        OGCompatLayerSetShouldRasterize(_landscapeSettingsView.layer, false);
     }];
 }
 
@@ -1634,8 +1634,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     TGPhotoEditorPreviewView *previewView = self.previewView;
     previewView.interactionEnded = nil;
     
-    TGSetLayerShouldRasterize(_portraitSettingsView.layer, true);
-    TGSetLayerShouldRasterize(_landscapeSettingsView.layer, true);
+    OGCompatLayerSetShouldRasterize(_portraitSettingsView.layer, true);
+    OGCompatLayerSetShouldRasterize(_landscapeSettingsView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {

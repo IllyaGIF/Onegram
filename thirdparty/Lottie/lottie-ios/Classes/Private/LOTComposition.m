@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTScene.m
 //  LottieAnimator
@@ -20,13 +20,13 @@
 
 # pragma mark - Convenience Initializers
 
-+ ( instancetype)animationNamed:( NSString *)animationName {
++ (instancetype _Nullable)animationNamed:(NSString *_Nonnull)animationName {
   return [self animationNamed:animationName inBundle:[NSBundle mainBundle]];
 }
 
-+ ( instancetype)animationNamed:( NSString *)animationName inBundle:( NSBundle *)bundle {
++ (instancetype _Nullable)animationNamed:(NSString *_Nonnull)animationName inBundle:(NSBundle *_Nonnull)bundle {
   NSArray *components = [animationName componentsSeparatedByString:@"."];
-  animationName = [components objectAtIndex:0];
+  animationName = components.firstObject;
   
   LOTComposition *comp = [[LOTAnimationCache sharedCache] animationForKey:animationName];
   if (comp) {
@@ -52,7 +52,7 @@
   return nil;
 }
 
-+ ( instancetype)animationWithFilePath:( NSString *)filePath {
++ (instancetype _Nullable)animationWithFilePath:(NSString *_Nonnull)filePath {
   NSString *animationName = filePath;
   
   LOTComposition *comp = [[LOTAnimationCache sharedCache] animationForKey:animationName];
@@ -80,18 +80,18 @@
   return nil;
 }
 
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON {
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nonnull)animationJSON {
   return [self animationFromJSON:animationJSON inBundle:[NSBundle mainBundle]];
 }
 
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON inBundle:( NSBundle *)bundle {
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nullable)animationJSON inBundle:(NSBundle *_Nullable)bundle {
   return [[self alloc] initWithJSON:animationJSON withAssetBundle:bundle];
 }
 
 #pragma mark - Initializer
 
-- (instancetype )initWithJSON:(NSDictionary * )jsonDictionary
-                      withAssetBundle:(NSBundle * )bundle {
+- (instancetype _Nonnull)initWithJSON:(NSDictionary * _Nullable)jsonDictionary
+                      withAssetBundle:(NSBundle * _Nullable)bundle {
   self = [super init];
   if (self) {
     if (jsonDictionary) {
@@ -105,16 +105,16 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary
      withAssetBundle:(NSBundle *)bundle {
-  NSNumber *width = [jsonDictionary objectForKey:@2];
-  NSNumber *height = [jsonDictionary objectForKey:@2];
+  NSNumber *width = jsonDictionary[@"w"];
+  NSNumber *height = jsonDictionary[@"h"];
   if (width && height) {
     CGRect bounds = CGRectMake(0, 0, width.floatValue, height.floatValue);
     _compBounds = bounds;
   }
   
-  _startFrame = [[jsonDictionary objectForKey:@2] copy];
-  _endFrame = [[jsonDictionary objectForKey:@2] copy];
-  _framerate = [[jsonDictionary objectForKey:@2] copy];
+  _startFrame = [jsonDictionary[@"ip"] copy];
+  _endFrame = [jsonDictionary[@"op"] copy];
+  _framerate = [jsonDictionary[@"fr"] copy];
   
   if (_startFrame && _endFrame && _framerate) {
     NSInteger frameDuration = (_endFrame.integerValue - _startFrame.integerValue) - 1;
@@ -122,12 +122,12 @@
     _timeDuration = timeDuration;
   }
   
-  NSArray *assetArray = [jsonDictionary objectForKey:@2];
+  NSArray *assetArray = jsonDictionary[@"assets"];
   if (assetArray.count) {
     _assetGroup = [[LOTAssetGroup alloc] initWithJSON:assetArray withAssetBundle:bundle withFramerate:_framerate];
   }
   
-  NSArray *layersJSON = [jsonDictionary objectForKey:@2];
+  NSArray *layersJSON = jsonDictionary[@"layers"];
   if (layersJSON) {
     _layerGroup = [[LOTLayerGroup alloc] initWithLayerJSON:layersJSON
                                             withAssetGroup:_assetGroup

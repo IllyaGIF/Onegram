@@ -31,7 +31,7 @@
 
 #import "TGGLVideoView.h"
 
-@interface NSObject (TGAVSampleBufferDisplayLayerCompat)
+@interface NSObject (OGCompatSampleLayer)
 - (void)flushAndRemoveImage;
 - (void)flush;
 - (BOOL)isReadyForMoreMediaData;
@@ -402,17 +402,10 @@ static int32_t nextSessionId = 0;
                 if (earliestFrame != nil){
                     return earliestFrame;
                 } else {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-                    if (false && iosMajorVersion() >= 8) {
-                        [_output resetForReadingTimeRanges:@[[NSValue valueWithCMTimeRange:_timeRange]]];
-                    } else
-#endif
-                    {
-                        _epoch++;
-                        [_reader cancelReading];
-                        _reader = nil;
-                        _output = nil;
-                    }
+                    _epoch++;
+                    [_reader cancelReading];
+                    _reader = nil;
+                    _output = nil;
                 }
             }
         }
@@ -553,8 +546,9 @@ static NSMutableDictionary *queueItemsByPath() {
         
         Class displayLayerClass = NSClassFromString(@"AVSampleBufferDisplayLayer");
         if (displayLayerClass != Nil) {
-            _displayLayer = [[displayLayerClass alloc] init];
-            [_displayLayer setVideoGravity:AVLayerVideoGravityResizeAspectFill];
+            id displayLayer = [[displayLayerClass alloc] init];
+            [displayLayer setVideoGravity:AVLayerVideoGravityResizeAspectFill];
+            _displayLayer = displayLayer;
             [self.layer addSublayer:_displayLayer];
         }
         
@@ -574,7 +568,8 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 - (void)layoutSubviews {
-    [_displayLayer setFrame:self.bounds];
+    CGRect layerFrame = self.bounds;
+    [_displayLayer setFrame:layerFrame];
 }
 
 - (void)applicationWillResignActiveNotification:(id)__unused notification {

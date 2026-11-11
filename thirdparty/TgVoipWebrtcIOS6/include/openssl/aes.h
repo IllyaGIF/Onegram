@@ -1,5 +1,5 @@
-#ifndef TGIOS6_OPENSSL_AES_H
-#define TGIOS6_OPENSSL_AES_H
+#ifndef OG_COMPAT_OPENSSL_AES_H
+#define OG_COMPAT_OPENSSL_AES_H
 
 #include <CommonCrypto/CommonCryptor.h>
 #include <stdint.h>
@@ -12,23 +12,23 @@ typedef struct AES_KEY {
 	size_t keyLength;
 } AES_KEY;
 
-static inline int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key) {
-	if (key == 0 || userKey == 0 || bits <= 0 || bits > 256) {
+static inline int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *schedule) {
+	if (!schedule || !userKey || bits < 1 || bits > 256) {
 		return -1;
 	}
-	key->keyLength = (size_t)(bits / 8);
-	memcpy(key->key, userKey, key->keyLength);
+	schedule->keyLength = (size_t)(bits / 8);
+	memcpy(schedule->key, userKey, schedule->keyLength);
 	return 0;
 }
 
-static inline void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key) {
-	size_t moved = 0;
+static inline void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *schedule) {
+	size_t produced = 0;
 	CCCrypt(kCCEncrypt, kCCAlgorithmAES128, kCCOptionECBMode,
-		key->key, key->keyLength,
+		schedule->key, schedule->keyLength,
 		0,
 		in, AES_BLOCK_SIZE,
 		out, AES_BLOCK_SIZE,
-		&moved);
+		&produced);
 }
 
 #endif

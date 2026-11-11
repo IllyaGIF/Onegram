@@ -29,23 +29,22 @@
 #import "VoIPServerConfig.h"
 #import "os/darwin/SetupLogging.h"
 
-static NSString *TGIOS6CurrentCallsConfig = nil;
+static NSString *OGCompatCurrentCallsConfig = nil;
 
-@interface NSObject (TGCallWebrtcRuntimeDynamic)
+@interface NSObject (OGCompatWebrtcDynamic)
 
 + (NSArray *)versionsWithIncludeReference:(bool)includeReference;
 + (void)applyServerConfig:(NSString *)data;
++ (bool)supportsVideoSending;
++ (bool)supportsVideoReceiving;
 
-- (instancetype)initWithReflectorId:(uint8_t)reflectorId hasStun:(bool)hasStun hasTurn:(bool)hasTurn hasTcp:(bool)hasTcp ip:(NSString *)ip port:(int32_t)port username:(NSString *)username password:(NSString *)password;
 - (instancetype)initWithVersion:(NSString *)version customParameters:(NSString *)customParameters queue:(id)queue proxy:(id)proxy networkType:(int32_t)networkType dataSaving:(int32_t)dataSaving derivedState:(NSData *)derivedState key:(NSData *)key isOutgoing:(bool)isOutgoing connections:(NSArray *)connections maxLayer:(int32_t)maxLayer allowP2P:(bool)allowP2P allowTCP:(bool)allowTCP enableStunMarking:(bool)enableStunMarking logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath sendSignalingData:(void (^)(NSData *))sendSignalingData videoCapturer:(id)videoCapturer preferredVideoCodec:(NSString *)preferredVideoCodec audioInputDeviceId:(NSString *)audioInputDeviceId audioDevice:(id)audioDevice directConnection:(id)directConnection;
-- (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged;
+- (instancetype)initWithReflectorId:(uint8_t)reflectorId hasStun:(bool)hasStun hasTurn:(bool)hasTurn hasTcp:(bool)hasTcp ip:(NSString *)ip port:(int32_t)port username:(NSString *)username password:(NSString *)password;
 - (void)setSignalBarsChanged:(void (^)(int32_t))signalBarsChanged;
-
+- (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged;
 - (void)addSignalingData:(NSData *)data;
 - (void)setIsMuted:(bool)isMuted;
 - (void)setNetworkType:(int32_t)networkType;
-+ (bool)supportsVideoSending;
-+ (bool)supportsVideoReceiving;
 - (void)setOutgoingVideoEnabled:(bool)enabled;
 - (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
 - (void)setIncomingVideoView:(TGCallVideoView *)view;
@@ -53,10 +52,20 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
 
 @end
 
-@interface TGCallWebrtcQueue : NSObject
+static Class OGCompatWebrtcContextClass()
+{
+    return NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+}
+
+@interface OGCompatMainQueue : NSObject
+
+- (void)dispatch:(void (^)())block;
+- (bool)isCurrent;
+- (id)scheduleBlock:(void (^)())block after:(double)timeout;
+
 @end
 
-@implementation TGCallWebrtcQueue
+@implementation OGCompatMainQueue
 
 - (void)dispatch:(void (^)())block
 {
@@ -66,56 +75,179 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
 
 - (bool)isCurrent
 {
-    return [NSThread isMainThread];
+    return [[NSThread currentThread] isMainThread];
 }
 
 - (id)scheduleBlock:(void (^)())block after:(double)timeout
 {
-    __block bool disposed = false;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (!disposed && block != nil)
+    __block bool cancelled = false;
+    int64_t delayNanoseconds = (int64_t)(timeout * NSEC_PER_SEC);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delayNanoseconds), dispatch_get_main_queue(), ^{
+        if (cancelled == false && block != nil)
             block();
     });
     
     return [[SBlockDisposable alloc] initWithBlock:^{
-        disposed = true;
+        cancelled = true;
     }];
 }
 
 @end
 
-@interface TGCallWebrtcRuntime : NSObject {
-    bool _started;
+static TGCallTransmissionState OGCompatTransmissionStateForCode(int32_t code)
+{
+    switch (code)
+    {
+        case 1:
+            return TGCallTransmissionStateEstablished;
+        case 2:
+            return TGCallTransmissionStateFailed;
+        case 3:
+            return TGCallTransmissionStateReconnecting;
+        default:
+            return TGCallTransmissionStateInitializing;
+    }
 }
 
+static int32_t OGCompatNetworkCodeForType(TGNetworkType networkType)
+{
+    switch (networkType)
+    {
+        case TGNetworkTypeGPRS:
+            return 1;
+        case TGNetworkTypeEdge:
+            return 2;
+        case TGNetworkType3G:
+            return 3;
+        case TGNetworkTypeLTE:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+static NSArray *OGCompatIpCandidates(NSString *ipv4, NSString *ipv6)
+{
+    return @[ipv4 ?: @"", ipv6 ?: @""];
+}
+
+static bool OGCompatPortIsValid(int port)
+{
+    return port > 0 && port <= 65535;
+}
+
+static NSString *OGCompatSelectLibraryVersion(NSArray *serverVersions, NSArray *supportedVersions)
+{
+    for (id candidate in serverVersions)
+    {
+        if ([candidate isKindOfClass:[NSString class]] && [supportedVersions containsObject:candidate])
+            return candidate;
+    }
+    return nil;
+}
+
+static NSArray *OGCompatOrderedRelays(TGCallStateData *state)
+{
+    NSMutableArray *ordered = [[NSMutableArray alloc] init];
+    TGCallConnectionDescription *primary = state.connection.defaultConnection;
+    if (primary != nil)
+        [ordered addObject:primary];
+    for (TGCallConnectionDescription *alternative in state.connection.alternativeConnections)
+    {
+        if (alternative != nil)
+            [ordered addObject:alternative];
+    }
+    return ordered;
+}
+
+static NSArray *OGCompatBuildWebrtcEndpoints(Class endpointClass, TGCallStateData *state)
+{
+    NSMutableArray *result = [[NSMutableArray alloc] init];
+    void (^appendEndpoint)(id) = ^(id endpoint) {
+        if (endpoint != nil)
+            [result addObject:endpoint];
+    };
+    
+    NSArray *relays = OGCompatOrderedRelays(state);
+    
+    NSMutableSet *knownIds = [[NSMutableSet alloc] init];
+    for (TGCallConnectionDescription *relay in relays)
+        [knownIds addObject:@(relay.identifier)];
+    NSArray *sortedIds = [[knownIds allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableDictionary *compactIds = [[NSMutableDictionary alloc] init];
+    for (NSUInteger position = 0; position < sortedIds.count && position < 255; position++)
+        compactIds[sortedIds[position]] = @(position + 1);
+    
+    for (TGCallConnectionDescription *relay in relays)
+    {
+        NSNumber *compactId = compactIds[@(relay.identifier)];
+        if (compactId == nil || !OGCompatPortIsValid(relay.port) || relay.peerTag.length < 16)
+            continue;
+        
+        const uint8_t *tagBytes = static_cast<const uint8_t *>(relay.peerTag.bytes);
+        NSMutableString *relayPassword = [[NSMutableString alloc] initWithCapacity:32];
+        for (NSUInteger position = 0; position < 16; position++)
+            [relayPassword appendFormat:@"%02x", tagBytes[position]];
+        
+        for (NSString *ip in OGCompatIpCandidates(relay.ipv4, relay.ipv6))
+        {
+            if (ip.length != 0)
+                appendEndpoint([[endpointClass alloc] initWithReflectorId:[compactId unsignedCharValue] hasStun:false hasTurn:true hasTcp:relay.isTcp ip:ip port:relay.port username:@"reflector" password:relayPassword]);
+        }
+    }
+    
+    for (TGCallWebrtcConnectionDescription *direct in state.connection.webrtcConnections)
+    {
+        if (!OGCompatPortIsValid(direct.port))
+            continue;
+        for (NSString *ip in OGCompatIpCandidates(direct.ipv4, direct.ipv6))
+        {
+            if (ip.length != 0)
+                appendEndpoint([[endpointClass alloc] initWithReflectorId:0 hasStun:direct.stun hasTurn:direct.turn hasTcp:false ip:ip port:direct.port username:direct.username ?: @"" password:direct.password ?: @""]);
+        }
+    }
+    return result;
+}
+
+@interface OGCompatWebrtcRuntime : NSObject
+
 @property (nonatomic, strong) id context;
-@property (nonatomic, strong) TGCallWebrtcQueue *queue;
+@property (nonatomic, strong) OGCompatMainQueue *queue;
 @property (nonatomic, readonly) bool started;
 @property (nonatomic, copy) void (^remoteMediaChanged)(int32_t videoState, int32_t audioState);
 
 + (bool)supportsVideoSending;
 + (bool)supportsVideoReceiving;
-- (void)setOutgoingVideoEnabled:(bool)enabled;
-- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
-- (void)setIncomingVideoView:(TGCallVideoView *)view;
 
 - (bool)startWithState:(TGCallStateData *)state outgoing:(bool)outgoing logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath signalBarsChanged:(void (^)(int32_t))signalBarsChanged stateChanged:(void (^)(TGCallTransmissionState))stateChanged;
 - (void)receiveSignalingData:(NSData *)data;
 - (void)setMuted:(bool)muted;
 - (void)setNetworkType:(int32_t)networkType;
+- (void)setOutgoingVideoEnabled:(bool)enabled;
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
+- (void)setIncomingVideoView:(TGCallVideoView *)view;
 - (void)stopWithCompletion:(void (^)(NSString *debugLog, int64_t bytesSentWifi, int64_t bytesReceivedWifi, int64_t bytesSentMobile, int64_t bytesReceivedMobile))completion;
+
 @end
 
-@implementation TGCallWebrtcRuntime
+@implementation OGCompatWebrtcRuntime {
+    bool _started;
+}
 
 - (bool)started
 {
-    return _started;
+    return _started ? true : false;
+}
+
+- (id)og_compat_contextHandling:(SEL)selector
+{
+    id current = self.context;
+    return (current != nil && [current respondsToSelector:selector]) ? current : nil;
 }
 
 - (bool)startWithState:(TGCallStateData *)state outgoing:(bool)outgoing logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath signalBarsChanged:(void (^)(int32_t))signalBarsChanged stateChanged:(void (^)(TGCallTransmissionState))stateChanged
 {
-    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    Class contextClass = OGCompatWebrtcContextClass();
     Class connectionClass = NSClassFromString(@"OngoingCallConnectionDescriptionWebrtc");
     if (contextClass == nil || connectionClass == nil) {
         TGDiagnosticLog(@"CALL webrtc.runtime.missing contextClass=%@ connectionClass=%@", contextClass, connectionClass);
@@ -125,30 +257,16 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     NSArray *supportedVersions = [NSArray array];
     if ([contextClass respondsToSelector:@selector(versionsWithIncludeReference:)])
     {
-        NSArray *versions = [(id)contextClass versionsWithIncludeReference:false];
-        if ([versions isKindOfClass:[NSArray class]])
-            supportedVersions = versions;
+        NSArray *reported = [(id)contextClass versionsWithIncludeReference:false];
+        if ([reported isKindOfClass:[NSArray class]])
+            supportedVersions = reported;
     }
     
     NSArray *serverVersions = state.connection.libraryVersions;
     if (![serverVersions isKindOfClass:[NSArray class]])
         serverVersions = [NSArray array];
     
-    
-    NSString *version = nil;
-    for (id candidateObject in serverVersions)
-    {
-        if (![candidateObject isKindOfClass:[NSString class]])
-            continue;
-        
-        NSString *candidate = (NSString *)candidateObject;
-        if ([supportedVersions containsObject:candidate])
-        {
-            version = candidate;
-            break;
-        }
-    }
-    
+    NSString *version = OGCompatSelectLibraryVersion(serverVersions, supportedVersions);
     if (version.length == 0)
     {
         TGDiagnosticLog(@"CALL webrtc.version.mismatch call=%lld server=%@ local=%@",
@@ -159,51 +277,13 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     }
     
     if (state.connection.key.length != 256)
-    {
         return false;
-    }
     
-    
-    NSMutableArray *connections = [[NSMutableArray alloc] init];
-    NSMutableArray *reflectors = [[NSMutableArray alloc] init];
-    if (state.connection.defaultConnection != nil)
-        [reflectors addObject:state.connection.defaultConnection];
-    [reflectors addObjectsFromArray:state.connection.alternativeConnections ?: @[]];
-    NSMutableSet *identifierSet = [[NSMutableSet alloc] init];
-    for (TGCallConnectionDescription *connection in reflectors)
-        [identifierSet addObject:@(connection.identifier)];
-    NSArray *identifiers = [[identifierSet allObjects] sortedArrayUsingSelector:@selector(compare:)];
-    NSMutableDictionary *identifierMapping = [[NSMutableDictionary alloc] init];
-    for (NSUInteger index = 0; index < identifiers.count && index < 255; index++)
-        identifierMapping[identifiers[index]] = @(index + 1);
-    for (TGCallConnectionDescription *connection in reflectors) {
-        NSNumber *mappedId = identifierMapping[@(connection.identifier)];
-        if (mappedId == nil || connection.port <= 0 || connection.port > 65535 || connection.peerTag.length < 16)
-            continue;
-        const uint8_t *tag = static_cast<const uint8_t *>(connection.peerTag.bytes);
-        NSMutableString *password = [[NSMutableString alloc] initWithCapacity:32];
-        for (NSUInteger index = 0; index < 16; index++)
-            [password appendFormat:@"%02x", tag[index]];
-        for (NSString *ip in @[connection.ipv4 ?: @"", connection.ipv6 ?: @""]) {
-            if (ip.length == 0) continue;
-            id endpoint = [[connectionClass alloc] initWithReflectorId:[mappedId unsignedCharValue] hasStun:false hasTurn:true hasTcp:connection.isTcp ip:ip port:connection.port username:@"reflector" password:password];
-            if (endpoint != nil) [connections addObject:endpoint];
-        }
-    }
-    for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
-        if (connection.port <= 0 || connection.port > 65535) continue;
-        for (NSString *ip in @[connection.ipv4 ?: @"", connection.ipv6 ?: @""]) {
-            if (ip.length == 0) continue;
-            id endpoint = [[connectionClass alloc] initWithReflectorId:0 hasStun:connection.stun hasTurn:connection.turn hasTcp:false ip:ip port:connection.port username:connection.username ?: @"" password:connection.password ?: @""];
-            if (endpoint != nil) [connections addObject:endpoint];
-        }
-    }
-
-    if (connections.count == 0) {
+    NSArray *endpoints = OGCompatBuildWebrtcEndpoints(connectionClass, state);
+    if (endpoints.count == 0)
         return false;
-    }
     
-    TGCallWebrtcQueue *queue = [[TGCallWebrtcQueue alloc] init];
+    OGCompatMainQueue *queue = [[OGCompatMainQueue alloc] init];
     self.queue = queue;
     
     void (^sendSignalingData)(NSData *) = ^(NSData *data) {
@@ -212,69 +292,26 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
         } completed:nil];
     };
     
-    NSString *customParameters = state.connection.customParameters;
-    if (customParameters.length == 0)
-        customParameters = @"{}";
+    NSString *customParameters = state.connection.customParameters.length != 0 ? state.connection.customParameters : @"{}";
     
-    
-    id context = [[contextClass alloc] initWithVersion:version
-                                      customParameters:customParameters
-                                                 queue:queue
-                                                 proxy:nil
-                                           networkType:0
-                                            dataSaving:0
-                                          derivedState:[NSData data]
-                                                   key:state.connection.key
-                                            isOutgoing:outgoing
-                                           connections:connections
-                                              maxLayer:(state.connection.maxLayer > 0 ? state.connection.maxLayer : TGCallLegacyMaxLayer)
-                                              allowP2P:false
-                                              allowTCP:true
-                                     enableStunMarking:false
-                                               logPath:logPath ?: @""
-                                          statsLogPath:statsLogPath ?: @""
-                                     sendSignalingData:sendSignalingData
-                                         videoCapturer:nil
-                                   preferredVideoCodec:nil
-                                    audioInputDeviceId:@""
-                                           audioDevice:nil
-                                      directConnection:nil];
-    if (context == nil) {
+    int32_t maxLayer = state.connection.maxLayer > 0 ? state.connection.maxLayer : TGCallLegacyMaxLayer;
+    id context = [[contextClass alloc] initWithVersion:version customParameters:customParameters queue:queue proxy:nil networkType:0 dataSaving:0 derivedState:[NSData data] key:state.connection.key isOutgoing:outgoing connections:endpoints maxLayer:maxLayer allowP2P:false allowTCP:true enableStunMarking:false logPath:logPath ?: @"" statsLogPath:statsLogPath ?: @"" sendSignalingData:sendSignalingData videoCapturer:nil preferredVideoCodec:nil audioInputDeviceId:@"" audioDevice:nil directConnection:nil];
+    if (context == nil)
         return false;
-    }
     
     self.context = context;
     
     if ([context respondsToSelector:@selector(setStateChanged:)])
     {
-        __weak TGCallWebrtcRuntime *weakRuntime = self;
+        __weak OGCompatWebrtcRuntime *weakRuntime = self;
         [context setStateChanged:^(int32_t callState, int32_t __unused videoState, int32_t remoteVideoState, int32_t remoteAudioState, int32_t __unused remoteBatteryLevel, float __unused remotePreferredAspectRatio)
          {
-             __strong TGCallWebrtcRuntime *strongRuntime = weakRuntime;
+             __strong OGCompatWebrtcRuntime *strongRuntime = weakRuntime;
              if (strongRuntime != nil && strongRuntime.remoteMediaChanged != nil)
                  strongRuntime.remoteMediaChanged(remoteVideoState, remoteAudioState);
-             TGCallTransmissionState transmissionState = TGCallTransmissionStateInitializing;
-             
-             switch (callState)
-             {
-                 case 1:
-                     transmissionState = TGCallTransmissionStateEstablished;
-                     break;
-                     
-                 case 2:
-                     transmissionState = TGCallTransmissionStateFailed;
-                     break;
-                     
-                 case 3:
-                     transmissionState = TGCallTransmissionStateReconnecting;
-                     break;
-                     
-                 default:
-                     break;
-             }
              
              if (stateChanged != nil)
-                 stateChanged(transmissionState);
+                 stateChanged(OGCompatTransmissionStateForCode(callState));
          }];
     }
     
@@ -293,89 +330,58 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
 
 - (void)receiveSignalingData:(NSData *)data
 {
-    if (data.length == 0 || self.context == nil)
+    if (data.length == 0)
         return;
-    
-    if ([self.context respondsToSelector:@selector(addSignalingData:)])
-        [self.context addSignalingData:data];
+    [[self og_compat_contextHandling:@selector(addSignalingData:)] addSignalingData:data];
 }
 
 + (bool)supportsVideoSending
 {
-    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    Class contextClass = OGCompatWebrtcContextClass();
     return contextClass != nil && [contextClass respondsToSelector:@selector(supportsVideoSending)] && [contextClass supportsVideoSending];
 }
 
 + (bool)supportsVideoReceiving
 {
-    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    Class contextClass = OGCompatWebrtcContextClass();
     return contextClass != nil && [contextClass respondsToSelector:@selector(supportsVideoReceiving)] && [contextClass supportsVideoReceiving];
 }
 
 - (void)setOutgoingVideoEnabled:(bool)enabled
 {
-    if (self.context != nil && [self.context respondsToSelector:@selector(setOutgoingVideoEnabled:)])
-        [self.context setOutgoingVideoEnabled:enabled];
+    [[self og_compat_contextHandling:@selector(setOutgoingVideoEnabled:)] setOutgoingVideoEnabled:enabled];
 }
 
 - (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
 {
-    if (self.context != nil && [self.context respondsToSelector:@selector(setVideoCapturer:)])
-        [self.context setVideoCapturer:capturer];
+    [[self og_compat_contextHandling:@selector(setVideoCapturer:)] setVideoCapturer:capturer];
 }
 
 - (void)setIncomingVideoView:(TGCallVideoView *)view
 {
-    if (self.context != nil && [self.context respondsToSelector:@selector(setIncomingVideoView:)])
-        [self.context setIncomingVideoView:view];
+    [[self og_compat_contextHandling:@selector(setIncomingVideoView:)] setIncomingVideoView:view];
 }
 
 - (void)setMuted:(bool)muted
 {
-    if (self.context != nil && [self.context respondsToSelector:@selector(setIsMuted:)])
-        [self.context setIsMuted:muted];
+    [[self og_compat_contextHandling:@selector(setIsMuted:)] setIsMuted:muted];
 }
 
 - (void)setNetworkType:(int32_t)networkType
 {
-    if (self.context == nil || ![self.context respondsToSelector:@selector(setNetworkType:)])
-        return;
-    
-    int32_t mappedType = 0;
-    switch ((TGNetworkType)networkType)
-    {
-        case TGNetworkTypeGPRS:
-            mappedType = 1;
-            break;
-        case TGNetworkTypeEdge:
-            mappedType = 2;
-            break;
-        case TGNetworkType3G:
-            mappedType = 3;
-            break;
-        case TGNetworkTypeLTE:
-            mappedType = 4;
-            break;
-        case TGNetworkTypeWiFi:
-        default:
-            mappedType = 0;
-            break;
-    }
-    
-    [self.context setNetworkType:mappedType];
+    [[self og_compat_contextHandling:@selector(setNetworkType:)] setNetworkType:OGCompatNetworkCodeForType((TGNetworkType)networkType)];
 }
 
 - (void)stopWithCompletion:(void (^)(NSString *, int64_t, int64_t, int64_t, int64_t))completion
 {
-    id context = self.context;
-    self.context = nil;
+    id finishing = self.context;
     _started = false;
+    self.context = nil;
     
-    if (context != nil && [context respondsToSelector:@selector(stop:)]) {
-        [context stop:completion];
-    } else if (completion != nil) {
+    if (finishing != nil && [finishing respondsToSelector:@selector(stop:)])
+        [finishing stop:completion];
+    else if (completion != nil)
         completion(@"", 0, 0, 0, 0);
-    }
 }
 
 @end
@@ -478,9 +484,8 @@ const NSTimeInterval TGCallPacketTimeout = 10;
     TGObserverProxy *_applicationDidBecomeActiveProxy;
     
     id _notification;
-    NSUInteger _receivedSignalingPackets;
     NSMutableArray *_pendingSignalingData;
-    TGCallWebrtcRuntime *_webrtcRuntime;
+    OGCompatWebrtcRuntime *_webrtcRuntime;
 
     SPipe *_videoPipe;
     bool _localVideoEnabled;
@@ -554,9 +559,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
     if (data.length == 0)
         return;
     
-    _receivedSignalingPackets++;
-    TGCallWebrtcRuntime *runtime = nil;
-    int32_t pendingCount = 0;
+    OGCompatWebrtcRuntime *runtime = nil;
     @synchronized(self)
     {
         if (_webrtcRuntime != nil && _webrtcRuntime.started)
@@ -568,7 +571,6 @@ const NSTimeInterval TGCallPacketTimeout = 10;
             if (_pendingSignalingData.count >= 64)
                 [_pendingSignalingData removeObjectAtIndex:0];
             [_pendingSignalingData addObject:[data copy]];
-            pendingCount = (int32_t)_pendingSignalingData.count;
         }
     }
     
@@ -581,7 +583,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
 - (void)_flushPendingSignalingData
 {
     NSArray *pending = nil;
-    TGCallWebrtcRuntime *runtime = nil;
+    OGCompatWebrtcRuntime *runtime = nil;
     @synchronized(self)
     {
         if (_webrtcRuntime == nil || !_webrtcRuntime.started || _pendingSignalingData.count == 0)
@@ -669,6 +671,49 @@ static void loggingFunction(NSString *string)
     }];
 }
 
+- (void)og_compat_applyTransmissionState:(TGCallTransmissionState)newState
+{
+    TGDispatchOnMainThread(^
+    {
+        if (newState == _previousTransmissionState)
+            return;
+        
+        if (newState == TGCallTransmissionStateEstablished && _startTime < DBL_EPSILON)
+        {
+            _startTime = CFAbsoluteTimeGetCurrent();
+            
+            if (self.onConnected != nil)
+                self.onConnected();
+        }
+        
+        _transmissionPipe.sink(@(newState));
+        
+        switch (newState)
+        {
+            case TGCallTransmissionStateReconnecting:
+                if (_webrtcRuntime.started)
+                    TGDiagnosticLog(@"CALL webrtc.skipTone reconnecting");
+                else
+                    [self playTone:TGCallToneConnecting];
+                break;
+                
+            case TGCallTransmissionStateEstablished:
+                [self stopAudio];
+                break;
+                
+            case TGCallTransmissionStateFailed:
+                [self playTone:TGCallToneEnded];
+                [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
+                break;
+                
+            default:
+                break;
+        }
+        
+        _previousTransmissionState = newState;
+    });
+}
+
 - (void)controllerStateChanged:(int)state
 {
     TGCallTransmissionState tranmissionState = TGCallTransmissionStateInitializing;
@@ -690,78 +735,12 @@ static void loggingFunction(NSString *string)
             break;
     }
     
-    TGDispatchOnMainThread(^
-                           {
-                               if (tranmissionState == _previousTransmissionState)
-                                   return;
-                               
-                               if (tranmissionState == TGCallTransmissionStateEstablished && _startTime < DBL_EPSILON)
-                               {
-                                   _startTime = CFAbsoluteTimeGetCurrent();
-                                   
-                                   if (self.onConnected != nil)
-                                       self.onConnected();
-                               }
-                               
-                               _transmissionPipe.sink(@(tranmissionState));
-                               
-                               if (tranmissionState == TGCallTransmissionStateReconnecting)
-                               {
-                                   if (_webrtcRuntime.started)
-                                       TGDiagnosticLog(@"CALL webrtc.skipTone reconnecting");
-                                   else
-                                       [self playTone:TGCallToneConnecting];
-                               }
-                               else if (tranmissionState == TGCallTransmissionStateEstablished)
-                               {
-                                   [self stopAudio];
-                               }
-                               else if (tranmissionState == TGCallTransmissionStateFailed)
-                               {
-                                   [self playTone:TGCallToneEnded];
-                                   [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
-                               }
-                               
-                               _previousTransmissionState = tranmissionState;
-                           });
+    [self og_compat_applyTransmissionState:tranmissionState];
 }
 
 - (void)webrtcTransmissionStateChanged:(TGCallTransmissionState)tranmissionState
 {
-    TGDispatchOnMainThread(^
-                           {
-                               if (tranmissionState == _previousTransmissionState)
-                                   return;
-                               
-                               if (tranmissionState == TGCallTransmissionStateEstablished && _startTime < DBL_EPSILON)
-                               {
-                                   _startTime = CFAbsoluteTimeGetCurrent();
-                                   
-                                   if (self.onConnected != nil)
-                                       self.onConnected();
-                               }
-                               
-                               _transmissionPipe.sink(@(tranmissionState));
-                               
-                               if (tranmissionState == TGCallTransmissionStateReconnecting)
-                               {
-                                   if (_webrtcRuntime.started)
-                                       TGDiagnosticLog(@"CALL webrtc.skipTone reconnecting");
-                                   else
-                                       [self playTone:TGCallToneConnecting];
-                               }
-                               else if (tranmissionState == TGCallTransmissionStateEstablished)
-                               {
-                                   [self stopAudio];
-                               }
-                               else if (tranmissionState == TGCallTransmissionStateFailed)
-                               {
-                                   [self playTone:TGCallToneEnded];
-                                   [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
-                               }
-                               
-                               _previousTransmissionState = tranmissionState;
-                           });
+    [self og_compat_applyTransmissionState:tranmissionState];
 }
 
 #pragma mark - Signal Bars
@@ -816,6 +795,61 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
     }
     
     return path;
+}
+
+- (NSString *)og_compat_callLogPathForState:(TGCallStateData *)state
+{
+    NSString *fileName = [NSString stringWithFormat:@"%lld-%lld.log", state.callId, state.accessHash];
+    return [[self callLogsPath] stringByAppendingPathComponent:fileName];
+}
+
+- (void)og_compat_launchWebrtcForState:(TGCallStateData *)state
+{
+    NSString *logPath = [self og_compat_callLogPathForState:state];
+    NSString *statsLogPath = [logPath stringByAppendingPathExtension:@"json"];
+    if (_webrtcRuntime == nil)
+        _webrtcRuntime = [[OGCompatWebrtcRuntime alloc] init];
+    
+    __weak TGCallSession *weakSession = self;
+    _webrtcRuntime.remoteMediaChanged = ^(int32_t videoState, int32_t audioState) {
+        [weakSession _remoteMediaChangedWithVideoState:videoState audioState:audioState];
+    };
+    void (^barsHandler)(int32_t) = ^(int32_t bars) {
+        [weakSession signalBarsChanged:bars];
+    };
+    void (^stateHandler)(TGCallTransmissionState) = ^(TGCallTransmissionState transmissionState) {
+        [weakSession webrtcTransmissionStateChanged:transmissionState];
+    };
+    
+    if ([_webrtcRuntime startWithState:state outgoing:_outgoing logPath:logPath statsLogPath:statsLogPath signalBarsChanged:barsHandler stateChanged:stateHandler])
+    {
+        [self _flushPendingSignalingData];
+        [_webrtcRuntime setMuted:_muted];
+        [self _webrtcRuntimeDidStart];
+        [self startNetworkTypeMonitoring];
+        if (self.onStartedConnecting != nil)
+            self.onStartedConnecting();
+        return;
+    }
+    
+    TGDiagnosticLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
+    [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
+}
+
+- (void)og_compat_recordTrafficIncomingMobile:(int64_t)incomingMobile incomingWifi:(int64_t)incomingWifi outgoingMobile:(int64_t)outgoingMobile outgoingWifi:(int64_t)outgoingWifi
+{
+    MTNetworkUsageManager *usageManager = [[MTNetworkUsageManager alloc] initWithInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:TGNetworkMediaTypeTagCall]];
+    [usageManager addIncomingBytes:(NSUInteger)incomingMobile interface:MTNetworkUsageManagerInterfaceWWAN];
+    [usageManager addIncomingBytes:(NSUInteger)incomingWifi interface:MTNetworkUsageManagerInterfaceOther];
+    
+    [usageManager addOutgoingBytes:(NSUInteger)outgoingMobile interface:MTNetworkUsageManagerInterfaceWWAN];
+    [usageManager addOutgoingBytes:(NSUInteger)outgoingWifi interface:MTNetworkUsageManagerInterfaceOther];
+}
+
+- (void)og_compat_uploadDebugLog:(NSString *)debugLog ifRequested:(bool)requested
+{
+    if (requested && _callId != 0 && self.accessHash != 0 && debugLog.length != 0)
+        [[TGCallSignals saveCallDebug:_callId accessHash:self.accessHash data:debugLog] startWithNext:nil];
 }
 
 - (void)startTransmissionIfNeeded:(TGCallStateData *)state
@@ -883,39 +917,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
          {
              if (useWebRtc)
              {
-                 
-                 NSString *logPath = [[self callLogsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lld-%lld.log", state.callId, state.accessHash]];
-                 NSString *statsLogPath = [logPath stringByAppendingString:@".json"];
-                 if (_webrtcRuntime == nil)
-                     _webrtcRuntime = [[TGCallWebrtcRuntime alloc] init];
-                 
-                 __weak TGCallSession *weakSession = self;
-                 _webrtcRuntime.remoteMediaChanged = ^(int32_t videoState, int32_t audioState) {
-                     __strong TGCallSession *strongSession = weakSession;
-                     [strongSession _remoteMediaChangedWithVideoState:videoState audioState:audioState];
-                 };
-                 bool runtimeStarted = [_webrtcRuntime startWithState:state outgoing:_outgoing logPath:logPath statsLogPath:statsLogPath signalBarsChanged:^(int32_t bars) {
-                     __strong TGCallSession *strongSession = weakSession;
-                     if (strongSession != nil)
-                         [strongSession signalBarsChanged:bars];
-                 } stateChanged:^(TGCallTransmissionState transmissionState) {
-                     __strong TGCallSession *strongSession = weakSession;
-                     if (strongSession != nil)
-                         [strongSession webrtcTransmissionStateChanged:transmissionState];
-                 }];
-                 
-                 if (runtimeStarted) {
-                     [self _flushPendingSignalingData];
-                     [_webrtcRuntime setMuted:_muted];
-                     [self _webrtcRuntimeDidStart];
-                     [self startNetworkTypeMonitoring];
-                     if (self.onStartedConnecting != nil)
-                         self.onStartedConnecting();
-                     return;
-                 }
-                 
-                 TGDiagnosticLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
-                 [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
+                 [self og_compat_launchWebrtcForState:state];
                  return;
              }
              
@@ -925,50 +927,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
              __block bool didStartTransmission = false;
              [_controller with:^id(VoIPControllerHolder *controller) {
                  std::vector<tgvoip::Endpoint> endpoints;
-                 NSMutableArray *connections = [[NSMutableArray alloc] init];
-                 if (state.connection.defaultConnection != nil)
-                     [connections addObject:state.connection.defaultConnection];
-                 for (TGCallConnectionDescription *connection in state.connection.alternativeConnections) {
-                     if (connection != nil)
-                         [connections addObject:connection];
-                 }
+                 NSArray *connections = OGCompatOrderedRelays(state);
                  
-                 NSString *logPath = [[self callLogsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lld-%lld.log", state.callId, state.accessHash]];
-                 NSString *statsLogPath = [logPath stringByAppendingString:@".json"];
-                 
-                 if (useWebRtc)
-                 {
-                     if (_webrtcRuntime == nil)
-                         _webrtcRuntime = [[TGCallWebrtcRuntime alloc] init];
-                     
-                     __weak TGCallSession *weakSession = self;
-                     _webrtcRuntime.remoteMediaChanged = ^(int32_t videoState, int32_t audioState) {
-                         __strong TGCallSession *strongSession = weakSession;
-                         [strongSession _remoteMediaChangedWithVideoState:videoState audioState:audioState];
-                     };
-                     bool runtimeStarted = [_webrtcRuntime startWithState:state outgoing:_outgoing logPath:logPath statsLogPath:statsLogPath signalBarsChanged:^(int32_t bars) {
-                         __strong TGCallSession *strongSession = weakSession;
-                         if (strongSession != nil)
-                             [strongSession signalBarsChanged:bars];
-                     } stateChanged:^(TGCallTransmissionState transmissionState) {
-                         __strong TGCallSession *strongSession = weakSession;
-                         if (strongSession != nil)
-                             [strongSession webrtcTransmissionStateChanged:transmissionState];
-                     }];
-                     
-                     if (runtimeStarted) {
-                         [self _flushPendingSignalingData];
-                         [_webrtcRuntime setMuted:_muted];
-                         [self _webrtcRuntimeDidStart];
-                         [self startNetworkTypeMonitoring];
-                         didStartTransmission = true;
-                         return nil;
-                     }
-                     
-                     TGDiagnosticLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
-                     [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
-                     return nil;
-                 }
+                 NSString *logPath = [self og_compat_callLogPathForState:state];
                  
                  for (TGCallConnectionDescription *connection in connections)
                  {
@@ -1209,18 +1170,11 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         [self _updateVideoState];
     });
     if (_webrtcRuntime.started) {
-        TGCallWebrtcRuntime *runtime = _webrtcRuntime;
+        OGCompatWebrtcRuntime *runtime = _webrtcRuntime;
         _webrtcRuntime = nil;
         [runtime stopWithCompletion:^(NSString *debugLog, int64_t bytesSentWifi, int64_t bytesReceivedWifi, int64_t bytesSentMobile, int64_t bytesReceivedMobile) {
-            MTNetworkUsageManager *usageManager = [[MTNetworkUsageManager alloc] initWithInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:TGNetworkMediaTypeTagCall]];
-            [usageManager addIncomingBytes:(NSUInteger)bytesReceivedMobile interface:MTNetworkUsageManagerInterfaceWWAN];
-            [usageManager addIncomingBytes:(NSUInteger)bytesReceivedWifi interface:MTNetworkUsageManagerInterfaceOther];
-            
-            [usageManager addOutgoingBytes:(NSUInteger)bytesSentMobile interface:MTNetworkUsageManagerInterfaceWWAN];
-            [usageManager addOutgoingBytes:(NSUInteger)bytesSentWifi interface:MTNetworkUsageManagerInterfaceOther];
-            
-            if (sendDebugLog && _callId != 0 && self.accessHash != 0 && debugLog.length != 0)
-                [[TGCallSignals saveCallDebug:_callId accessHash:self.accessHash data:debugLog] startWithNext:nil];
+            [self og_compat_recordTrafficIncomingMobile:bytesReceivedMobile incomingWifi:bytesReceivedWifi outgoingMobile:bytesSentMobile outgoingWifi:bytesSentWifi];
+            [self og_compat_uploadDebugLog:debugLog ifRequested:sendDebugLog];
         }];
     }
     
@@ -1249,15 +1203,8 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         controller.controller->Stop();
         delete controller.controller;
         
-        MTNetworkUsageManager *usageManager = [[MTNetworkUsageManager alloc] initWithInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:TGNetworkMediaTypeTagCall]];
-        [usageManager addIncomingBytes:(NSUInteger)stats.bytesRecvdMobile interface:MTNetworkUsageManagerInterfaceWWAN];
-        [usageManager addIncomingBytes:(NSUInteger)stats.bytesRecvdWifi interface:MTNetworkUsageManagerInterfaceOther];
-        
-        [usageManager addOutgoingBytes:(NSUInteger)stats.bytesSentMobile interface:MTNetworkUsageManagerInterfaceWWAN];
-        [usageManager addOutgoingBytes:(NSUInteger)stats.bytesSentWifi interface:MTNetworkUsageManagerInterfaceOther];
-        
-        if (sendDebugLog && _callId != 0 && self.accessHash != 0 && debugLog.length != 0)
-            [[TGCallSignals saveCallDebug:_callId accessHash:self.accessHash data:debugLog] startWithNext:nil];
+        [self og_compat_recordTrafficIncomingMobile:stats.bytesRecvdMobile incomingWifi:stats.bytesRecvdWifi outgoingMobile:stats.bytesSentMobile outgoingWifi:stats.bytesSentWifi];
+        [self og_compat_uploadDebugLog:debugLog ifRequested:sendDebugLog];
         
         return nil;
     }];
@@ -1385,9 +1332,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         [data getBytes:&value length:4];
         value /= 1000;
     }
-    if (value < 90)
-        value = 90;
-    return value;
+    return MAX(value, 90);
 }
 
 + (NSTimeInterval)callRingTimeout
@@ -1431,9 +1376,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
     if (![data isKindOfClass:[NSString class]] || data.length == 0)
         return;
     
-    TGIOS6CurrentCallsConfig = [data copy];
+    OGCompatCurrentCallsConfig = [data copy];
     
-    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    Class contextClass = OGCompatWebrtcContextClass();
     if (contextClass != nil &&
         [contextClass respondsToSelector:@selector(applyServerConfig:)])
     {
@@ -1781,12 +1726,12 @@ static id<SDisposable> audioSession;
 
 + (bool)supportsVideoSending
 {
-    return [TGCallWebrtcRuntime supportsVideoSending];
+    return [OGCompatWebrtcRuntime supportsVideoSending];
 }
 
 + (bool)supportsVideoReceiving
 {
-    return [TGCallWebrtcRuntime supportsVideoReceiving];
+    return [OGCompatWebrtcRuntime supportsVideoReceiving];
 }
 
 - (bool)localVideoEnabled

@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTPathAnimator.m
 //  Pods
@@ -15,8 +15,8 @@
   LOTPathInterpolator *_interpolator;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  shapePath:(LOTShapePath *)shapePath {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  shapePath:(LOTShapePath *_Nonnull)shapePath {
   self = [super initWithInputNode:inputNode keyName:shapePath.keyname];
   if (self) {
     _pathConent = shapePath;

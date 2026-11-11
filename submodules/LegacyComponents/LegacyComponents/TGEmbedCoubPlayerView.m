@@ -16,12 +16,13 @@
 #import <QuartzCore/QuartzCore.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
-@interface TGEmbedCoubURLTaskAdapter : NSObject <NSURLConnectionDataDelegate>
+#define OG_COMPAT_COUB_CONNECTION_DELEGATE <NSURLConnectionDataDelegate>
 #else
-@interface TGEmbedCoubURLTaskAdapter : NSObject
+#define OG_COMPAT_COUB_CONNECTION_DELEGATE
 #endif
+@interface TGEmbedCoubURLTaskAdapter : NSObject OG_COMPAT_COUB_CONNECTION_DELEGATE
 {
-    NSURLConnection *_connection;
+    NSURLConnection *_redirectProbe;
 }
 
 @property (nonatomic, copy) void (^redirectUrl)(NSString *);
@@ -569,23 +570,26 @@ static PSLMDBKeyValueStore *TGEmbedCoubRetiredMetaStore = nil;
     self = [super init];
     if (self != nil)
     {
-        NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:url]];
-        _connection = [[NSURLConnection alloc] initWithRequest:request delegate:self startImmediately:true];
+        NSURL *target = [NSURL URLWithString:url];
+        _redirectProbe = [[NSURLConnection alloc] initWithRequest:[NSURLRequest requestWithURL:target] delegate:self startImmediately:true];
     }
     return self;
 }
 
 - (NSURLRequest *)connection:(NSURLConnection *)connection willSendRequest:(NSURLRequest *)request redirectResponse:(NSURLResponse *)response
 {
-    if ([response isKindOfClass:[NSHTTPURLResponse class]] && self.redirectUrl != nil)
-        self.redirectUrl(((NSHTTPURLResponse *)response).allHeaderFields[@"Location"]);
+    if (self.redirectUrl != nil && [response isKindOfClass:[NSHTTPURLResponse class]])
+    {
+        NSDictionary *headers = ((NSHTTPURLResponse *)response).allHeaderFields;
+        self.redirectUrl(headers[@"Location"]);
+    }
     return request;
 }
 
 - (void)invalidate
 {
-    [_connection cancel];
-    _connection = nil;
+    [_redirectProbe cancel];
+    _redirectProbe = nil;
 }
 
 @end

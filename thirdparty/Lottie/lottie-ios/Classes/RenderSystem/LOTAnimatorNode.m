@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimatorNode.m
 //  Pods
@@ -15,8 +15,8 @@ NSInteger indentation_level = 0;
 
 @implementation LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                    keyName:(NSString *)keyname {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                    keyName:(NSString *_Nullable)keyname {
   self = [super init];
   if (self) {
     _keyname = keyname;
@@ -31,12 +31,12 @@ NSInteger indentation_level = 0;
 }
 
 /// The node checks if local update or if upstream update required. If upstream update outputs are rebuilt. If local update local update is performed. Returns no if no action
-- (BOOL)updateWithFrame:(NSNumber *)frame {
+- (BOOL)updateWithFrame:(NSNumber *_Nonnull)frame {
   return [self updateWithFrame:frame withModifierBlock:NULL forceLocalUpdate:NO];
 }
 
-- (BOOL)updateWithFrame:(NSNumber *)frame
-      withModifierBlock:(void (^)(LOTAnimatorNode *  inputNode))modifier
+- (BOOL)updateWithFrame:(NSNumber *_Nonnull)frame
+      withModifierBlock:(void (^_Nullable)(LOTAnimatorNode * _Nonnull inputNode))modifier
        forceLocalUpdate:(BOOL)forceUpdate {
   if ([_currentFrame isEqual:frame] && !forceUpdate) {
     return NO;
@@ -63,7 +63,7 @@ NSInteger indentation_level = 0;
   return (inputUpdated || localUpdate);
 }
 
-- (void)forceSetCurrentFrame:(NSNumber *)frame {
+- (void)forceSetCurrentFrame:(NSNumber *_Nonnull)frame {
   _currentFrame = frame;
 }
 
@@ -98,7 +98,7 @@ NSInteger indentation_level = 0;
   self.inputNode.pathShouldCacheLengths = pathShouldCacheLengths;
 }
 
-- (void)searchNodesForKeypath:(LOTKeypath * )keypath {
+- (void)searchNodesForKeypath:(LOTKeypath * _Nonnull)keypath {
   [self.inputNode searchNodesForKeypath:keypath];
   if ([keypath pushKey:self.keyname]) {
     // Matches self. Check interpolators
@@ -115,8 +115,8 @@ NSInteger indentation_level = 0;
   }
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate
-              forKeypath:(LOTKeypath * )keypath {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate
+              forKeypath:(LOTKeypath * _Nonnull)keypath {
   if ([keypath pushKey:self.keyname]) {
     // Matches self. Check interpolators
     LOTValueInterpolator *interpolator = self.valueInterpolators[keypath.currentKey];

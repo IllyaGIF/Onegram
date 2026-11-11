@@ -410,10 +410,10 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
         }
         else
         {
-            bool classicIOS6Style = TGNavigationControllerClassicIOS6Style() && navigationBarClass != [TGWhiteNavigationBar class];
-            bool classicDarkStyle = classicIOS6Style && TGNavigationControllerClassicDarkPalette(pallete);
+            bool classicThemeStyle = TGNavigationControllerClassicIOS6Style() && navigationBarClass != [TGWhiteNavigationBar class];
+            bool classicDarkStyle = classicThemeStyle && TGNavigationControllerClassicDarkPalette(pallete);
             backgroundView.hidden = false;
-            if (classicIOS6Style)
+            if (classicThemeStyle)
             {
                 bool useBrandedImage = TGNavigationControllerBrandedIOS6Style() && [[LegacyComponentsGlobals provider] respondsToSelector:@selector(brandedIOS6NavigationBarBackgroundImageForSize:overflow:variant:)];
                 backgroundView.backgroundColor = [UIColor clearColor];
@@ -707,15 +707,15 @@ static UIBarButtonItem *TGNavigationControllerLegacyBackItem(TGNavigationControl
         return nil;
 
     UIColor *tintColor = pallete != nil ? pallete.tintColor : TGAccentColor();
-    bool classicIOS6Style = TGNavigationControllerClassicIOS6Style();
+    bool classicThemeStyle = TGNavigationControllerClassicIOS6Style();
     id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
-    bool brandedIOS6Style = classicIOS6Style && TGNavigationControllerBrandedIOS6Style() && [provider respondsToSelector:@selector(brandedIOS6NavigationBarBackButtonImageForWidth:highlighted:)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonFont)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonShadowColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonTitleColor)];
-    UIFont *font = brandedIOS6Style ? [provider brandedIOS6NavigationBarButtonFont] : (classicIOS6Style ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont systemFontOfSize:16.0f]);
+    bool brandedIOS6Style = classicThemeStyle && TGNavigationControllerBrandedIOS6Style() && [provider respondsToSelector:@selector(brandedIOS6NavigationBarBackButtonImageForWidth:highlighted:)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonFont)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonShadowColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonTitleColor)];
+    UIFont *font = brandedIOS6Style ? [provider brandedIOS6NavigationBarButtonFont] : (classicThemeStyle ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont systemFontOfSize:16.0f]);
     CGSize titleSize = [title sizeWithFont:font];
     UIImage *normalImage = nil;
     UIImage *highlightedImage = nil;
     CGFloat width = 0.0f;
-    if (classicIOS6Style)
+    if (classicThemeStyle)
     {
         width = MIN(150.0f, MAX(44.0f, titleSize.width + 25.0f));
         normalImage = brandedIOS6Style ? [provider brandedIOS6NavigationBarBackButtonImageForWidth:width highlighted:false] : TGNavigationControllerClassicIOS6BackImage(false, pallete);
@@ -730,11 +730,11 @@ static UIBarButtonItem *TGNavigationControllerLegacyBackItem(TGNavigationControl
 
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
     button.tag = TGNavigationControllerLegacyBackButtonTag;
-    button.frame = CGRectMake(0.0f, 0.0f, width, classicIOS6Style ? 30.0f : 44.0f);
+    button.frame = CGRectMake(0.0f, 0.0f, width, classicThemeStyle ? 30.0f : 44.0f);
     button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
     button.titleLabel.font = font;
     button.titleLabel.lineBreakMode = UILineBreakModeTailTruncation;
-    if (classicIOS6Style)
+    if (classicThemeStyle)
     {
         [button setBackgroundImage:normalImage forState:UIControlStateNormal];
         [button setBackgroundImage:highlightedImage ?: normalImage forState:UIControlStateHighlighted];

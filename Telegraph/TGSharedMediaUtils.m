@@ -4,18 +4,26 @@
 #import "../OnegramPlatform/OGMemoryCache.h"
 #import <sys/utsname.h>
 
-static bool TGIOS6SlowSharedMediaDevice()
+static bool OGCompatIsLowPowerMediaHardware(void)
 {
-    static bool result = false;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    static bool lowPower = false;
+    static dispatch_once_t probeToken;
+    dispatch_once(&probeToken, ^
     {
-        struct utsname systemInfo;
-        uname(&systemInfo);
-        NSString *machine = [[NSString alloc] initWithUTF8String:systemInfo.machine] ?: @"";
-        result = [machine hasPrefix:@"iPhone2,"] || [machine hasPrefix:@"iPhone3,"] || [machine hasPrefix:@"iPod4,"] || [machine hasPrefix:@"iPad1,"];
+        struct utsname name;
+        memset(&name, 0, sizeof(name));
+        uname(&name);
+        NSString *model = [NSString stringWithUTF8String:name.machine] ?: @"";
+        for (NSString *prefix in @[@"iPhone2,", @"iPhone3,", @"iPod4,", @"iPad1,"])
+        {
+            if ([model hasPrefix:prefix])
+            {
+                lowPower = true;
+                break;
+            }
+        }
     });
-    return result;
+    return lowPower;
 }
 
 @implementation TGSharedMediaUtils
@@ -50,10 +58,7 @@ static bool TGIOS6SlowSharedMediaDevice()
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        if (TGIOS6SlowSharedMediaDevice())
-            instance = [[SThreadPool alloc] initWithThreadCount:1 threadPriority:0.25];
-        else
-            instance = [[SThreadPool alloc] init];
+        instance = OGCompatIsLowPowerMediaHardware() ? [[SThreadPool alloc] initWithThreadCount:1 threadPriority:0.25] : [[SThreadPool alloc] init];
     });
     return instance;
 }

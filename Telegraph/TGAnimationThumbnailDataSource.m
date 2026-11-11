@@ -26,18 +26,25 @@
 
 #import "TGAppDelegate.h"
 
-static bool TGIOS6SlowThumbnailDevice()
+static bool OGCompatDeviceSkipsReducedCache()
 {
-    static bool result = false;
+    static bool skips = false;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        struct utsname systemInfo;
-        uname(&systemInfo);
-        NSString *machine = [[NSString alloc] initWithUTF8String:systemInfo.machine] ?: @"";
-        result = [machine hasPrefix:@"iPhone2,"] || [machine hasPrefix:@"iPhone3,"] || [machine hasPrefix:@"iPod4,"] || [machine hasPrefix:@"iPad1,"];
+        struct utsname info;
+        uname(&info);
+        NSString *model = [NSString stringWithUTF8String:info.machine] ?: @"";
+        for (NSString *prefix in @[@"iPhone2,", @"iPhone3,", @"iPod4,", @"iPad1,"])
+        {
+            if ([model hasPrefix:prefix])
+            {
+                skips = true;
+                break;
+            }
+        }
     });
-    return result;
+    return skips;
 }
 
 static TGWorkerPool *workerPool()
@@ -415,7 +422,7 @@ static ASQueue *taskManagementQueue()
                 videoFilePath = [videoFilePath stringByAppendingPathExtension:@"mov"];
             }
             
-            CGSize maximumSize = TGIOS6SlowThumbnailDevice() ? CGSizeMake(360.0f, 360.0f) : CGSizeMake(800.0f, 800.0f);
+            CGSize maximumSize = OGCompatDeviceSkipsReducedCache() ? CGSizeMake(360.0f, 360.0f) : CGSizeMake(800.0f, 800.0f);
             image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:videoFilePath], 0.0, maximumSize);
         }
         
@@ -520,13 +527,12 @@ static ASQueue *taskManagementQueue()
             
             NSDictionary *imageAttachments = [thumbnailImage attachmentsDictionary];
             
-            if (!TGIOS6SlowThumbnailDevice())
+            if (!OGCompatDeviceSkipsReducedCache())
             {
                 [[TGMediaStoreContext instance] inMediaReducedImageCacheGenerationQueue:^
                 {
                     __autoreleasing NSDictionary *attributes = nil;
-                    UIImage *alreadyCachedImage = [[TGMediaStoreContext instance] mediaReducedImage:uri attributes:&attributes];
-                    bool alreadyCached = alreadyCachedImage != nil;
+                    bool alreadyCached = [[TGMediaStoreContext instance] mediaReducedImage:uri attributes:&attributes] != nil;
                     bool cachedLowQualityThumbnail = [attributes isKindOfClass:[NSDictionary class]] && [[attributes objectForKey:@"lowQuality"] boolValue];
                     
                     if (!alreadyCached || (cachedLowQualityThumbnail && !lowQualityThumbnail))

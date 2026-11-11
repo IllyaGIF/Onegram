@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimatedControl.m
 //  Lottie
@@ -48,7 +48,7 @@
   [self checkStateChangedAndUpdate:YES];
 }
 
-- (void)setLayerName:(NSString * )layerName forState:(UIControlState)state {
+- (void)setLayerName:(NSString * _Nonnull)layerName forState:(UIControlState)state {
   _layerMap[@(state)] = layerName;
   [self checkStateChangedAndUpdate:YES];
 }

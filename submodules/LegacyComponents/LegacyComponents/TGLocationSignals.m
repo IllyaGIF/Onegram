@@ -252,9 +252,10 @@ static SSignal *TGLocationGeocodeAddressSignal(NSString *address)
 
 + (SSignal *)driveEta:(CLLocationCoordinate2D)destinationCoordinate
 {
+    SSignal *unavailable = [SSignal single:@0];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     if (iosMajorVersion() < 7)
-        return [SSignal single:@0];
+        return unavailable;
     
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -288,7 +289,7 @@ static SSignal *TGLocationGeocodeAddressSignal(NSString *address)
     }];
 #else
     (void)destinationCoordinate;
-    return [SSignal single:@0];
+    return unavailable;
 #endif
 }
 

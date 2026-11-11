@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAsset.m
 //  Pods
@@ -15,8 +15,8 @@
 @implementation LOTAsset
 
 - (instancetype)initWithJSON:(NSDictionary *)jsonDictionary
-              withAssetGroup:(LOTAssetGroup * )assetGroup
-             withAssetBundle:(NSBundle *)bundle
+              withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
+             withAssetBundle:(NSBundle *_Nonnull)bundle
                withFramerate:(NSNumber *)framerate {
   self = [super init];
   if (self) {
@@ -29,27 +29,27 @@
 }
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary
-      withAssetGroup:(LOTAssetGroup * )assetGroup
+      withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
        withFramerate:(NSNumber *)framerate {
-  _referenceID = [[jsonDictionary objectForKey:@2] copy];
+  _referenceID = [jsonDictionary[@"id"] copy];
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _assetWidth = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"w"]) {
+    _assetWidth = [jsonDictionary[@"w"] copy];
   }
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _assetHeight = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"h"]) {
+    _assetHeight = [jsonDictionary[@"h"] copy];
   }
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _imageDirectory = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"u"]) {
+    _imageDirectory = [jsonDictionary[@"u"] copy];
   }
   
-  if ([jsonDictionary objectForKey:@2]) {
-    _imageName = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"p"]) {
+    _imageName = [jsonDictionary[@"p"] copy];
   }
 
-  NSArray *layersJSON = [jsonDictionary objectForKey:@2];
+  NSArray *layersJSON = jsonDictionary[@"layers"];
   if (layersJSON) {
     _layerGroup = [[LOTLayerGroup alloc] initWithLayerJSON:layersJSON
                                             withAssetGroup:assetGroup

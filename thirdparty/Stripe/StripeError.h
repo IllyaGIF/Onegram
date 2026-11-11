@@ -54,21 +54,21 @@ FOUNDATION_EXPORT NSString * __nonnull const STPIncorrectCVC;
 
 @interface NSError(Stripe)
 
-+ (NSError *)stp_errorFromStripeResponse:(NSDictionary *)jsonDictionary;
-+ (NSError *)stp_genericFailedToParseResponseError;
++ (NSError *_Nullable)stp_errorFromStripeResponse:(NSDictionary *_Nullable)jsonDictionary;
++ (NSError *_Nonnull)stp_genericFailedToParseResponseError;
 - (BOOL)stp_isUnknownCheckoutError;
 - (BOOL)stp_isURLSessionCancellationError;
 
 #pragma mark Strings
 
-+ (NSString *)stp_cardErrorInvalidNumberUserMessage;
-+ (NSString *)stp_cardInvalidCVCUserMessage;
-+ (NSString *)stp_cardErrorInvalidExpMonthUserMessage;
-+ (NSString *)stp_cardErrorInvalidExpYearUserMessage;
-+ (NSString *)stp_cardErrorExpiredCardUserMessage;
-+ (NSString *)stp_cardErrorDeclinedUserMessage;
-+ (NSString *)stp_cardErrorProcessingErrorUserMessage;
-+ (NSString *)stp_unexpectedErrorMessage;
++ (NSString *_Nonnull)stp_cardErrorInvalidNumberUserMessage;
++ (NSString *_Nonnull)stp_cardInvalidCVCUserMessage;
++ (NSString *_Nonnull)stp_cardErrorInvalidExpMonthUserMessage;
++ (NSString *_Nonnull)stp_cardErrorInvalidExpYearUserMessage;
++ (NSString *_Nonnull)stp_cardErrorExpiredCardUserMessage;
++ (NSString *_Nonnull)stp_cardErrorDeclinedUserMessage;
++ (NSString *_Nonnull)stp_cardErrorProcessingErrorUserMessage;
++ (NSString *_Nonnull)stp_unexpectedErrorMessage;
 
 
 @end

@@ -3,18 +3,18 @@
 #import "TGAppDelegate.h"
 #import <objc/runtime.h>
 
-static const void *TGIOS6AudioOriginInfoKey = &TGIOS6AudioOriginInfoKey;
+static const void *OGCompatAudioOriginKey = &OGCompatAudioOriginKey;
 
 @implementation TGAudioMediaAttachment (TG)
 
-- (void)setIos6OriginInfo:(TGMediaOriginInfo *)ios6OriginInfo
+- (void)setDownloadOriginInfo:(TGMediaOriginInfo *)downloadOriginInfo
 {
-    objc_setAssociatedObject(self, TGIOS6AudioOriginInfoKey, ios6OriginInfo, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, OGCompatAudioOriginKey, downloadOriginInfo, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (TGMediaOriginInfo *)ios6OriginInfo
+- (TGMediaOriginInfo *)downloadOriginInfo
 {
-    return objc_getAssociatedObject(self, TGIOS6AudioOriginInfoKey);
+    return objc_getAssociatedObject(self, OGCompatAudioOriginKey);
 }
 
 + (NSString *)localAudioFileDirectoryForLocalAudioId:(int64_t)audioId

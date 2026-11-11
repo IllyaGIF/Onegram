@@ -852,3 +852,109 @@
 
 
 @end
+
+@implementation TLMessageAction$messageActionPaidMessagesRefunded : TLMessageAction
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0xac1f1fcd;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0x84abf3d8;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLMessageAction$messageActionPaidMessagesRefunded *object = [[TLMessageAction$messageActionPaidMessagesRefunded alloc] init];
+    object.count = metaObject->getInt32((int32_t)0x5fa6aa74);
+    object.stars = metaObject->getInt64((int32_t)0x701c16a6);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.count;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x5fa6aa74, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.stars;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x701c16a6, value));
+    }
+}
+
+
+@end
+
+@implementation TLMessageAction$messageActionPaidMessagesPrice : TLMessageAction
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x84b88578;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0x2339ca7d;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLMessageAction$messageActionPaidMessagesPrice *object = [[TLMessageAction$messageActionPaidMessagesPrice alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
+    object.stars = metaObject->getInt64((int32_t)0x701c16a6);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.stars;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x701c16a6, value));
+    }
+}
+
+
+@end
+
+@implementation TLMessageAction$messageActionNoPaidMessagesTokenUsed : TLMessageAction
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0xc1d2f1c6;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0xa06f5b73;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
+{
+    TLMessageAction$messageActionNoPaidMessagesTokenUsed *object = [[TLMessageAction$messageActionNoPaidMessagesTokenUsed alloc] init];
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+
+@end

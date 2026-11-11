@@ -19,8 +19,15 @@
 @property (nonatomic, readonly) UIColor *badgeTextColor;
 @property (nonatomic, readonly) UIImage *badgeImage;
 @property (nonatomic, readonly) UIImage *cornersImage;
+@property (nonatomic, readonly, copy) UIImage *(^surfaceImage)(CGSize size);
+@property (nonatomic, readonly) CGFloat surfaceCornerRadius;
+@property (nonatomic, readonly) UIFont *buttonFont;
+@property (nonatomic, readonly) UIFont *cancelButtonFont;
+@property (nonatomic, readonly) UIColor *textShadowColor;
+@property (nonatomic, readonly) CGSize textShadowOffset;
 
 + (instancetype)palleteWithDark:(bool)dark backgroundColor:(UIColor *)backgroundColor selectionColor:(UIColor *)selectionColor separatorColor:(UIColor *)separatorColor accentColor:(UIColor *)accentColor destructiveColor:(UIColor *)destructiveColor textColor:(UIColor *)textColor secondaryTextColor:(UIColor *)secondaryTextColor spinnerColor:(UIColor *)spinnerColor badgeTextColor:(UIColor *)badgeTextColor badgeImage:(UIImage *)badgeImage cornersImage:(UIImage *)cornersImage;
+- (instancetype)palleteWithSurfaceImage:(UIImage *(^)(CGSize size))surfaceImage cornerRadius:(CGFloat)cornerRadius buttonFont:(UIFont *)buttonFont cancelButtonFont:(UIFont *)cancelButtonFont textShadowColor:(UIColor *)textShadowColor textShadowOffset:(CGSize)textShadowOffset;
 
 @end
 

@@ -248,13 +248,15 @@
         else if (TGScreenScaling() == 1.0f)
             inset = 3.5f;
         
-        CGSize inlineVideoRenderSize = video.dimensions;
-        if (inlineVideoRenderSize.width < FLT_EPSILON || inlineVideoRenderSize.height < FLT_EPSILON)
-            inlineVideoRenderSize = renderSize;
-        if (inlineVideoRenderSize.width < FLT_EPSILON || inlineVideoRenderSize.height < FLT_EPSILON)
-            inlineVideoRenderSize = roundSize;
-        inlineVideoRenderSize = TGScaleToFill(inlineVideoRenderSize, roundSize);
-        _imageModel.inlineVideoSize = CGSizeMake(inlineVideoRenderSize.width * scale, inlineVideoRenderSize.height * scale);
+        CGSize inlineSourceSize = CGSizeZero;
+        for (NSValue *candidate in @[[NSValue valueWithCGSize:video.dimensions], [NSValue valueWithCGSize:renderSize], [NSValue valueWithCGSize:roundSize]])
+        {
+            inlineSourceSize = [candidate CGSizeValue];
+            if (inlineSourceSize.width >= FLT_EPSILON && inlineSourceSize.height >= FLT_EPSILON)
+                break;
+        }
+        CGSize inlineFilled = TGScaleToFill(inlineSourceSize, roundSize);
+        _imageModel.inlineVideoSize = CGSizeMake(inlineFilled.width * scale, inlineFilled.height * scale);
         _imageModel.inlineVideoCornerRadius = (roundSize.width - inset * 2) / 2.0f;
         _imageModel.inlineVideoInsets = UIEdgeInsetsZero;
         [self addSubmodel:_imageModel];

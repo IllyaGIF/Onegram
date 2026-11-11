@@ -38,7 +38,7 @@
     __weak id<TGModernConversationCollectionTouchBehaviour> _currentInstantPreviewTarget;
     
     NSTimeInterval _ignoreBackgroundTouchBeforeDate;
-    UIToolbar *_dimView;
+    UIView *_dimView;
     
     bool _layoutInProgress;
 }
@@ -722,11 +722,12 @@
     
     if (_dimView == nil)
     {
-        _dimView = [[UIToolbar alloc] init];
-        _dimView.alpha = 0.0f;
-        _dimView.barStyle = UIBarStyleBlack;
-        _dimView.translucent = true;
-        _dimView.userInteractionEnabled = false;
+        UIToolbar *dimmingBar = [[UIToolbar alloc] init];
+        dimmingBar.barStyle = UIBarStyleBlack;
+        dimmingBar.translucent = true;
+        dimmingBar.userInteractionEnabled = false;
+        dimmingBar.alpha = 0.0f;
+        _dimView = dimmingBar;
         [self addSubview:_dimView];
     }
     else

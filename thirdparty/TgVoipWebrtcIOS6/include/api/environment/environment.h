@@ -1,12 +1,10 @@
-#ifndef TGIOS6_API_ENVIRONMENT_ENVIRONMENT_H
-#define TGIOS6_API_ENVIRONMENT_ENVIRONMENT_H
+#ifndef OG_COMPAT_API_ENVIRONMENT_ENVIRONMENT_H
+#define OG_COMPAT_API_ENVIRONMENT_ENVIRONMENT_H
 
 namespace webrtc {
 
-class Environment {
-public:
-	Environment() {
-	}
+struct Environment {
+	Environment() = default;
 };
 
 } // namespace webrtc

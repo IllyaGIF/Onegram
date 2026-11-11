@@ -81,6 +81,11 @@ static TGChannelDirectMessagesConversationCompanion *TGChannelDirectMessagesReso
     [_readDisposable dispose];
 }
 
+- (bool)allowPollSending
+{
+    return false;
+}
+
 - (bool)_threadContainsMessage:(TGMessage *)message
 {
     return [message isKindOfClass:[TGMessage class]] && message.savedPeerId == _threadPeerId;
@@ -367,6 +372,20 @@ static TGChannelDirectMessagesConversationCompanion *TGChannelDirectMessagesReso
 {
     [super _setupPreparedMessage:message];
     message.monoforumPeerId = _threadPeerId;
+}
+
+- (bool)_paidMessagesExemptForConversation:(TGConversation *)monoforum
+{
+    return [TGChannelDirectMessagesSignals canManageDirectMessagesInMonoforum:monoforum];
+}
+
+- (int64_t)_paidMessagesPriceForConversation:(TGConversation *)monoforum
+{
+    if (monoforum == nil || [self _paidMessagesExemptForConversation:monoforum])
+        return 0;
+    if (monoforum.sendPaidMessagesStars > 0)
+        return monoforum.sendPaidMessagesStars;
+    return [TGChannelDirectMessagesSignals broadcastChannelForMonoforum:monoforum].sendPaidMessagesStars;
 }
 
 - (SSignal *)_requestPinnedMessages

@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimationView
 //  LottieAnimator
@@ -15,7 +15,7 @@
 @property CGPoint endPoint;
 
 @property (nonatomic, copy) NSArray *colors;
-@property (nonatomic, copy) NSArray *locations;
+@property (nonatomic, copy) OG_COMPAT_GENERIC(NSArray, NSNumber *) *locations;
 @property (nonatomic, assign) BOOL isRadial;
 
 @end

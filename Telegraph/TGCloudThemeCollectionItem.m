@@ -74,7 +74,7 @@ static const CGFloat TGCloudThemeCollectionItemTitleInset = 44.0f;
     [super layoutSubviews];
 
     CGSize size = self.editingContentView.frame.size;
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     CGFloat editingInset = self.enableEditing && self.showsDeleteIndicator ? 38.0f : 0.0f;
     CGFloat leftInset = TGCloudThemeCollectionItemTitleInset + classicInset + editingInset + self.safeAreaInset.left;
     _titleLabel.frame = CGRectMake(leftInset, CGFloor((size.height - 26.0f) / 2.0f), MAX(0.0f, size.width - leftInset - 16.0f - classicInset - self.safeAreaInset.right), 26.0f);

@@ -13,16 +13,21 @@
 
 #import "TL/TLMetaScheme.h"
 
+static NSString *OGCompatCallRpcErrorText(id error)
+{
+    return [error isKindOfClass:[MTRpcError class]] ? ((MTRpcError *)error).errorDescription : nil;
+}
+
 @interface TGCallManager () {
     SQueue *_queue;
     int32_t _nextInternalId;
     
-    NSMutableDictionary *_callContexts;
+    NSMutableDictionary *_activeCallContexts;
     
     SPipe *_incomingCallInternalIdsPipe;
     SPipe *_endedIncomingCallInternalIdsPipe;
     
-    NSMutableArray *_discardedCallIds;
+    NSMutableArray *_finishedCallIds;
     
     TGCallKitAdapter *_callKitAdapter;
 }
@@ -34,8 +39,8 @@
     self = [super init];
     if (self != nil) {
         _queue = [[SQueue alloc] init];
-        _callContexts = [[NSMutableDictionary alloc] init];
-        _discardedCallIds = [[NSMutableArray alloc] init];
+        _activeCallContexts = [[NSMutableDictionary alloc] init];
+        _finishedCallIds = [[NSMutableArray alloc] init];
         _incomingCallInternalIdsPipe = [[SPipe alloc] init];
         _endedIncomingCallInternalIdsPipe = [[SPipe alloc] init];
         
@@ -51,10 +56,10 @@
 
 - (void)reset {
     [_queue dispatch:^{
-        [_callContexts enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGCallContext *context, __unused BOOL *stop) {
+        [_activeCallContexts enumerateKeysAndObjectsUsingBlock:^(__unused NSNumber *key, TGCallContext *context, __unused BOOL *stop) {
             [context.disposable dispose];
         }];
-        _callContexts = [[NSMutableDictionary alloc] init];
+        _activeCallContexts = [[NSMutableDictionary alloc] init];
     }];
 }
 
@@ -81,7 +86,7 @@
             
             __weak TGCallManager *weakSelf = self;
             
-            _callContexts[@(internalId)] = context;
+            _activeCallContexts[@(internalId)] = context;
             context.context = [[TGCallRequestingContext alloc] init];
             
             void (^stateUpdated)(TGCallStateData *) = ^(TGCallStateData *state) {
@@ -134,20 +139,14 @@
                     [strongSelf performCallContextTransitionWithInternalId:internalId toCallContext:next];
                 }
             } error:^(id error) {
-                NSString *rpcError = nil;
-                
-                if ([error isKindOfClass:[MTRpcError class]])
-                    rpcError = ((MTRpcError *)error).errorDescription;
+                NSString *rpcError = OGCompatCallRpcErrorText(error);
                 
                 TGDiagnosticLog(@"CALL manager.request.error peer=%lld internal=%d error=%@ rpc=%@", peerId, internalId, error, rpcError);
                 
                 __strong TGCallManager *strongSelf = weakSelf;
                 
                 if (strongSelf != nil) {
-                    NSString *rpcError = nil;
-                    
-                    if ([error isKindOfClass:[MTRpcError class]])
-                        rpcError = ((MTRpcError *)error).errorDescription;
+                    NSString *rpcError = OGCompatCallRpcErrorText(error);
                     
                     TGCallDiscardedContext *discardedContext = [[TGCallDiscardedContext alloc]
                                                                 initWithCallId:0
@@ -163,7 +162,7 @@
             
             [disposable setDisposable:[[SBlockDisposable alloc] initWithBlock:^{
                 [_queue dispatch:^{
-                    TGCallContext *context = _callContexts[@(internalId)];
+                    TGCallContext *context = _activeCallContexts[@(internalId)];
                     [context.stateSubscribers removeItem:index];
                     
                     if ([context.stateSubscribers isEmpty]) {
@@ -179,47 +178,40 @@
 
 - (void)updateCallContextWithCallId:(int64_t)callId callContext:(id)callContext {
     [_queue dispatch:^{
-        __block int32_t internalId = -1;
+        int32_t internalId = -1;
         
-        [_callContexts enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, TGCallContext *context, BOOL *stop) {
-            if ([context.context conformsToProtocol:@protocol(TGCallIdentifiableContext)]) {
-                id<TGCallIdentifiableContext> identifiableContext = context.context;
-                
-                if (identifiableContext.callId == callId) {
-                    internalId = [key intValue];
-                    *stop = true;
-                }
+        for (NSNumber *key in [_activeCallContexts allKeys]) {
+            id inner = ((TGCallContext *)_activeCallContexts[key]).context;
+            if ([inner conformsToProtocol:@protocol(TGCallIdentifiableContext)] && [(id<TGCallIdentifiableContext>)inner callId] == callId) {
+                internalId = [key intValue];
+                break;
             }
-        }];
+        }
         
         if (internalId == -1 && [callContext isKindOfClass:[TGCallAcceptedContext class]]) {
-            TGCallAcceptedContext *acceptedContext = (TGCallAcceptedContext *)callContext;
+            int64_t participantId = ((TGCallAcceptedContext *)callContext).participantId;
             
-            [_callContexts enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, TGCallContext *context, BOOL *stop) {
-                if ([context.context isKindOfClass:[TGCallWaitingContext class]]) {
-                    TGCallWaitingContext *waitingContext = (TGCallWaitingContext *)context.context;
-                    
-                    if (waitingContext.callId == 0 &&
-                        (waitingContext.participantId == acceptedContext.participantId ||
-                         context.state.peerId == acceptedContext.participantId)) {
-                            
-                            
-                            internalId = [key intValue];
-                            *stop = true;
-                        }
+            for (NSNumber *key in [_activeCallContexts allKeys]) {
+                TGCallContext *candidate = _activeCallContexts[key];
+                if (![candidate.context isKindOfClass:[TGCallWaitingContext class]])
+                    continue;
+                TGCallWaitingContext *waiting = (TGCallWaitingContext *)candidate.context;
+                if (waiting.callId == 0 && (waiting.participantId == participantId || candidate.state.peerId == participantId)) {
+                    internalId = [key intValue];
+                    break;
                 }
-            }];
+            }
         }
         
         if (internalId != -1) {
-            TGCallContext *context = _callContexts[@(internalId)];
+            TGCallContext *context = _activeCallContexts[@(internalId)];
             
             if (context != nil) {
                 [self performCallContextTransitionWithInternalId:internalId toCallContext:callContext];
             }
         }
         else if ([callContext isKindOfClass:[TGCallRequestedContext class]]) {
-            if ([_discardedCallIds containsObject:@(callId)]) {
+            if ([_finishedCallIds containsObject:@(callId)]) {
                 return;
             }
             
@@ -228,7 +220,7 @@
             
             bool hasActiveCall = false;
             
-            for (TGCallContext *context in [_callContexts allValues])
+            for (TGCallContext *context in [_activeCallContexts allValues])
             {
                 if (requestedContext.adminId == context.session.peerId ||
                     requestedContext.participantId == context.session.peerId)
@@ -243,7 +235,7 @@
             TGCallContext *context = [[TGCallContext alloc] init];
             context.uuid = [NSUUID UUID];
             
-            _callContexts[@(internalId)] = context;
+            _activeCallContexts[@(internalId)] = context;
             
             if (!hasActiveCall)
             {
@@ -277,7 +269,7 @@
             }
         }
         else if ([callContext isKindOfClass:[TGCallDiscardedContext class]]) {
-            [_discardedCallIds addObject:@(callId)];
+            [_finishedCallIds addObject:@(callId)];
             TGDiagnosticLog(@"CallManager: Added unknown discarded call with id %lld", callId);
         }
         else {
@@ -288,32 +280,16 @@
 
 - (void)handleSignalingDataForCallId:(int64_t)callId data:(NSData *)data {
     [_queue dispatch:^{
-        __block NSNumber *matchedInternalId = nil;
-        __block TGCallContext *matchedContext = nil;
-        
-        [_callContexts enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, TGCallContext *context, BOOL *stop) {
-            if ([context.context conformsToProtocol:@protocol(TGCallIdentifiableContext)]) {
-                id<TGCallIdentifiableContext> identifiableContext = context.context;
-                
-                if (identifiableContext.callId == callId) {
-                    matchedInternalId = key;
-                    matchedContext = context;
-                    *stop = true;
-                    return;
-                }
+        TGCallContext *target = nil;
+        for (TGCallContext *candidate in [_activeCallContexts allValues]) {
+            id<TGCallIdentifiableContext> identifiable = [candidate.context conformsToProtocol:@protocol(TGCallIdentifiableContext)] ? candidate.context : nil;
+            if ((identifiable != nil && identifiable.callId == callId) || candidate.state.callId == callId) {
+                target = candidate;
+                break;
             }
-            
-            if (context.state.callId == callId) {
-                matchedInternalId = key;
-                matchedContext = context;
-                *stop = true;
-            }
-        }];
-        
-        if (matchedContext.session != nil) {
-            
-            [matchedContext.session receiveSignalingData:data];
         }
+        
+        [target.session receiveSignalingData:data];
     }];
 }
 
@@ -324,7 +300,7 @@
 - (void)performCallContextTransitionWithInternalId:(int32_t)internalId toCallContext:(id)toCallContext {
     NSAssert([_queue isCurrentQueue], @"[_queue isCurrentQueue]");
     
-    TGCallContext *context = _callContexts[@(internalId)];
+    TGCallContext *context = _activeCallContexts[@(internalId)];
     NSAssert(context != nil, @"context != nil");
     
     if ([toCallContext isKindOfClass:[TGCallDiscardedContext class]])
@@ -423,10 +399,7 @@
                 __strong TGCallManager *strongSelf = weakSelf;
                 
                 if (strongSelf != nil) {
-                    NSString *rpcError = nil;
-                    
-                    if ([error isKindOfClass:[MTRpcError class]])
-                        rpcError = ((MTRpcError *)error).errorDescription;
+                    NSString *rpcError = OGCompatCallRpcErrorText(error);
                     
                     if ([rpcError isEqualToString:@"CALL_ALREADY_ACCEPTED"])
                         rpcError = nil;
@@ -630,10 +603,7 @@
                 __strong TGCallManager *strongSelf = weakSelf;
                 
                 if (strongSelf != nil) {
-                    NSString *rpcError = nil;
-                    
-                    if ([error isKindOfClass:[MTRpcError class]])
-                        rpcError = ((MTRpcError *)error).errorDescription;
+                    NSString *rpcError = OGCompatCallRpcErrorText(error);
                     
                     [strongSelf setContextState:internalId state:[[TGCallStateData alloc]
                                                                   initWithInternalId:@(internalId)
@@ -874,7 +844,7 @@
 - (void)setContextState:(int32_t)internalId state:(TGCallStateData *)state {
     NSAssert([_queue isCurrentQueue], @"[_queue isCurrentQueue]");
     
-    TGCallContext *context = _callContexts[@(internalId)];
+    TGCallContext *context = _activeCallContexts[@(internalId)];
     
     if (context != nil) {
         context.state = state;
@@ -888,8 +858,8 @@
 - (void)cleanupContext:(int32_t)internalId {
     NSAssert([_queue isCurrentQueue], @"[_queue isCurrentQueue]");
     
-    TGCallContext *context = _callContexts[@(internalId)];
-    [_callContexts removeObjectForKey:@(internalId)];
+    TGCallContext *context = _activeCallContexts[@(internalId)];
+    [_activeCallContexts removeObjectForKey:@(internalId)];
     
 }
 
@@ -899,7 +869,7 @@
         
         [_queue dispatch:^{
             if ([internalId respondsToSelector:@selector(intValue)]) {
-                TGCallContext *context = _callContexts[internalId];
+                TGCallContext *context = _activeCallContexts[internalId];
                 
                 if (context == nil) {
                     context = [[TGCallContext alloc] init];
@@ -916,7 +886,7 @@
                 
                 [disposable setDisposable:[[SBlockDisposable alloc] initWithBlock:^{
                     [_queue dispatch:^{
-                        TGCallContext *context = _callContexts[internalId];
+                        TGCallContext *context = _activeCallContexts[internalId];
                         
                         [context.stateSubscribers removeItem:index];
                         
@@ -961,7 +931,7 @@
         int32_t internalIdVal = [internalId intValue];
         
         [_queue dispatch:^{
-            TGCallContext *context = _callContexts[internalId];
+            TGCallContext *context = _activeCallContexts[internalId];
             
             __weak TGCallManager *weakSelf = self;
             
@@ -998,7 +968,7 @@
                 if (strongSelf != nil) {
                     if (error == nil) {
                         [strongSelf->_queue dispatch:^{
-                            TGCallContext *liveContext = strongSelf->_callContexts[internalId];
+                            TGCallContext *liveContext = strongSelf->_activeCallContexts[internalId];
                             if (liveContext == nil)
                                 return;
                             if ([liveContext.context isKindOfClass:[TGCallReceivedContext class]]) {
@@ -1018,9 +988,7 @@
                         return;
                     }
 
-                    NSString *rpcError = nil;
-                    if ([error isKindOfClass:[MTRpcError class]])
-                        rpcError = ((MTRpcError *)error).errorDescription;
+                    NSString *rpcError = OGCompatCallRpcErrorText(error);
                     
                     TGCallDiscardedContext *discardedContext = [[TGCallDiscardedContext alloc]
                                                                 initWithCallId:receivedContext.callId
@@ -1049,7 +1017,7 @@
     [_queue dispatch:^{
         __weak TGCallManager *weakSelf = self;
         
-        TGCallContext *context = _callContexts[internalId];
+        TGCallContext *context = _activeCallContexts[internalId];
         
         if (context == nil)
             return;
@@ -1146,10 +1114,7 @@
                 __strong TGCallManager *strongSelf = weakSelf;
                 
                 if (strongSelf != nil) {
-                    NSString *rpcError = nil;
-                    
-                    if ([error isKindOfClass:[MTRpcError class]])
-                        rpcError = ((MTRpcError *)error).errorDescription;
+                    NSString *rpcError = OGCompatCallRpcErrorText(error);
                     
                     if ([rpcError isEqualToString:@"CALL_ALREADY_DECLINED"])
                         rpcError = nil;
@@ -1175,7 +1140,7 @@
     __block TGCallSession *session;
     
     [_queue dispatchSync:^{
-        TGCallContext *context = _callContexts[internalId];
+        TGCallContext *context = _activeCallContexts[internalId];
         session = context.session;
     }];
     
@@ -1197,7 +1162,7 @@
     __block bool hasActiveCall = false;
     
     [_queue dispatchSync:^{
-        hasActiveCall = _callContexts.count > 0;
+        hasActiveCall = _activeCallContexts.count > 0;
     }];
     
     return hasActiveCall;

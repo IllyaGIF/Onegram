@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTInterpolatorCallback.m
 //  Lottie
@@ -12,7 +12,7 @@
 
 @implementation LOTFloatInterpolatorCallback
 
-+ (instancetype )withFromFloat:(CGFloat)fromFloat toFloat:(CGFloat)toFloat {
++ (instancetype _Nonnull)withFromFloat:(CGFloat)fromFloat toFloat:(CGFloat)toFloat {
   LOTFloatInterpolatorCallback *interpolator = [[self alloc] init];
   interpolator.fromFloat = fromFloat;
   interpolator.toFloat = toFloat;
@@ -26,7 +26,7 @@
 
 @implementation LOTPointInterpolatorCallback
 
-+ (instancetype )withFromPoint:(CGPoint)fromPoint toPoint:(CGPoint)toPoint {
++ (instancetype _Nonnull)withFromPoint:(CGPoint)fromPoint toPoint:(CGPoint)toPoint {
   LOTPointInterpolatorCallback *interpolator = [[self alloc] init];
   interpolator.fromPoint = fromPoint;
   interpolator.toPoint = toPoint;

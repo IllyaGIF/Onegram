@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTCompositionContainer.m
 //  Lottie
@@ -115,7 +115,7 @@
   }
 }
 
-- (void)searchNodesForKeypath:(LOTKeypath * )keypath {
+- (void)searchNodesForKeypath:(LOTKeypath * _Nonnull)keypath {
   if (self.layerName != nil) {
     [super searchNodesForKeypath:keypath];
   }
@@ -130,8 +130,8 @@
   }
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate
-              forKeypath:(LOTKeypath * )keypath {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate
+              forKeypath:(LOTKeypath * _Nonnull)keypath {
   if (self.layerName != nil) {
     [super setValueDelegate:delegate forKeypath:keypath];
   }
@@ -146,7 +146,7 @@
   }
 }
 
-- ( NSArray *)keysForKeyPath:( LOTKeypath *)keypath {
+- (NSArray *_Nullable)keysForKeyPath:(LOTKeypath *_Nonnull)keypath {
   if (_keypathCache == nil) {
     _keypathCache = [NSMutableDictionary dictionary];
   }
@@ -155,7 +155,7 @@
   return keypath.searchResults.allKeys;
 }
 
-- (CALayer *)_layerForKeypath:( LOTKeypath *)keypath {
+- (CALayer *)_layerForKeypath:(LOTKeypath *_Nonnull)keypath {
   id node = _keypathCache[keypath.absoluteKeypath];
   if (node == nil) {
     [self keysForKeyPath:keypath];
@@ -180,8 +180,8 @@
 }
 
 - (CGPoint)convertPoint:(CGPoint)point
-         toKeypathLayer:( LOTKeypath *)keypath
-        withParentLayer:(CALayer *)parent{
+         toKeypathLayer:(LOTKeypath *_Nonnull)keypath
+        withParentLayer:(CALayer *_Nonnull)parent{
   CALayer *layer = [self _layerForKeypath:keypath];
   if (!layer) {
     return CGPointZero;
@@ -190,8 +190,8 @@
 }
 
 - (CGRect)convertRect:(CGRect)rect
-       toKeypathLayer:( LOTKeypath *)keypath
-      withParentLayer:(CALayer *)parent{
+       toKeypathLayer:(LOTKeypath *_Nonnull)keypath
+      withParentLayer:(CALayer *_Nonnull)parent{
   CALayer *layer = [self _layerForKeypath:keypath];
   if (!layer) {
     return CGRectZero;
@@ -200,8 +200,8 @@
 }
 
 - (CGPoint)convertPoint:(CGPoint)point
-       fromKeypathLayer:( LOTKeypath *)keypath
-        withParentLayer:(CALayer *)parent{
+       fromKeypathLayer:(LOTKeypath *_Nonnull)keypath
+        withParentLayer:(CALayer *_Nonnull)parent{
   CALayer *layer = [self _layerForKeypath:keypath];
   if (!layer) {
     return CGPointZero;
@@ -210,8 +210,8 @@
 }
 
 - (CGRect)convertRect:(CGRect)rect
-     fromKeypathLayer:( LOTKeypath *)keypath
-      withParentLayer:(CALayer *)parent{
+     fromKeypathLayer:(LOTKeypath *_Nonnull)keypath
+      withParentLayer:(CALayer *_Nonnull)parent{
   CALayer *layer = [self _layerForKeypath:keypath];
   if (!layer) {
     return CGRectZero;
@@ -219,16 +219,16 @@
   return [parent convertRect:rect fromLayer:layer];
 }
 
-- (void)addSublayer:( CALayer *)subLayer
-     toKeypathLayer:( LOTKeypath *)keypath {
+- (void)addSublayer:(CALayer *_Nonnull)subLayer
+     toKeypathLayer:(LOTKeypath *_Nonnull)keypath {
   CALayer *layer = [self _layerForKeypath:keypath];
   if (layer) {
     [layer addSublayer:subLayer];
   }
 }
 
-- (void)maskSublayer:( CALayer *)subLayer
-      toKeypathLayer:( LOTKeypath *)keypath {
+- (void)maskSublayer:(CALayer *_Nonnull)subLayer
+      toKeypathLayer:(LOTKeypath *_Nonnull)keypath {
   CALayer *layer = [self _layerForKeypath:keypath];
   if (layer) {
     [layer.superlayer addSublayer:subLayer];

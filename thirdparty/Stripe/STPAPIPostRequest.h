@@ -8,11 +8,12 @@
 
 #import <Foundation/Foundation.h>
 #import "STPAPIResponseDecodable.h"
+#import "OGStripeCompat.h"
 @class STPAPIClient;
 
-@interface STPAPIPostRequest : NSObject
+@interface STPAPIPostRequest OG_COMPAT_TYPE_PARAMETERS(__covariant ResponseType:id<STPAPIResponseDecodable>) : NSObject
 
-typedef void(^STPAPIPostResponseBlock)(id<STPAPIResponseDecodable> object, NSHTTPURLResponse *response, NSError *error);
+typedef void(^STPAPIPostResponseBlock)(OG_COMPAT_TYPE_PARAMETER(ResponseType, id<STPAPIResponseDecodable>) object, NSHTTPURLResponse *response, NSError *error);
 
 + (void)startWithAPIClient:(STPAPIClient *)apiClient
                   endpoint:(NSString *)endpoint

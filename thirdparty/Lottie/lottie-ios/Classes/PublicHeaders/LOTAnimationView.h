@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimationView
 //  LottieAnimator
@@ -20,28 +20,28 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
 - (CGSize)intrinsicContentSize;
 
 /// Load animation by name from the default bundle, Images are also loaded from the bundle
-+ ( instancetype)animationNamed:( NSString *)animationName;
++ (instancetype _Nonnull)animationNamed:(NSString *_Nonnull)animationName NS_SWIFT_NAME(init(name:));
 
 /// Loads animation by name from specified bundle, Images are also loaded from the bundle
-+ ( instancetype)animationNamed:( NSString *)animationName inBundle:( NSBundle *)bundle;
++ (instancetype _Nonnull)animationNamed:(NSString *_Nonnull)animationName inBundle:(NSBundle *_Nonnull)bundle NS_SWIFT_NAME(init(name:bundle:));
 
 /// Creates an animation from the deserialized JSON Dictionary
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON;
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nonnull)animationJSON NS_SWIFT_NAME(init(json:));
 
 /// Loads an animation from a specific file path. WARNING Do not use a web URL for file path.
-+ ( instancetype)animationWithFilePath:( NSString *)filePath;
++ (instancetype _Nonnull)animationWithFilePath:(NSString *_Nonnull)filePath NS_SWIFT_NAME(init(filePath:));
 
 /// Creates an animation from the deserialized JSON Dictionary, images are loaded from the specified bundle
-+ ( instancetype)animationFromJSON:( NSDictionary *)animationJSON inBundle:( NSBundle *)bundle;
++ (instancetype _Nonnull)animationFromJSON:(NSDictionary *_Nullable)animationJSON inBundle:(NSBundle *_Nullable)bundle NS_SWIFT_NAME(init(json:bundle:));
 
 /// Creates an animation from the LOTComposition, images are loaded from the specified bundle
-- ( instancetype)initWithModel:( LOTComposition *)model inBundle:( NSBundle *)bundle;
+- (instancetype _Nonnull)initWithModel:(LOTComposition *_Nullable)model inBundle:(NSBundle *_Nullable)bundle;
 
 /// Loads animation asynchrounously from the specified URL
-- ( instancetype)initWithContentsOfURL:( NSURL *)url;
+- (instancetype _Nonnull)initWithContentsOfURL:(NSURL *_Nonnull)url;
 
 /// Load animation by name from the default bundle. Use when loading LOTAnimationView via Interface Builder.
-- (void)setAnimationNamed:( NSString *)animationName;
+- (void)setAnimationNamed:(NSString *_Nonnull)animationName NS_SWIFT_NAME(setAnimation(named:));
 
 /// Flag is YES when the animation is playing
 @property (nonatomic, readonly) BOOL isAnimationPlaying;
@@ -68,10 +68,10 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
 @property (nonatomic, assign) BOOL cacheEnable;
 
 /// Sets a completion block to call when the animation has completed
-@property (nonatomic, copy) LOTAnimationCompletionBlock completionBlock;
+@property (nonatomic, copy) LOTAnimationCompletionBlock _Nullable completionBlock;
 
 /// Set the amimation data
-@property (nonatomic, strong) LOTComposition *sceneModel;
+@property (nonatomic, strong) LOTComposition *_Nullable sceneModel;
 
 /* 
  * Plays the animation from its current position to a specific progress.
@@ -80,7 +80,7 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  * If loopAnimation is NO the animation will stop and the comletion block will be called.
  */
 - (void)playToProgress:(CGFloat)toProgress
-        withCompletion:( LOTAnimationCompletionBlock)completion;
+        withCompletion:(LOTAnimationCompletionBlock _Nullable)completion;
 
 /*
  * Plays the animation from specific progress to a specific progress
@@ -90,7 +90,7 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  */
 - (void)playFromProgress:(CGFloat)fromStartProgress
               toProgress:(CGFloat)toEndProgress
-          withCompletion:( LOTAnimationCompletionBlock)completion;
+          withCompletion:(LOTAnimationCompletionBlock _Nullable)completion;
 
 /*
  * Plays the animation from its current position to a specific frame.
@@ -98,8 +98,8 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  * If loopAnimation is YES the animation will loop from beginning to toFrame indefinitely.
  * If loopAnimation is NO the animation will stop and the comletion block will be called.
  */
-- (void)playToFrame:( NSNumber *)toFrame
-     withCompletion:( LOTAnimationCompletionBlock)completion;
+- (void)playToFrame:(NSNumber *_Nonnull)toFrame
+     withCompletion:(LOTAnimationCompletionBlock _Nullable)completion;
 
 /*
  * Plays the animation from specific frame to a specific frame.
@@ -107,9 +107,9 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  * If loopAnimation is YES the animation will loop start frame to end frame indefinitely.
  * If loopAnimation is NO the animation will stop and the comletion block will be called.
  */
-- (void)playFromFrame:( NSNumber *)fromStartFrame
-              toFrame:( NSNumber *)toEndFrame
-       withCompletion:( LOTAnimationCompletionBlock)completion;
+- (void)playFromFrame:(NSNumber *_Nonnull)fromStartFrame
+              toFrame:(NSNumber *_Nonnull)toEndFrame
+       withCompletion:(LOTAnimationCompletionBlock _Nullable)completion;
 
 
 /**
@@ -118,7 +118,7 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  * If loopAnimation is YES the animation will loop from beginning to end indefinitely.
  * If loopAnimation is NO the animation will stop and the comletion block will be called.
  **/
-- (void)playWithCompletion:( LOTAnimationCompletionBlock)completion;
+- (void)playWithCompletion:(LOTAnimationCompletionBlock _Nullable)completion;
 
 /// Plays the animaiton
 - (void)play;
@@ -130,7 +130,7 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
 - (void)stop;
 
 /// Sets progress of animation to a specific frame. If the animation is playing it will stop and the completion block will be called.
-- (void)setProgressWithFrame:( NSNumber *)currentFrame;
+- (void)setProgressWithFrame:(NSNumber *_Nonnull)currentFrame;
 
 /// Forces a layout and drawing update for the current frame.
 - (void)forceDrawingUpdate;
@@ -156,49 +156,49 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  NOTE: The delegate is weakly retained. Be sure that the creator of a delgate is retained.
  Read More at http://airbnb.io/lottie/ios/dynamic.html
  */
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegates
-              forKeypath:(LOTKeypath * )keypath;
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegates
+              forKeypath:(LOTKeypath * _Nonnull)keypath;
 
 /*!
  @brief returns the string representation of every keypath matching the LOTKeypath search.
  */
-- ( NSArray *)keysForKeyPath:( LOTKeypath *)keypath;
+- (NSArray *_Nullable)keysForKeyPath:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Converts a CGPoint from the Animation views top coordinate space into the coordinate space of the specified renderable animation node.
  */
 - (CGPoint)convertPoint:(CGPoint)point
-         toKeypathLayer:( LOTKeypath *)keypath;
+         toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Converts a CGRect from the Animation views top coordinate space into the coordinate space of the specified renderable animation node.
  */
 - (CGRect)convertRect:(CGRect)rect
-       toKeypathLayer:( LOTKeypath *)keypath;
+       toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Converts a CGPoint to the Animation views top coordinate space from the coordinate space of the specified renderable animation node.
  */
 - (CGPoint)convertPoint:(CGPoint)point
-       fromKeypathLayer:( LOTKeypath *)keypath;
+       fromKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Converts a CGRect to the Animation views top coordinate space from the coordinate space of the specified renderable animation node.
  */
 - (CGRect)convertRect:(CGRect)rect
-     fromKeypathLayer:( LOTKeypath *)keypath;
+     fromKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Adds a UIView, or NSView, to the renderable layer found at the Keypath
  */
-- (void)addSubview:( LOTView *)view
-    toKeypathLayer:( LOTKeypath *)keypath;
+- (void)addSubview:(LOTView *_Nonnull)view
+    toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 /*!
  @brief Adds a UIView, or NSView, to the parentrenderable layer found at the Keypath and then masks the view with layer found at the keypath.
  */
-- (void)maskSubview:( LOTView *)view
-     toKeypathLayer:( LOTKeypath *)keypath;
+- (void)maskSubview:(LOTView *_Nonnull)view
+     toKeypathLayer:(LOTKeypath *_Nonnull)keypath;
 
 #if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
 @property (nonatomic) LOTViewContentMode contentMode;
@@ -211,9 +211,9 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  @param keypath NSString . separate keypath The Keypath is a dot seperated key path that specifies the location of the key to be set from the After Effects file. This will begin with the Layer Name. EG "Layer 1.Shape 1.Fill 1.Color"
  @param frame The frame is the frame to be set. If the keyframe exists it will be overwritten, if it does not exist a new linearlly interpolated keyframe will be added
  */
-- (void)setValue:( id)value
-      forKeypath:( NSString *)keypath
-         atFrame:( NSNumber *)frame __deprecated;
+- (void)setValue:(id _Nonnull)value
+      forKeypath:(NSString *_Nonnull)keypath
+         atFrame:(NSNumber *_Nullable)frame __deprecated;
 
 /*!
  @brief Adds a custom subview to the animation using a LayerName from After Effect as a reference point.
@@ -224,8 +224,8 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
 
  @param applyTransform If YES the custom view will be animated to move with the specified After Effects layer. If NO the custom view will be masked by the After Effects layer
  */
-- (void)addSubview:( LOTView *)view
-      toLayerNamed:( NSString *)layer
+- (void)addSubview:(LOTView *_Nonnull)view
+      toLayerNamed:(NSString *_Nonnull)layer
     applyTransform:(BOOL)applyTransform __deprecated;
 
 /*!
@@ -233,6 +233,6 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
  @discussion NOTE: Deprecated. Use convertRect:fromKeypathLayer:
  */
 - (CGRect)convertRect:(CGRect)rect
-         toLayerNamed:(NSString *)layerName __deprecated;
+         toLayerNamed:(NSString *_Nullable)layerName __deprecated;
 
 @end

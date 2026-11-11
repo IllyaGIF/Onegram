@@ -8,6 +8,9 @@
 
 #import <Foundation/Foundation.h>
 
+@class PKPaymentSummaryItem;
+#import "OGStripeCompat.h"
+
 #define FAUXPAS_IGNORED_IN_CLASS(...)
 
 /**
@@ -18,10 +21,10 @@
 FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
 
 - (instancetype)initWithAmount:(NSInteger)paymentAmount;
-- (instancetype)initWithPaymentSummaryItems:(NSArray *)paymentSummaryItems;
+- (instancetype)initWithPaymentSummaryItems:(OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItems;
 
 - (NSInteger)paymentAmountWithCurrency:(NSString *)paymentCurrency;
-- (NSArray *)paymentSummaryItemsWithCurrency:(NSString *)paymentCurrency
+- (OG_COMPAT_GENERIC(NSArray, PKPaymentSummaryItem *) *)paymentSummaryItemsWithCurrency:(NSString *)paymentCurrency
                                                          companyName:(NSString *)companyName;
 
 @end

@@ -3,6 +3,6 @@
 @interface TGOnegramUpdateController : TGOnegramSettingsController
 
 + (NSString *)statusVariant;
-+ (void)startLaunchCheck;
++ (void)startAutomaticCheck;
 
 @end

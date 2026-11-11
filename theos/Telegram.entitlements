@@ -10,5 +10,14 @@
     </array>
     <key>get-task-allow</key>
     <true/>
+    <key>com.apple.private.mobileinstall.allowedSPI</key>
+    <array>
+        <string>Install</string>
+        <string>InstallForLaunchServices</string>
+    </array>
+    <key>com.apple.security.exception.mach-lookup.global-name</key>
+    <array>
+        <string>com.apple.mobile.installd</string>
+    </array>
 </dict>
 </plist>

@@ -264,13 +264,9 @@
 - (void)tintColorDidChange
 {
     SEL selector = @selector(tintColorDidChange);
-    Method method = class_getInstanceMethod(class_getSuperclass([TGModernButton class]), selector);
-    if (method != NULL)
-    {
-        IMP implementation = method_getImplementation(method);
-        if (implementation != NULL)
-            ((void (*)(id, SEL))implementation)(self, selector);
-    }
+    Class parentClass = [TGModernButton superclass];
+    if ([parentClass instancesRespondToSelector:selector])
+        ((void (*)(id, SEL))[parentClass instanceMethodForSelector:selector])(self, selector);
     
     if (_modernHighlight && _highlightImage == nil)
         [self setTitleColor:self.tintColor forState:UIControlStateNormal];

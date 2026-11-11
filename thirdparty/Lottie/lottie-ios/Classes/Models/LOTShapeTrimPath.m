@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTShapeTrimPath.m
 //  LottieAnimator
@@ -21,21 +21,21 @@
 
 - (void)_mapFromJSON:(NSDictionary *)jsonDictionary {
   
-  if ([jsonDictionary objectForKey:@2] ) {
-    _keyname = [[jsonDictionary objectForKey:@2] copy];
+  if (jsonDictionary[@"nm"] ) {
+    _keyname = [jsonDictionary[@"nm"] copy];
   }
   
-  NSDictionary *start = [jsonDictionary objectForKey:@2];
+  NSDictionary *start = jsonDictionary[@"s"];
   if (start) {
     _start = [[LOTKeyframeGroup alloc] initWithData:start];
   }
   
-  NSDictionary *end = [jsonDictionary objectForKey:@2];
+  NSDictionary *end = jsonDictionary[@"e"];
   if (end) {
     _end = [[LOTKeyframeGroup alloc] initWithData:end];
   }
   
-  NSDictionary *offset = [jsonDictionary objectForKey:@2];
+  NSDictionary *offset = jsonDictionary[@"o"];
   if (offset) {
     _offset = [[LOTKeyframeGroup alloc] initWithData:offset];
   }

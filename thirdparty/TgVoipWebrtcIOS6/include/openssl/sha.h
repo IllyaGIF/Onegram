@@ -1,5 +1,5 @@
-#ifndef TGIOS6_OPENSSL_SHA_H
-#define TGIOS6_OPENSSL_SHA_H
+#ifndef OG_COMPAT_OPENSSL_SHA_H
+#define OG_COMPAT_OPENSSL_SHA_H
 
 #include <CommonCrypto/CommonDigest.h>
 
@@ -7,16 +7,16 @@
 
 typedef CC_SHA256_CTX SHA256_CTX;
 
-static inline int SHA256_Init(SHA256_CTX *context) {
-	return CC_SHA256_Init(context);
+static inline int SHA256_Init(SHA256_CTX *ctx) {
+	return CC_SHA256_Init(ctx);
 }
 
-static inline int SHA256_Update(SHA256_CTX *context, const void *data, size_t length) {
-	return CC_SHA256_Update(context, data, (CC_LONG)length);
+static inline int SHA256_Update(SHA256_CTX *ctx, const void *bytes, size_t count) {
+	return CC_SHA256_Update(ctx, bytes, (CC_LONG)count);
 }
 
-static inline int SHA256_Final(unsigned char *digest, SHA256_CTX *context) {
-	return CC_SHA256_Final(digest, context);
+static inline int SHA256_Final(unsigned char *out, SHA256_CTX *ctx) {
+	return CC_SHA256_Final(out, ctx);
 }
 
 #endif

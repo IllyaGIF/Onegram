@@ -27,11 +27,6 @@
 
 const CGPoint TGGenericPeerMediaGalleryDefaultFooterViewCaptionOrigin = { 13.0f, -8.0f };
 
-static bool TGIOS6GalleryCaptionsEnabled()
-{
-    return false;
-}
-
 @interface TGGenericPeerMediaGalleryDefaultFooterView ()
 {
     bool _hasAppeared;
@@ -352,11 +347,8 @@ static bool TGIOS6GalleryCaptionsEnabled()
         groupedKeyId = concreteItem.imageId;
     }
     
-    if (!TGIOS6GalleryCaptionsEnabled())
-    {
-        newCaption = nil;
-        newTextCheckingResults = nil;
-    }
+    newCaption = nil;
+    newTextCheckingResults = nil;
     
     _hasAppeared = true;
     

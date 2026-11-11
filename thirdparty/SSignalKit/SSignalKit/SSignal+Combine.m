@@ -34,8 +34,7 @@
 {
     if (signals.count == 0)
         return [SSignal single:@[]];
-    else
-        return [self combineSignals:signals withInitialStates:nil];
+    return [self combineSignals:signals withInitialStates:nil];
 }
 
 + (SSignal *)combineSignals:(NSArray *)signals withInitialStates:(NSArray *)initialStates
@@ -50,9 +49,7 @@
         NSMutableDictionary *initialLatestValues = [[NSMutableDictionary alloc] init];
         for (NSUInteger i = 0; i < initialStates.count; i++)
         {
-            id value = initialStates[i];
-            if (value != nil)
-                initialLatestValues[@(i)] = value;
+            initialLatestValues[@(i)] = initialStates[i];
         }
         SAtomic *combineState = [[SAtomic alloc] initWithValue:[[SSignalCombineState alloc] initWithLatestValues:initialLatestValues completedStatuses:completedStatuses error:false]];
         
@@ -67,10 +64,10 @@
                 SSignalCombineState *currentState = [combineState modify:^id(SSignalCombineState *state)
                 {
                     NSMutableDictionary *latestValues = [[NSMutableDictionary alloc] initWithDictionary:state.latestValues];
-                    if (next == nil)
-                        [latestValues removeObjectForKey:@(index)];
-                    else
+                    if (next != nil)
                         latestValues[@(index)] = next;
+                    else
+                        [latestValues removeObjectForKey:[NSNumber numberWithUnsignedInteger:index]];
                     return [[SSignalCombineState alloc] initWithLatestValues:latestValues completedStatuses:state.completedStatuses error:state.error];
                 }];
                 NSMutableArray *latestValues = [[NSMutableArray alloc] init];

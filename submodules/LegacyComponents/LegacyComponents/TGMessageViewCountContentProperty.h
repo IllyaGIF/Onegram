@@ -29,11 +29,11 @@
 
 @interface TGMessageReactionSummaryContentProperty : NSObject <PSCoding>
 
-@property (nonatomic, copy, readonly) NSString *summary;
-@property (nonatomic, copy, readonly) NSString *chosenReaction;
+@property (readonly, nonatomic, copy) NSString *chosenReaction;
+@property (readonly, nonatomic, copy) NSString *summary;
 
-- (instancetype)initWithSummary:(NSString *)summary;
 - (instancetype)initWithSummary:(NSString *)summary chosenReaction:(NSString *)chosenReaction;
+- (instancetype)initWithSummary:(NSString *)summary;
 
 @end
 
@@ -42,6 +42,15 @@
 @property (nonatomic, readonly) int32_t topicId;
 
 - (instancetype)initWithTopicId:(int32_t)topicId;
+
+@end
+
+@interface TGMessageStoryReplyContentProperty : NSObject <PSCoding>
+
+@property (nonatomic, readonly) int64_t peerId;
+@property (nonatomic, readonly) int32_t storyId;
+
+- (instancetype)initWithPeerId:(int64_t)peerId storyId:(int32_t)storyId;
 
 @end
 

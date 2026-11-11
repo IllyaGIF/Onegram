@@ -122,6 +122,7 @@
 @property (nonatomic) bool canBroadcast;
 @property (nonatomic) bool isBroadcasting;
 @property (nonatomic) bool isAlwaysBroadcasting;
+@property (nonatomic) int64_t paidMessageStars;
 @property (nonatomic) bool isChannel;
 @property (nonatomic) bool inputDisabled;
 @property (nonatomic) bool displayProgress;

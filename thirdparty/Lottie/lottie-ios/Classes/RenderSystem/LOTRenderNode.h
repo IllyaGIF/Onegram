@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTRenderNode.h
 //  Pods
@@ -11,8 +11,8 @@
 
 @interface LOTRenderNode : LOTAnimatorNode
 
-@property (nonatomic, readonly, strong) CAShapeLayer *  outputLayer;
+@property (nonatomic, readonly, strong) CAShapeLayer * _Nonnull outputLayer;
 
-- (NSDictionary * )actionsForRenderLayer;
+- (NSDictionary * _Nonnull)actionsForRenderLayer;
 
 @end

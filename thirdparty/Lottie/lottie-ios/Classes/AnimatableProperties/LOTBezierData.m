@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTBezierData.m
 //  Lottie
@@ -92,10 +92,10 @@
   NSArray *pointArray = points[idx];
   
   NSAssert((pointArray.count >= 2 &&
-            [[pointArray objectAtIndex:0] isKindOfClass:[NSNumber class]]),
+            [pointArray.firstObject isKindOfClass:[NSNumber class]]),
            @"Lottie: Point Data Malformed");
   
-  return CGPointMake([(NSNumber *)[pointArray objectAtIndex:0] floatValue], [(NSNumber *)[pointArray objectAtIndex:1] floatValue]);
+  return CGPointMake([(NSNumber *)pointArray[0] floatValue], [(NSNumber *)pointArray[1] floatValue]);
 }
 
 @end

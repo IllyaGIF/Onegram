@@ -48,7 +48,7 @@
     TGDisclosureActionCollectionItem *_photoLibraryItem;
     
     __weak TGOverlayFormsheetWindow *_photoLibraryWindow;
-    UIPopoverController *_photoLibraryPopoverController;
+    UIPopoverController *_pickerPopover;
 }
 
 @end
@@ -188,53 +188,31 @@
 {
     if (indexPath.section == 0)
         return CGSizeMake(collectionView.frame.size.width, 44.0f);
-    else
-    {
-        if (TGIsPad())
-        {
-            CGSize layoutSize = collectionView.frame.size;
-            if ([self inPopover])
-                layoutSize.width = 320.0f;
-            else if ([self inFormSheet])
-                layoutSize.width = 540.0f;
-            
-            if (layoutSize.width > 320.0f + FLT_EPSILON)
-                return CGSizeMake(110.0f, 146.0f);
-            else
-                return CGSizeMake(91.0f, 121.0f);
-        }
-        else
-        {
-            CGSize screenSize = TGScreenSize();
-            CGFloat widescreenWidth = MAX(screenSize.width, screenSize.height);
-            
-            if ([UIScreen mainScreen].scale >= 2.0f - FLT_EPSILON)
-            {
-                if (widescreenWidth >= 812.0f - FLT_EPSILON)
-                {
-                    return CGSizeMake(108.0f, 163.0f);
-                }
-                else if (widescreenWidth >= 736.0f - FLT_EPSILON)
-                {
-                    return CGSizeMake(122.0f, 216.0f);
-                }
-                else if (widescreenWidth >= 667.0f - FLT_EPSILON)
-                {
-                    return CGSizeMake(108.0f, 163.0f);
-                }
-                else
-                {
-                    return CGSizeMake(91.0f, 162.0f);
-                }
-            }
-            else
-            {
-                return CGSizeMake(91.0f, 162.0f);
-            }
-        }
-        
+    
+    if (TGIsPad())
+        return [self og_compat_padLayoutWidthForCollectionView:collectionView] > 320.0f + FLT_EPSILON ? CGSizeMake(110.0f, 146.0f) : CGSizeMake(91.0f, 121.0f);
+    
+    if ([UIScreen mainScreen].scale < 2.0f - FLT_EPSILON)
         return CGSizeMake(91.0f, 162.0f);
-    }
+    
+    CGSize screenSize = TGScreenSize();
+    CGFloat longSide = MAX(screenSize.width, screenSize.height);
+    if (longSide >= 812.0f - FLT_EPSILON)
+        return CGSizeMake(108.0f, 163.0f);
+    if (longSide >= 736.0f - FLT_EPSILON)
+        return CGSizeMake(122.0f, 216.0f);
+    if (longSide >= 667.0f - FLT_EPSILON)
+        return CGSizeMake(108.0f, 163.0f);
+    return CGSizeMake(91.0f, 162.0f);
+}
+
+- (CGFloat)og_compat_padLayoutWidthForCollectionView:(PSUICollectionView *)collectionView
+{
+    if ([self inPopover])
+        return 320.0f;
+    if ([self inFormSheet])
+        return 540.0f;
+    return collectionView.frame.size.width;
 }
 
 - (UIEdgeInsets)collectionView:(PSUICollectionView *)__unused collectionView layout:(PSUICollectionViewLayout *)__unused collectionViewLayout insetForSectionAtIndex:(NSInteger)section
@@ -255,19 +233,8 @@
     if (section == 0)
         return 0.0f;
     
-    if (TGIsPad())
-    {
-        CGSize layoutSize = collectionView.frame.size;
-        if ([self inPopover])
-            layoutSize.width = 320.0f;
-        else if ([self inFormSheet])
-            layoutSize.width = 540.0f;
-        
-        if (layoutSize.width > 320.0f + FLT_EPSILON)
-            return 14.0f;
-        else
-            return 8.0f;
-    }
+    if (TGIsPad() && [self og_compat_padLayoutWidthForCollectionView:collectionView] > 320.0f + FLT_EPSILON)
+        return 14.0f;
     
     return 8.0f;
 }
@@ -388,31 +355,30 @@
     imagePickerController.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
     imagePickerController.completionDelegate = self;
     
-    if (TGIsPad())
-    {
-        _photoLibraryPopoverController = [[UIPopoverController alloc] initWithContentViewController:imagePickerController];
-        CGRect bounds = self.view.bounds;
-        CGRect sourceRect = CGRectMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds), 1.0f, 1.0f);
-        [_photoLibraryPopoverController presentPopoverFromRect:sourceRect inView:self.view permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
-    }
-    else
+    if (!TGIsPad())
     {
         [self presentViewController:imagePickerController animated:true completion:nil];
+        return;
     }
+    
+    _pickerPopover = [[UIPopoverController alloc] initWithContentViewController:imagePickerController];
+    CGRect bounds = self.view.bounds;
+    [_pickerPopover presentPopoverFromRect:CGRectMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds), 1.0f, 1.0f) inView:self.view permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
 }
 
 - (void)_dismissPhotoLibrary
 {
-    if (_photoLibraryPopoverController != nil)
+    UIPopoverController *popover = _pickerPopover;
+    if (popover != nil)
     {
-        [_photoLibraryPopoverController dismissPopoverAnimated:true];
-        _photoLibraryPopoverController = nil;
+        _pickerPopover = nil;
+        [popover dismissPopoverAnimated:true];
+        return;
     }
-    else if (_photoLibraryWindow != nil)
-    {
-        TGOverlayFormsheetWindow *photoLibraryWindow = _photoLibraryWindow;
-        [photoLibraryWindow dismissAnimated:true];
-    }
+    
+    TGOverlayFormsheetWindow *formsheet = _photoLibraryWindow;
+    if (formsheet != nil)
+        [formsheet dismissAnimated:true];
     else
         [self dismissViewControllerAnimated:true completion:nil];
 }
@@ -425,8 +391,8 @@
 - (void)imagePickerController:(TGImagePickerController *)__unused imagePicker didFinishPickingWithAssets:(NSArray *)assets
 {
     TGOverlayFormsheetWindow *photoLibraryWindow = _photoLibraryWindow;
-    UIViewController *presentedController = _photoLibraryPopoverController != nil ? _photoLibraryPopoverController.contentViewController : self.presentedViewController;
-    UINavigationController *controller = (UINavigationController *)((photoLibraryWindow != nil) ? [(TGOverlayFormsheetController *)[photoLibraryWindow rootViewController] viewController] : presentedController);
+    UIViewController *hosted = photoLibraryWindow != nil ? [(TGOverlayFormsheetController *)[photoLibraryWindow rootViewController] viewController] : (_pickerPopover != nil ? _pickerPopover.contentViewController : self.presentedViewController);
+    UINavigationController *controller = (UINavigationController *)hosted;
     
     if ([controller isKindOfClass:[UINavigationController class]] && assets.count != 0 && [assets[0] isKindOfClass:[UIImage class]])
     {

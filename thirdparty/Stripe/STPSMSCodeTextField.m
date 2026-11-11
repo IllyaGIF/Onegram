@@ -259,7 +259,7 @@
 }
 
 - (void)setCode:(NSString *)code {
-    [self.textFields enumerateObjectsUsingBlock:^(UITextField *_Nonnull aTextField, NSUInteger idx, __unused BOOL * stop) {
+    [self.textFields enumerateObjectsUsingBlock:^(UITextField *_Nonnull aTextField, NSUInteger idx, __unused BOOL * _Nonnull stop) {
         if (idx < code.length) {
             aTextField.text = [code substringWithRange:NSMakeRange(idx, 1)];
         }

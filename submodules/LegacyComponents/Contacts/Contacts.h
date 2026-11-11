@@ -1,3 +1,6 @@
+#ifndef OG_COMPAT_CONTACTS_H
+#define OG_COMPAT_CONTACTS_H
+
 #import <Foundation/Foundation.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
@@ -18,15 +21,15 @@ typedef NSInteger CNContactFormatterStyle;
 #define CNContactFormatterStyleFullName 0
 
 @interface CNPhoneNumber : NSObject
+@property (nonatomic, copy) NSString *stringValue;
 + (instancetype)phoneNumberWithStringValue:(NSString *)stringValue;
 - (instancetype)initWithStringValue:(NSString *)stringValue;
-@property (nonatomic, copy) NSString *stringValue;
 @end
 
 @interface CNLabeledValue : NSObject
-+ (instancetype)labeledValueWithLabel:(NSString *)label value:(id)value;
 @property (nonatomic, copy) NSString *label;
 @property (nonatomic, retain) id value;
++ (instancetype)labeledValueWithLabel:(NSString *)label value:(id)value;
 @end
 
 @interface CNMutablePostalAddress : NSObject
@@ -52,5 +55,7 @@ typedef NSInteger CNContactFormatterStyle;
 @interface CNContactFormatter : NSObject
 + (NSString *)stringFromContact:(CNMutableContact *)contact style:(CNContactFormatterStyle)style;
 @end
+
+#endif
 
 #endif

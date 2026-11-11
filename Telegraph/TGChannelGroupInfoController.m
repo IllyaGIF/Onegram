@@ -85,6 +85,8 @@
 #import "TGStickersSignals.h"
 
 #import "TGChannelBanController.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesSettingsController.h"
 
 #import "TGChannelModeratorController.h"
 
@@ -147,6 +149,8 @@ static const NSUInteger loadMoreMemberCount = 100;
     TGVariantCollectionItem *_editGroupHistoryItem;
     TGCollectionMultilineInputItem *_editDescriptionItem;
     TGVariantCollectionItem *_stickersItem;
+    TGVariantCollectionItem *_paidMessagesItem;
+    bool _paidMessagesAvailable;
     
     TGCollectionMultilineInputItem *_linkItem;
     TGCollectionMenuSection *_linkSection;
@@ -203,8 +207,8 @@ static const NSUInteger loadMoreMemberCount = 100;
     
     SMetaDisposable *_searchDisposable;
     
-    NSArray *_searchResultUsers;
-    NSDictionary *_searchResultsMemberDatas;
+    NSArray *_foundUserSections;
+    NSDictionary *_foundMemberDatas;
     
     NSString *_searchString;
     
@@ -294,6 +298,7 @@ static const NSUInteger loadMoreMemberCount = 100;
         _editDescriptionSection = [[TGCollectionMenuSection alloc] initWithItems:@[_editDescriptionItem, editDescriptionComment]];
         
         _stickersItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.Info.Stickers") action:@selector(stickersPressed)];
+        _paidMessagesItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"PaidMessages.Settings.GroupTitle") action:@selector(paidMessagesPressed)];
         
         _linkItem = [[TGCollectionMultilineInputItem alloc] init];
         _linkItem.editable = false;
@@ -441,6 +446,13 @@ static const NSUInteger loadMoreMemberCount = 100;
                 }
                 
                 strongSelf->_canSetStickerPack = cachedData.canSetStickerPack;
+                
+                if (strongSelf->_paidMessagesAvailable != cachedData.paidMessagesAvailable) {
+                    strongSelf->_paidMessagesAvailable = cachedData.paidMessagesAvailable;
+                    if (strongSelf->_editing) {
+                        [strongSelf _setupSections:true];
+                    }
+                }
                 
                 [strongSelf->_cachedStickerPackDisposable setDisposable:[[TGStickersSignals cachedStickerPack:cachedData.stickerPack] startWithNext:^(TGStickerPack *stickerPack) {
                     NSString *title = [stickerPack respondsToSelector:@selector(title)] ? stickerPack.title : nil;
@@ -707,6 +719,11 @@ static const NSUInteger loadMoreMemberCount = 100;
             [_editDescriptionSection addItem:_stickersItem];
         }
         
+        if ([self canEditPaidMessages]) {
+            [self updatePaidMessagesVariant];
+            [_editDescriptionSection addItem:_paidMessagesItem];
+        }
+        
         if (_editDescriptionSection.items.count != 0) {
             [self.menuSections addSection:_editDescriptionSection];
         }
@@ -925,6 +942,33 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (bool)canKickMembers {
     return _conversation.channelRole == TGChannelRoleCreator || _conversation.channelAdminRights.canBanUsers;
+}
+
+- (bool)canEditPaidMessages {
+    return _paidMessagesAvailable && (_conversation.channelRole == TGChannelRoleCreator || _conversation.channelAdminRights.canBanUsers);
+}
+
+- (void)updatePaidMessagesVariant {
+    _paidMessagesItem.variant = _conversation.sendPaidMessagesStars > 0 ? [TGPaidMessagesSignals starsString:_conversation.sendPaidMessagesStars] : TGLocalized(@"PaidMessages.Settings.Off");
+}
+
+- (void)paidMessagesPressed {
+    if (![self canEditPaidMessages]) {
+        return;
+    }
+    int64_t stars = _conversation.sendPaidMessagesStars;
+    TGPaidMessagesSettingsController *controller = [[TGPaidMessagesSettingsController alloc] initWithChannelId:_conversation.conversationId broadcast:false enabled:stars > 0 stars:stars];
+    __weak TGChannelGroupInfoController *weakSelf = self;
+    controller.settingsChanged = ^(__unused bool enabled, int64_t updatedStars) {
+        __strong TGChannelGroupInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil) {
+            TGConversation *conversation = [strongSelf->_conversation copy];
+            conversation.sendPaidMessagesStars = updatedStars;
+            strongSelf->_conversation = conversation;
+            [strongSelf updatePaidMessagesVariant];
+        }
+    };
+    [self.navigationController pushViewController:controller animated:true];
 }
 
 - (void)setGroupPhotoPressed
@@ -1356,6 +1400,7 @@ static const NSUInteger loadMoreMemberCount = 100;
         }
         
         _editGroupTypeItem.variant = _conversation.username.length == 0 ? TGLocalized(@"Group.Setup.TypePrivate") : TGLocalized(@"Group.Setup.TypePublic");
+        [self updatePaidMessagesVariant];
         
         [_groupInfoItem setConversation:_conversation];
         
@@ -2040,8 +2085,8 @@ static const NSUInteger loadMoreMemberCount = 100;
         }
     }
     
-    if (_searchResultUsers != nil) {
-        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_searchResultsMemberDatas];
+    if (_foundUserSections != nil) {
+        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_foundMemberDatas];
         
         if (member != nil) {
             updatedSearchResultMemberDatas[@(uid)] = member;
@@ -2051,7 +2096,7 @@ static const NSUInteger loadMoreMemberCount = 100;
         
         NSIndexPath *indexPath = nil;
         NSUInteger sectionIndex = 0;
-        for (NSArray *section in _searchResultUsers) {
+        for (NSArray *section in _foundUserSections) {
             NSUInteger index = 0;
             for (TGUser *user in section) {
                 if (user.uid == uid) {
@@ -2067,7 +2112,7 @@ static const NSUInteger loadMoreMemberCount = 100;
             }
         }
         
-        _searchResultsMemberDatas = updatedSearchResultMemberDatas;
+        _foundMemberDatas = updatedSearchResultMemberDatas;
         
         if (indexPath != nil) {
             [_searchMixin.searchResultsTableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
@@ -2112,9 +2157,9 @@ static const NSUInteger loadMoreMemberCount = 100;
         index++;
     }
     
-    if (_searchResultUsers != nil) {
-        NSMutableArray *updatedSearchResultUsers = [[NSMutableArray alloc] initWithArray:_searchResultUsers];
-        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_searchResultsMemberDatas];
+    if (_foundUserSections != nil) {
+        NSMutableArray *updatedSearchResultUsers = [[NSMutableArray alloc] initWithArray:_foundUserSections];
+        NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_foundMemberDatas];
         
         NSIndexPath *indexPath = nil;
         NSUInteger sectionIndex = 0;
@@ -2140,8 +2185,8 @@ static const NSUInteger loadMoreMemberCount = 100;
         
         [updatedSearchResultMemberDatas removeObjectForKey:@(uid)];
         
-        _searchResultUsers = updatedSearchResultUsers;
-        _searchResultsMemberDatas = updatedSearchResultMemberDatas;
+        _foundUserSections = updatedSearchResultUsers;
+        _foundMemberDatas = updatedSearchResultMemberDatas;
         
         if (indexPath != nil) {
             [_searchMixin.searchResultsTableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationFade];
@@ -2617,8 +2662,8 @@ static const NSUInteger loadMoreMemberCount = 100;
     _searchString = searchQuery;
     if (_searchString.length == 0) {
         [_searchBar setShowActivity:false];
-        _searchResultUsers = @[];
-        _searchResultsMemberDatas = @{};
+        _foundUserSections = @[];
+        _foundMemberDatas = @{};
         [_searchDisposable setDisposable:nil];
         [searchMixin reloadSearchResults];
         [searchMixin setSearchResultsTableViewHidden:true];
@@ -2668,8 +2713,8 @@ static const NSUInteger loadMoreMemberCount = 100;
                     }
                 }
                 
-                strongSelf->_searchResultUsers = @[members, contacts, global];
-                strongSelf->_searchResultsMemberDatas = memberData[@"memberDatas"];
+                strongSelf->_foundUserSections = @[members, contacts, global];
+                strongSelf->_foundMemberDatas = memberData[@"memberDatas"];
                 [searchMixin reloadSearchResults];
                 [searchMixin setSearchResultsTableViewHidden:false];
                 [strongSelf->_searchBar setShowActivity:false];
@@ -2705,14 +2750,14 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     TGUser *user = nil;
-    user = _searchResultUsers[indexPath.section][indexPath.row];
+    user = _foundUserSections[indexPath.section][indexPath.row];
     
     static NSString *cellIdentifier = @"TGGroupInfoUserCell";
     TGGroupInfoUserCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
     if (cell == nil)
         cell = [[TGGroupInfoUserCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellIdentifier];
     cell.presentation = self.presentation;
-    TGGroupInfoUserCollectionItem *item = [self makeItemForUser:user member:_searchResultsMemberDatas[@(user.uid)]];
+    TGGroupInfoUserCollectionItem *item = [self makeItemForUser:user member:_foundMemberDatas[@(user.uid)]];
     item.presentation = self.presentation;
     [cell setItem:item];
     
@@ -2720,11 +2765,11 @@ static const NSUInteger loadMoreMemberCount = 100;
 }
 
 -(NSInteger)numberOfSectionsInTableView:(UITableView *)__unused tableView {
-    return _searchResultUsers.count;
+    return _foundUserSections.count;
 }
 
 - (NSInteger)tableView:(UITableView *)__unused tableView numberOfRowsInSection:(NSInteger)section {
-    return [(NSArray *)_searchResultUsers[section] count];
+    return [(NSArray *)_foundUserSections[section] count];
 }
 
 - (UITableView *)createTableViewForSearchMixin:(TGSearchDisplayMixin *)__unused searchMixin {
@@ -2802,7 +2847,7 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:true];
-    TGUser *user = _searchResultUsers[indexPath.section][indexPath.row];
+    TGUser *user = _foundUserSections[indexPath.section][indexPath.row];
     [self actionStageActionRequested:@"openUser" options:@{@"uid": @(user.uid), @"force": @true}];
 }
 

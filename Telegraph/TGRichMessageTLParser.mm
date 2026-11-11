@@ -343,6 +343,7 @@ static TGRichMessageText *TGRichTLReadText(TGRichTLReader &reader)
         case (int32_t)0xc556a45d: wrapperKind = TGRichMessageTextKindAutoEmail; break;
         case (int32_t)0x24c26789: wrapperKind = TGRichMessageTextKindAutoPhone; break;
         case (int32_t)0xb956812d: wrapperKind = TGRichMessageTextKindBankCard; break;
+        case (int32_t)0x3cd2a36a: wrapperKind = TGRichMessageTextKindFixed; break;
         default: break;
     }
 

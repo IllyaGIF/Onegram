@@ -49,20 +49,20 @@
     return [[NSString alloc] initWithFormat:@"%lld", _peerId];
 }
 
-- (NSMutableSet *)_messageIdsFromObjects:(NSArray *)objects
+- (NSSet *)_idsOfMessageObjects:(NSArray *)objects
 {
-    NSMutableSet *messageIds = [[NSMutableSet alloc] init];
+    NSMutableSet *ids = [[NSMutableSet alloc] initWithCapacity:objects.count];
     for (id object in objects)
     {
         if ([object isKindOfClass:[NSNumber class]])
-            [messageIds addObject:object];
+            [ids addObject:object];
         else if ([object isKindOfClass:[TGMessage class]])
-            [messageIds addObject:@(((TGMessage *)object).mid)];
+            [ids addObject:@(((TGMessage *)object).mid)];
     }
-    return messageIds;
+    return ids;
 }
 
-- (void)_replaceCurrentViewMessages:(NSArray *)messages
+- (void)_publishCurrentViewWithMessages:(NSArray *)messages
 {
     TGChatMessageListView *updatedView = [[TGChatMessageListView alloc] initWithMessages:messages earlierReferenceMessageId:nil laterReferenceMessageId:nil];
     updatedView.rangeCount = _currentView.rangeCount;
@@ -75,30 +75,24 @@
         _viewUpdated(updatedView);
 }
 
-- (void)_deleteMessagesFromCurrentView:(NSArray *)objects
+- (void)_dropMessagesWithObjects:(NSArray *)objects
 {
-    NSMutableSet *deletedMessageIds = [self _messageIdsFromObjects:objects];
-    if (deletedMessageIds.count == 0)
+    NSSet *doomedIds = [self _idsOfMessageObjects:objects];
+    if (doomedIds.count == 0)
         return;
     
-    NSMutableArray *updatedMessages = [[NSMutableArray alloc] initWithArray:_currentView.messages];
-    NSUInteger removedCount = 0;
-    for (NSInteger i = 0; i < (NSInteger)updatedMessages.count; i++)
+    NSArray *currentMessages = _currentView.messages;
+    NSMutableArray *survivors = [[NSMutableArray alloc] initWithCapacity:currentMessages.count];
+    for (TGMessage *message in currentMessages)
     {
-        TGMessage *message = updatedMessages[i];
-        if ([deletedMessageIds containsObject:@(message.mid)])
-        {
-            [updatedMessages removeObjectAtIndex:i];
-            removedCount++;
-            i--;
-        }
+        if (![doomedIds containsObject:@(message.mid)])
+            [survivors addObject:message];
     }
     
-    
-    if (removedCount == 0)
+    if (survivors.count == currentMessages.count)
         return;
     
-    if (updatedMessages.count < _rangeMessageCount && _currentView.maybeHasMessagesOnTop)
+    if (survivors.count < _rangeMessageCount && _currentView.maybeHasMessagesOnTop)
     {
         [_initialSignal startWithNext:^(TGChatMessageListView *view)
         {
@@ -110,45 +104,35 @@
     }
     else
     {
-        [self _replaceCurrentViewMessages:updatedMessages];
+        [self _publishCurrentViewWithMessages:survivors];
     }
 }
 
-- (void)_updateMessagesInCurrentView:(NSDictionary *)updatedMessageMap
+- (void)_swapInMessagesFromMap:(NSDictionary *)updatedMessageMap
 {
-    if (updatedMessageMap.count == 0)
-        return;
-    
-    NSMutableDictionary *normalizedMap = [[NSMutableDictionary alloc] init];
-    [updatedMessageMap enumerateKeysAndObjectsUsingBlock:^(id key, id object, __unused BOOL *stop)
+    NSMutableDictionary *replacements = [[NSMutableDictionary alloc] initWithCapacity:updatedMessageMap.count];
+    for (id key in updatedMessageMap)
     {
+        id object = updatedMessageMap[key];
         if ([object isKindOfClass:[TGMessage class]])
-        {
-            NSNumber *messageId = [key isKindOfClass:[NSNumber class]] ? key : @(((TGMessage *)object).mid);
-            normalizedMap[messageId] = object;
-        }
-    }];
+            replacements[[key isKindOfClass:[NSNumber class]] ? key : @(((TGMessage *)object).mid)] = object;
+    }
     
-    if (normalizedMap.count == 0)
+    if (replacements.count == 0)
         return;
     
-    NSMutableArray *updatedMessages = [[NSMutableArray alloc] initWithArray:_currentView.messages];
-    NSUInteger updatedCount = 0;
-    for (NSInteger i = 0; i < (NSInteger)updatedMessages.count; i++)
+    NSArray *currentMessages = _currentView.messages;
+    NSMutableArray *rebuilt = [[NSMutableArray alloc] initWithCapacity:currentMessages.count];
+    bool anyReplaced = false;
+    for (TGMessage *message in currentMessages)
     {
-        TGMessage *message = updatedMessages[i];
-        TGMessage *updatedMessage = normalizedMap[@(message.mid)];
-        if (updatedMessage != nil)
-        {
-            updatedMessages[i] = updatedMessage;
-            updatedCount++;
-        }
+        TGMessage *replacement = replacements[@(message.mid)];
+        anyReplaced = anyReplaced || replacement != nil;
+        [rebuilt addObject:replacement ?: message];
     }
     
-    if (updatedCount != 0)
-    {
-        [self _replaceCurrentViewMessages:updatedMessages];
-    }
+    if (anyReplaced)
+        [self _publishCurrentViewWithMessages:rebuilt];
 }
 
 - (instancetype)initWithPeerId:(int64_t)peerId currentView:(TGChatMessageListView *)currentView rangeMessageCount:(NSUInteger)rangeMessageCount initialSignal:(SSignal *)initialSignal viewUpdated:(void (^)(TGChatMessageListView *))viewUpdated
@@ -261,23 +245,25 @@
         if (_viewUpdated)
             _viewUpdated(updatedView);
     }
-    else if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/unimportantMessages", [self _conversationIdPathComponent]]] ||
-             [path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/importantMessages", [self _conversationIdPathComponent]]])
+    else if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/unimportantMessages", conversationId]] ||
+             [path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/importantMessages", conversationId]])
     {
-        if (((NSArray *)resource[@"removed"]).count != 0)
-            [self _deleteMessagesFromCurrentView:resource[@"removed"]];
+        NSArray *removedObjects = resource[@"removed"];
+        if (removedObjects.count != 0)
+            [self _dropMessagesWithObjects:removedObjects];
         
         if (((NSArray *)resource[@"added"]).count != 0)
         {
             [self actionStageResourceDispatched:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/messages", conversationId] resource:[[SGraphObjectNode alloc] initWithObject:resource[@"added"]] arguments:@{@"treatIncomingAsUnread": @true}];
         }
         
-        if (((NSDictionary *)resource[@"updated"]).count != 0)
-            [self _updateMessagesInCurrentView:resource[@"updated"]];
+        NSDictionary *updatedObjects = resource[@"updated"];
+        if (updatedObjects.count != 0)
+            [self _swapInMessagesFromMap:updatedObjects];
     }
-    else if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/messagesDeleted", [self _conversationIdPathComponent]]])
+    else if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%@)/messagesDeleted", conversationId]])
     {
-        [self _deleteMessagesFromCurrentView:((SGraphObjectNode *)resource).object];
+        [self _dropMessagesWithObjects:((SGraphObjectNode *)resource).object];
     }
     else if ([path isEqualToString:[NSString stringWithFormat:@"/tg/conversation/(%lld)/messagesChanged", _peerId]])
     {

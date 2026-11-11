@@ -14,6 +14,8 @@
 
 @property (nonatomic) int32_t reply_to_top_id;
 @property (nonatomic) bool forum_topic;
+@property (nonatomic) int64_t reply_to_story_peer_id;
+@property (nonatomic) int32_t reply_to_story_id;
 
 @property (nonatomic) bool discussion_comments;
 @property (nonatomic) int32_t discussion_replies;

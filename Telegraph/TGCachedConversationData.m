@@ -129,7 +129,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     return self;
 }
 
-- (instancetype)initWithManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount managementMembers:(NSArray *)managementMembers blacklistMembers:(NSArray *)blacklistMembers bannedMembers:(NSArray *)bannedMembers generalMembers:(NSArray *)generalMembers privateLink:(NSString *)privateLink migrationData:(TGConversationMigrationData *)migrationData botInfos:(NSDictionary *)botInfos stickerPack:(TGStickerPackIdReference *)stickerPack canSetStickerPack:(bool)canSetStickerPack minAvailableMessageId:(int32_t)minAvailableMessageId preHistory:(bool)preHistory {
+- (instancetype)initWithManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount managementMembers:(NSArray *)managementMembers blacklistMembers:(NSArray *)blacklistMembers bannedMembers:(NSArray *)bannedMembers generalMembers:(NSArray *)generalMembers privateLink:(NSString *)privateLink migrationData:(TGConversationMigrationData *)migrationData botInfos:(NSDictionary *)botInfos stickerPack:(TGStickerPackIdReference *)stickerPack canSetStickerPack:(bool)canSetStickerPack minAvailableMessageId:(int32_t)minAvailableMessageId preHistory:(bool)preHistory paidMessagesAvailable:(bool)paidMessagesAvailable {
     self = [super init];
     if (self != nil) {
         _managementCount = managementCount;
@@ -147,12 +147,13 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
         _canSetStickerPack = canSetStickerPack;
         _minAvailableMessageId = minAvailableMessageId;
         _preHistory = preHistory;
+        _paidMessagesAvailable = paidMessagesAvailable;
     }
     return self;
 }
 
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder {
-    return [self initWithManagementCount:[coder decodeInt32ForCKey:"managementCount"] blacklistCount:[coder decodeInt32ForCKey:"blacklistCount"] bannedCount:[coder decodeInt32ForCKey:"bannedCount"] memberCount:[coder decodeInt32ForCKey:"memberCount"] managementMembers:[coder decodeArrayForCKey:"managementMembers"] blacklistMembers:[coder decodeArrayForCKey:"blacklistMembers"] bannedMembers:[coder decodeArrayForCKey:"bannedMembers"] generalMembers:[coder decodeArrayForCKey:"generalMembers"] privateLink:[coder decodeStringForCKey:"privateLink"] migrationData:[coder decodeObjectForCKey:"migrationData"] botInfos:[coder decodeInt32DictionaryForCKey:"botInfos"] stickerPack:[coder decodeObjectForCKey:"stickerPack"] canSetStickerPack:[coder decodeInt32ForCKey:"canSetStickerPack"] minAvailableMessageId:[coder decodeInt32ForCKey:"minAvailableMessageId"] preHistory:[coder decodeInt32ForCKey:"preHistory"] != 0];
+    return [self initWithManagementCount:[coder decodeInt32ForCKey:"managementCount"] blacklistCount:[coder decodeInt32ForCKey:"blacklistCount"] bannedCount:[coder decodeInt32ForCKey:"bannedCount"] memberCount:[coder decodeInt32ForCKey:"memberCount"] managementMembers:[coder decodeArrayForCKey:"managementMembers"] blacklistMembers:[coder decodeArrayForCKey:"blacklistMembers"] bannedMembers:[coder decodeArrayForCKey:"bannedMembers"] generalMembers:[coder decodeArrayForCKey:"generalMembers"] privateLink:[coder decodeStringForCKey:"privateLink"] migrationData:[coder decodeObjectForCKey:"migrationData"] botInfos:[coder decodeInt32DictionaryForCKey:"botInfos"] stickerPack:[coder decodeObjectForCKey:"stickerPack"] canSetStickerPack:[coder decodeInt32ForCKey:"canSetStickerPack"] minAvailableMessageId:[coder decodeInt32ForCKey:"minAvailableMessageId"] preHistory:[coder decodeInt32ForCKey:"preHistory"] != 0 paidMessagesAvailable:[coder decodeInt32ForCKey:"paidMessagesAvailable"] != 0];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder {
@@ -176,10 +177,11 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     [coder encodeInt32:_minAvailableMessageId forCKey:"minAvailableMessageId"];
     
     [coder encodeInt32:_preHistory ? 1 : 0 forCKey:"preHistory"];
+    [coder encodeInt32:_paidMessagesAvailable ? 1 : 0 forCKey:"paidMessagesAvailable"];
 }
 
 - (TGCachedConversationData *)updateManagementCount:(int32_t)managementCount blacklistCount:(int32_t)blacklistCount bannedCount:(int32_t)bannedCount memberCount:(int32_t)memberCount {
-    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:blacklistCount bannedCount:bannedCount memberCount:memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:blacklistCount bannedCount:bannedCount memberCount:memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateMemberBannedRights:(int64_t)uid rights:(TGChannelBannedRights *)rights timestamp:(int32_t)timestamp isMember:(bool)isMember kickedById:(int64_t)kickedById {
@@ -238,7 +240,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
         [botInfos removeObjectForKey:@(uid)];
     }
     
-    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:blacklistCount bannedCount:bannedCount memberCount:memberCount managementMembers:managementMembers blacklistMembers:blacklistMembers bannedMembers:bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:blacklistCount bannedCount:bannedCount memberCount:memberCount managementMembers:managementMembers blacklistMembers:blacklistMembers bannedMembers:bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)addManagementMember:(TGCachedConversationMember *)member {
@@ -258,7 +260,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
         generalMembers[index] = [[TGCachedConversationMember alloc] initWithUid:generalMember.uid isCreator:false adminRights:member.adminRights bannedRights:nil timestamp:generalMember.timestamp inviterId:member.inviterId adminInviterId:member.adminInviterId kickedById:0 adminCanManage:false];
     }
     
-    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)removeManagementMember:(int64_t)uid {
@@ -277,7 +279,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
         generalMembers[index] = [[TGCachedConversationMember alloc] initWithUid:generalMember.uid isCreator:false adminRights:nil bannedRights:nil timestamp:generalMember.timestamp inviterId:generalMember.inviterId adminInviterId:0 kickedById:0 adminCanManage:false];
     }
     
-    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)addMembers:(NSArray *)uids timestamp:(int32_t)timestamp {
@@ -302,47 +304,51 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
         }
     }
     
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:blacklistCount bannedCount:_bannedCount memberCount:memberCount managementMembers:_managementMembers blacklistMembers:blacklistMembers bannedMembers:bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:blacklistCount bannedCount:_bannedCount memberCount:memberCount managementMembers:_managementMembers blacklistMembers:blacklistMembers bannedMembers:bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updatePrivateLink:(NSString *)privateLink {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateGeneralMembers:(NSArray *)generalMembers {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateManagementMembers:(NSArray *)managementMembers {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateBlacklistMembers:(NSArray *)blacklistMembers {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateBannedMembers:(NSArray *)bannedMembers {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateMigrationData:(TGConversationMigrationData *)migrationData {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateBotInfos:(NSDictionary *)botInfos {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateStickerPack:(TGStickerPackIdReference *)stickerPack canSetStickerPack:(bool)canSetStickerPack {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:stickerPack canSetStickerPack:canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:stickerPack canSetStickerPack:canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updateMinAvailableMessageId:(int32_t)minAvailableMessageId {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:minAvailableMessageId preHistory:_preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:_paidMessagesAvailable];
 }
 
 - (TGCachedConversationData *)updatePreHistory:(bool)preHistory {
-    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:preHistory];
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:preHistory paidMessagesAvailable:_paidMessagesAvailable];
+}
+
+- (TGCachedConversationData *)updatePaidMessagesAvailable:(bool)paidMessagesAvailable {
+    return [[TGCachedConversationData alloc] initWithManagementCount:_managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory paidMessagesAvailable:paidMessagesAvailable];
 }
 
 @end

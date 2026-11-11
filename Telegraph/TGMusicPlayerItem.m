@@ -13,39 +13,45 @@
 
 @implementation TGMusicPlayerItem
 
++ (instancetype)og_compat_itemForMessage:(TGMessage *)message author:(TGUser *)author media:(id)media performer:(NSString *)performer title:(NSString *)title duration:(int32_t)duration voice:(bool)voice
+{
+    TGMusicPlayerItem *item = [[TGMusicPlayerItem alloc] initWithKey:@(message.mid) media:media peerId:message.cid author:author date:(int32_t)message.date performer:performer title:title duration:duration];
+    item->_peerId = message.fromUid;
+    item->_isVoice = voice;
+    return item;
+}
+
 + (instancetype)itemWithMessage:(TGMessage *)message author:(TGUser *)author
 {
     TGDocumentMediaAttachment *document = nil;
-    TGAudioMediaAttachment *legacyAudio = nil;
-    TGVideoMediaAttachment *roundVideo = nil;
+    TGAudioMediaAttachment *voiceAttachment = nil;
+    TGVideoMediaAttachment *roundAttachment = nil;
     
     for (id attachment in message.mediaAttachments)
     {
         if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
         {
-            TGDocumentMediaAttachment *candidateDocument = attachment;
-            for (id attribute in candidateDocument.attributes)
+            TGDocumentMediaAttachment *candidate = attachment;
+            for (id attribute in candidate.attributes)
             {
                 if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]])
                 {
-                    document = candidateDocument;
+                    document = candidate;
                     break;
                 }
             }
-            
             if (document != nil)
                 break;
         } else if ([attachment isKindOfClass:[TGAudioMediaAttachment class]]) {
-            legacyAudio = attachment;
+            voiceAttachment = attachment;
         } else if ([attachment isKindOfClass:[TGWebPageMediaAttachment class]]) {
-            document = ((TGWebPageMediaAttachment *)attachment).document;
+            TGWebPageMediaAttachment *webPage = attachment;
+            document = webPage.document;
             if (document.originInfo == nil)
-                document.originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil url:((TGWebPageMediaAttachment *)attachment).url];
+                document.originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil url:webPage.url];
             break;
-        } else if ([attachment isKindOfClass:[TGVideoMediaAttachment class]]) {
-            if (((TGVideoMediaAttachment *)attachment).roundMessage) {
-                roundVideo = attachment;
-            }
+        } else if ([attachment isKindOfClass:[TGVideoMediaAttachment class]] && ((TGVideoMediaAttachment *)attachment).roundMessage) {
+            roundAttachment = attachment;
         }
     }
     
@@ -58,40 +64,22 @@
             if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]])
             {
                 TGDocumentAttributeAudio *audio = attribute;
-                TGMusicPlayerItem *item = [[TGMusicPlayerItem alloc] initWithKey:@(message.mid) media:document peerId:message.cid author:author date:(int32_t)message.date performer:audio.performer title:audio.title duration:audio.duration];
-                item->_peerId = message.fromUid;
-                item->_isVoice = audio.isVoice;
-                return item;
+                return [self og_compat_itemForMessage:message author:author media:document performer:audio.performer title:audio.title duration:audio.duration voice:audio.isVoice];
             }
-            else if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]])
+            else if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]] && ((TGDocumentAttributeVideo *)attribute).isRoundMessage)
             {
-                TGDocumentAttributeVideo *video = attribute;
-                if (video.isRoundMessage)
-                {
-                    TGMusicPlayerItem *item = [[TGMusicPlayerItem alloc] initWithKey:@(message.mid) media:document peerId:message.cid author:author date:(int32_t)message.date performer:nil title:nil duration:video.duration];
-                    item->_peerId = message.fromUid;
-                    item->_isVoice = true;
-                    return item;
-                }
+                return [self og_compat_itemForMessage:message author:author media:document performer:nil title:nil duration:((TGDocumentAttributeVideo *)attribute).duration voice:true];
             }
         }
     }
     
-    if (legacyAudio != nil) {
-        TGMusicPlayerItem *item = [[TGMusicPlayerItem alloc] initWithKey:@(message.mid) media:legacyAudio peerId:message.cid author:author date:(int32_t)message.date performer:nil title:nil duration:legacyAudio.duration];
-        item->_peerId = message.fromUid;
-        item->_isVoice = true;
-        return item;
-    }
+    if (voiceAttachment != nil)
+        return [self og_compat_itemForMessage:message author:author media:voiceAttachment performer:nil title:nil duration:voiceAttachment.duration voice:true];
     
-    if (roundVideo != nil) {
-        if (roundVideo.originInfo == nil)
-            roundVideo.originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil cid:message.cid mid:message.mid];
-        
-        TGMusicPlayerItem *item = [[TGMusicPlayerItem alloc] initWithKey:@(message.mid) media:roundVideo peerId:message.cid author:author date:(int32_t)message.date performer:nil title:nil duration:roundVideo.duration];
-        item->_peerId = message.fromUid;
-        item->_isVoice = true;
-        return item;
+    if (roundAttachment != nil) {
+        if (roundAttachment.originInfo == nil)
+            roundAttachment.originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:nil cid:message.cid mid:message.mid];
+        return [self og_compat_itemForMessage:message author:author media:roundAttachment performer:nil title:nil duration:roundAttachment.duration voice:true];
     }
     
     return nil;

@@ -1062,7 +1062,7 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
          ];
         
         [controller setItemViews:items];
-        controller.sourceRect = ^CGRect
+        controller.sourceRect = ^CGRect (void)
         {
             __strong TGCameraController *strongSelf = weakSelf;
             if (strongSelf == nil)

@@ -151,14 +151,12 @@
                     if (TGPeerIdIsChannel(notificationSettingsAction.uniqueId)) {
                         [TGDatabaseInstance() dispatchOnDatabaseThread:^{
                             accessHash = [TGDatabaseInstance() loadConversationWithId:notificationSettingsAction.uniqueId].accessHash;
-                            NSData *preservedAccessHashData = [TGDatabaseInstance() conversationCustomPropertySync:notificationSettingsAction.uniqueId name:murMurHash32(@"ios6NotificationAccessHash")];
-                            if (preservedAccessHashData.length == sizeof(int64_t))
-                            {
-                                int64_t preservedAccessHash = 0;
-                                [preservedAccessHashData getBytes:&preservedAccessHash length:sizeof(preservedAccessHash)];
-                                if (preservedAccessHash != 0)
-                                    accessHash = preservedAccessHash;
-                            }
+                            NSData *storedHashData = [TGDatabaseInstance() conversationCustomPropertySync:notificationSettingsAction.uniqueId name:murMurHash32(@"ios6NotificationAccessHash")];
+                            int64_t storedHash = 0;
+                            if (storedHashData.length == sizeof(storedHash))
+                                [storedHashData getBytes:&storedHash length:sizeof(storedHash)];
+                            if (storedHash != 0)
+                                accessHash = storedHash;
                         } synchronous:true];
                     }
 

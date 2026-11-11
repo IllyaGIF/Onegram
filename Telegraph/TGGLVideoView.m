@@ -132,30 +132,26 @@ typedef struct {
 #ifndef kVTDecodeInfo_Asynchronous
 #define kVTDecodeInfo_Asynchronous 1
 #endif
-static inline OSStatus VTDecompressionSessionCreate(CFAllocatorRef allocator, CMVideoFormatDescriptionRef videoFormatDescription, CFDictionaryRef videoDecoderSpecification, CFDictionaryRef destinationImageBufferAttributes, const VTDecompressionOutputCallbackRecord *outputCallback, VTDecompressionSessionRef *decompressionSessionOut)
+
+#define OG_COMPAT_VT_UNSUPPORTED (-1)
+
+static inline OSStatus VTDecompressionSessionCreate(__unused CFAllocatorRef allocator, __unused CMVideoFormatDescriptionRef videoFormatDescription, __unused CFDictionaryRef videoDecoderSpecification, __unused CFDictionaryRef destinationImageBufferAttributes, __unused const VTDecompressionOutputCallbackRecord *outputCallback, VTDecompressionSessionRef *decompressionSessionOut)
 {
-    (void)allocator;
-    (void)videoFormatDescription;
-    (void)videoDecoderSpecification;
-    (void)destinationImageBufferAttributes;
-    (void)outputCallback;
     if (decompressionSessionOut != NULL)
         *decompressionSessionOut = NULL;
-    return -1;
+    return OG_COMPAT_VT_UNSUPPORTED;
 }
-static inline void VTDecompressionSessionInvalidate(VTDecompressionSessionRef session) { (void)session; }
-static inline OSStatus VTDecompressionSessionDecodeFrame(VTDecompressionSessionRef session, CMSampleBufferRef sampleBuffer, VTDecodeFrameFlags decodeFlags, void *sourceFrameRefCon, VTDecodeInfoFlags *infoFlagsOut)
+
+static inline OSStatus VTDecompressionSessionDecodeFrame(__unused VTDecompressionSessionRef session, __unused CMSampleBufferRef sampleBuffer, __unused VTDecodeFrameFlags decodeFlags, __unused void *sourceFrameRefCon, VTDecodeInfoFlags *infoFlagsOut)
 {
-    (void)session;
-    (void)sampleBuffer;
-    (void)decodeFlags;
-    (void)sourceFrameRefCon;
     if (infoFlagsOut != NULL)
         *infoFlagsOut = 0;
-    return -1;
+    return OG_COMPAT_VT_UNSUPPORTED;
 }
-static inline void VTDecompressionSessionFinishDelayedFrames(VTDecompressionSessionRef session) { (void)session; }
-static inline void VTDecompressionSessionWaitForAsynchronousFrames(VTDecompressionSessionRef session) { (void)session; }
+
+static inline void VTDecompressionSessionInvalidate(__unused VTDecompressionSessionRef session) {}
+static inline void VTDecompressionSessionFinishDelayedFrames(__unused VTDecompressionSessionRef session) {}
+static inline void VTDecompressionSessionWaitForAsynchronousFrames(__unused VTDecompressionSessionRef session) {}
 #endif
 
 #import "TGWeakReference.h"
@@ -536,11 +532,6 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
                 if (_output != nil) {
                     if ([_output respondsToSelector:@selector(setAlwaysCopiesSampleData:)])
                         _output.alwaysCopiesSampleData = false;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-                    if (false && iosMajorVersion() >= 8) {
-                        _output.supportsRandomAccess = true;
-                    }
-#endif
                     
                     _reader = [[AVAssetReader alloc] initWithAsset:asset error:nil];
                     if ([_reader canAddOutput:_output]) {
@@ -631,20 +622,13 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
                 if (earliestFrame != nil){
                     return earliestFrame;
                 } else {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-                    if (false && iosMajorVersion() >= 8) {
-                        [_output resetForReadingTimeRanges:@[[NSValue valueWithCMTimeRange:_timeRange]]];
-                    } else
-#endif
-                    {
-                        [_reader cancelReading];
-                        _reader = nil;
-                        _output = nil;
-                        if (_decompressionSession) {
-                            VTDecompressionSessionInvalidate(_decompressionSession);
-                            CFRelease(_decompressionSession);
-                            _decompressionSession = nil;
-                        }
+                    [_reader cancelReading];
+                    _reader = nil;
+                    _output = nil;
+                    if (_decompressionSession) {
+                        VTDecompressionSessionInvalidate(_decompressionSession);
+                        CFRelease(_decompressionSession);
+                        _decompressionSession = nil;
                     }
                 }
             }

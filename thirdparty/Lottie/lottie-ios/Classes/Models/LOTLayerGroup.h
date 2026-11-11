@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTLayerGroup.h
 //  Pods
@@ -18,10 +18,10 @@
 @interface LOTLayerGroup : NSObject
 
 - (instancetype)initWithLayerJSON:(NSArray *)layersJSON
-                   withAssetGroup:(LOTAssetGroup * )assetGroup
+                   withAssetGroup:(LOTAssetGroup * _Nullable)assetGroup
                     withFramerate:(NSNumber *)framerate;
 
-@property (nonatomic, readonly) NSArray *layers;
+@property (nonatomic, readonly) OG_COMPAT_GENERIC(NSArray, LOTLayer *) *layers;
 
 - (LOTLayer *)layerModelForID:(NSNumber *)layerID;
 - (LOTLayer *)layerForReferenceID:(NSString *)referenceID;

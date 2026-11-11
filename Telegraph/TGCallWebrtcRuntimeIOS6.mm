@@ -1,8 +1,8 @@
 #import <Foundation/Foundation.h>
 #import "TGCommon.h"
 
-#ifndef TGCALLS_IOS6_AUDIO_ONLY
-#define TGCALLS_IOS6_AUDIO_ONLY 1
+#if !defined(TGCALLS_IOS6_AUDIO_ONLY)
+#   define TGCALLS_IOS6_AUDIO_ONLY 1
 #endif
 
 #include "../thirdparty/TgVoipWebrtcIOS6/include/tgcalls/TGIOS6CxxCompat.h"
@@ -19,7 +19,7 @@
 #include <memory>
 #include <vector>
 
-static void TGIOS6RegisterCallImplementations()
+static void OGCompatRegisterCallImplementations()
 {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -34,121 +34,168 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
     }
 }
 
-@interface TGIOS6WebrtcCallbackProxy : NSObject
+typedef void (^OGCompatSignalBarsBlock)(int32_t);
+typedef void (^OGCompatFinishBlock)(NSString *, int64_t, int64_t, int64_t, int64_t);
+typedef void (^OGCompatStateBlock)(int32_t, int32_t, int32_t, int32_t, int32_t, float);
 
-@property (nonatomic, copy) void (^signalBarsChanged)(int32_t);
-@property (nonatomic, copy) void (^stateChanged)(int32_t, int32_t, int32_t, int32_t, int32_t, float);
+@interface OGCompatWebrtcEventRelay : NSObject
 
-- (void)emitSignalBars:(int32_t)bars;
-- (void)emitState:(int32_t)state;
-- (void)emitRemoteVideoState:(int32_t)videoState audioState:(int32_t)audioState batteryLow:(bool)batteryLow;
+@property (nonatomic, copy) OGCompatSignalBarsBlock signalBarsChanged;
+@property (nonatomic, copy) OGCompatStateBlock stateChanged;
+
+- (void)relaySignalBars:(int32_t)bars;
+- (void)relayState:(int32_t)state;
+- (void)relayRemoteVideo:(int32_t)videoState audio:(int32_t)audioState batteryLow:(bool)batteryLow;
 
 @end
 
-@implementation TGIOS6WebrtcCallbackProxy {
-    bool _hasState;
-    int32_t _lastState;
-    bool _hasSignalBars;
-    int32_t _lastSignalBars;
-    int32_t _remoteVideoState;
-    int32_t _remoteAudioState;
-    int32_t _remoteBatteryLow;
+@implementation OGCompatWebrtcEventRelay {
+    bool _stateKnown;
+    int32_t _currentState;
+    bool _barsKnown;
+    int32_t _currentBars;
+    int32_t _remoteVideo;
+    int32_t _remoteAudio;
+    int32_t _remoteLowBattery;
 }
 
-- (void)notifyState
+- (void)og_compat_onMain:(void (^)(void))work
 {
-    if (_stateChanged != nil)
-        _stateChanged(_lastState, 0, _remoteVideoState, _remoteAudioState, _remoteBatteryLow, 0.0f);
+    if ([NSThread isMainThread])
+        work();
+    else
+        dispatch_async(dispatch_get_main_queue(), work);
 }
 
-- (void)emitRemoteVideoState:(int32_t)videoState audioState:(int32_t)audioState batteryLow:(bool)batteryLow
+- (void)og_compat_deliverState
 {
-    void (^update)(void) = ^{
-        _remoteVideoState = videoState;
-        _remoteAudioState = audioState;
-        _remoteBatteryLow = batteryLow ? 1 : 0;
-        if (_hasState)
-            [self notifyState];
-    };
-    if ([NSThread isMainThread]) update();
-    else dispatch_async(dispatch_get_main_queue(), update);
+    OGCompatStateBlock handler = _stateChanged;
+    if (handler != nil)
+        handler(_currentState, 0, _remoteVideo, _remoteAudio, _remoteLowBattery, 0.0f);
 }
 
-- (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged
+- (void)setStateChanged:(OGCompatStateBlock)stateChanged
 {
-    void (^callback)(int32_t, int32_t, int32_t, int32_t, int32_t, float) = [stateChanged copy];
-    void (^update)(void) = ^{
-        _stateChanged = callback;
-        if (_hasState)
-            [self notifyState];
-    };
-    if ([NSThread isMainThread]) update();
-    else dispatch_async(dispatch_get_main_queue(), update);
+    OGCompatStateBlock handler = [stateChanged copy];
+    [self og_compat_onMain:^{
+        _stateChanged = handler;
+        if (_stateKnown)
+            [self og_compat_deliverState];
+    }];
 }
 
-- (void)setSignalBarsChanged:(void (^)(int32_t))signalBarsChanged
+- (void)setSignalBarsChanged:(OGCompatSignalBarsBlock)signalBarsChanged
 {
-    void (^callback)(int32_t) = [signalBarsChanged copy];
-    void (^update)(void) = ^{
-        _signalBarsChanged = callback;
-        if (_hasSignalBars && _signalBarsChanged != nil)
-            _signalBarsChanged(_lastSignalBars);
-    };
-    if ([NSThread isMainThread]) update();
-    else dispatch_async(dispatch_get_main_queue(), update);
+    OGCompatSignalBarsBlock handler = [signalBarsChanged copy];
+    [self og_compat_onMain:^{
+        _signalBarsChanged = handler;
+        if (_barsKnown && _signalBarsChanged != nil)
+            _signalBarsChanged(_currentBars);
+    }];
 }
 
-- (void)emitSignalBars:(int32_t)bars
+- (void)relaySignalBars:(int32_t)bars
 {
-    void (^update)(void) = ^{
-        _hasSignalBars = true;
-        _lastSignalBars = bars;
-        if (_signalBarsChanged != nil)
-            _signalBarsChanged(bars);
-    };
-    if ([NSThread isMainThread]) update();
-    else dispatch_async(dispatch_get_main_queue(), update);
+    [self og_compat_onMain:^{
+        _barsKnown = true;
+        _currentBars = bars;
+        OGCompatSignalBarsBlock handler = _signalBarsChanged;
+        if (handler != nil)
+            handler(bars);
+    }];
 }
 
-- (void)emitState:(int32_t)state
+- (void)relayState:(int32_t)state
 {
-    void (^update)(void) = ^{
-        _hasState = true;
-        _lastState = state;
-        [self notifyState];
-    };
-    if ([NSThread isMainThread]) update();
-    else dispatch_async(dispatch_get_main_queue(), update);
+    [self og_compat_onMain:^{
+        _stateKnown = true;
+        _currentState = state;
+        [self og_compat_deliverState];
+    }];
+}
+
+- (void)relayRemoteVideo:(int32_t)videoState audio:(int32_t)audioState batteryLow:(bool)batteryLow
+{
+    [self og_compat_onMain:^{
+        _remoteVideo = videoState;
+        _remoteAudio = audioState;
+        _remoteLowBattery = batteryLow ? 1 : 0;
+        if (_stateKnown)
+            [self og_compat_deliverState];
+    }];
 }
 
 @end
 
 namespace {
 
-tgcalls::NetworkType TGIOS6WebrtcNetworkType(int32_t networkType) {
-    switch (networkType) {
-        case 0:
-            return tgcalls::NetworkType::WiFi;
-        case 1:
-            return tgcalls::NetworkType::Gprs;
-        case 2:
-            return tgcalls::NetworkType::Edge;
-        case 3:
-            return tgcalls::NetworkType::ThirdGeneration;
-        case 4:
-            return tgcalls::NetworkType::Lte;
+tgcalls::NetworkType OGCompatNetworkType(int32_t networkType)
+{
+    static const tgcalls::NetworkType table[] = {
+        tgcalls::NetworkType::WiFi,
+        tgcalls::NetworkType::Gprs,
+        tgcalls::NetworkType::Edge,
+        tgcalls::NetworkType::ThirdGeneration,
+        tgcalls::NetworkType::Lte
+    };
+    if (networkType >= 0 && networkType < (int32_t)(sizeof(table) / sizeof(table[0])))
+        return table[networkType];
+    return tgcalls::NetworkType::Unknown;
+}
+
+int32_t OGCompatStateCode(tgcalls::State state)
+{
+    switch (state) {
+        case tgcalls::State::Established:
+            return 1;
+        case tgcalls::State::Failed:
+            return 2;
+        case tgcalls::State::Reconnecting:
+            return 3;
         default:
-            return tgcalls::NetworkType::Unknown;
+            return 0;
     }
 }
 
-class TGIOS6WebrtcCppBridge {
+bool OGCompatAssignText(id item, NSString *field, std::string &target)
+{
+    NSString *text = [item valueForKey:field];
+    if (text.length == 0)
+        return false;
+    target = std::string([text UTF8String]);
+    return true;
+}
+
+bool OGCompatAssignNumber(id item, NSString *field, NSNumber **value)
+{
+    *value = [item valueForKey:field];
+    return *value != nil;
+}
+
+bool OGCompatReadRelayServer(id item, tgcalls::RtcServer &server)
+{
+    NSNumber *number = nil;
+    if (OGCompatAssignNumber(item, @"reflectorId", &number))
+        server.id = (uint8_t)[number intValue];
+    OGCompatAssignText(item, @"ip", server.host);
+    if (OGCompatAssignNumber(item, @"port", &number))
+        server.port = (uint16_t)[number intValue];
+    OGCompatAssignText(item, @"username", server.login);
+    OGCompatAssignText(item, @"password", server.password);
+    if (OGCompatAssignNumber(item, @"hasTurn", &number))
+        server.isTurn = [number boolValue];
+    if (OGCompatAssignNumber(item, @"hasTcp", &number))
+        server.isTcp = [number boolValue];
+    return !server.host.empty() && server.port != 0;
+}
+
+class OGCompatCallBridge {
 public:
-    TGIOS6WebrtcCppBridge(TGIOS6WebrtcCallbackProxy *callbackProxy) :
-    _callbackProxy(callbackProxy),
+    OGCompatCallBridge(OGCompatWebrtcEventRelay *relay) :
+    _relay(relay),
     _outgoingVideoSource(new tgcalls::VideoSourceHub()),
     _incomingVideoSink(new tgcalls::VideoSinkHub()) {
-        TGIOS6RegisterCallImplementations();
+        OGCompatRegisterCallImplementations();
     }
 
     bool start(
@@ -162,7 +209,7 @@ public:
         bool allowTCP,
         tgcalls::NetworkType networkType,
         void (^sendSignalingData)(NSData *),
-        TGIOS6WebrtcCallbackProxy *callbackProxy) {
+        OGCompatWebrtcEventRelay *relay) {
         if (key.length != tgcalls::EncryptionKey::kSize) {
             TGDiagnosticLog(@"WEBRTC cpp.start.fail badKeyLen=%d", (int)key.length);
             return false;
@@ -174,90 +221,58 @@ public:
 
         tgcalls::Descriptor descriptor;
         descriptor.version = std::string(version.UTF8String);
-        descriptor.config.customParameters = customParameters.length == 0 ? "{}" : std::string(customParameters.UTF8String);
-        descriptor.config.maxApiLayer = maxLayer;
-        descriptor.config.enableP2P = allowP2P;
-        descriptor.config.allowTCP = allowTCP;
-        descriptor.config.protocolVersion = descriptor.version == "5.0.0" ? tgcalls::ProtocolVersion::V1 : tgcalls::ProtocolVersion::V0;
         descriptor.initialNetworkType = networkType;
 
-        std::shared_ptr<std::array<uint8_t, tgcalls::EncryptionKey::kSize>> keyValue(new std::array<uint8_t, tgcalls::EncryptionKey::kSize>());
-        memcpy(keyValue->data(), key.bytes, tgcalls::EncryptionKey::kSize);
+        tgcalls::Config &config = descriptor.config;
+        config.customParameters = customParameters.length == 0 ? "{}" : std::string(customParameters.UTF8String);
+        config.maxApiLayer = maxLayer;
+        config.enableP2P = allowP2P;
+        config.allowTCP = allowTCP;
+        config.protocolVersion = descriptor.version == "5.0.0" ? tgcalls::ProtocolVersion::V1 : tgcalls::ProtocolVersion::V0;
+
+        typedef std::array<uint8_t, tgcalls::EncryptionKey::kSize> KeyBytes;
+        std::shared_ptr<KeyBytes> keyValue(new KeyBytes());
+        [key getBytes:keyValue->data() length:tgcalls::EncryptionKey::kSize];
         descriptor.encryptionKey = tgcalls::EncryptionKey(keyValue, isOutgoing);
 
         for (id item in connections) {
             tgcalls::RtcServer server;
-            NSNumber *reflectorId = [item valueForKey:@"reflectorId"];
-            NSString *ip = [item valueForKey:@"ip"];
-            NSNumber *port = [item valueForKey:@"port"];
-            NSString *username = [item valueForKey:@"username"];
-            NSString *password = [item valueForKey:@"password"];
-            NSNumber *hasTurn = [item valueForKey:@"hasTurn"];
-            NSNumber *hasTcp = [item valueForKey:@"hasTcp"];
-            
-            if (reflectorId != nil)
-                server.id = (uint8_t)[reflectorId intValue];
-            if (ip.length != 0)
-                server.host = std::string([ip UTF8String]);
-            if (port != nil)
-                server.port = (uint16_t)[port intValue];
-            if (username.length != 0)
-                server.login = std::string([username UTF8String]);
-            if (password.length != 0)
-                server.password = std::string([password UTF8String]);
-            if (hasTurn != nil)
-                server.isTurn = [hasTurn boolValue];
-            if (hasTcp != nil)
-                server.isTcp = [hasTcp boolValue];
-            if (!server.host.empty() && server.port != 0)
+            if (OGCompatReadRelayServer(item, server))
                 descriptor.rtcServers.push_back(server);
         }
-        
 
-        void (^sendSignalingDataCopy)(NSData *) = [sendSignalingData copy];
-        int emittedSignalingPackets = 0;
-        int emittedCandidatePackets = 0;
-        descriptor.signalingDataEmitted = [sendSignalingDataCopy, emittedSignalingPackets, emittedCandidatePackets](const std::vector<uint8_t> &data) mutable {
-            if (sendSignalingDataCopy != nil && !data.empty()) {
-                emittedSignalingPackets++;
-                if (data.size() == 59) {
-                    emittedCandidatePackets++;
-                }
-                NSData *payload = [[NSData alloc] initWithBytes:data.data() length:data.size()];
-                const unsigned long payloadLength = (unsigned long)data.size();
-                if ([NSThread isMainThread]) {
-                    sendSignalingDataCopy(payload);
-                } else {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        sendSignalingDataCopy(payload);
-                    });
-                }
+        void (^signalingSink)(NSData *) = [sendSignalingData copy];
+        descriptor.signalingDataEmitted = [signalingSink](const std::vector<uint8_t> &data) {
+            if (signalingSink == nil || data.empty())
+                return;
+            NSData *payload = [NSData dataWithBytes:data.data() length:data.size()];
+            if ([NSThread isMainThread]) {
+                signalingSink(payload);
+            } else {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    signalingSink(payload);
+                });
             }
         };
-        descriptor.signalBarsUpdated = [callbackProxy](int bars) {
-            [callbackProxy emitSignalBars:(int32_t)bars];
+        descriptor.signalBarsUpdated = [relay](int bars) {
+            [relay relaySignalBars:(int32_t)bars];
         };
-        descriptor.stateUpdated = [callbackProxy](tgcalls::State state) {
-            int32_t mapped = 0;
-            if (state == tgcalls::State::Established)
-                mapped = 1;
-            else if (state == tgcalls::State::Failed)
-                mapped = 2;
-            else if (state == tgcalls::State::Reconnecting)
-                mapped = 3;
-            [callbackProxy emitState:mapped];
+        descriptor.stateUpdated = [relay](tgcalls::State state) {
+            [relay relayState:OGCompatStateCode(state)];
         };
-        std::shared_ptr<bool> remoteBatteryLow(new bool(false));
-        descriptor.remoteMediaStateUpdated = [callbackProxy, remoteBatteryLow](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
-            int32_t mappedVideo = 0;
+
+        std::shared_ptr<bool> peerBatteryLow(new bool(false));
+        descriptor.remoteMediaStateUpdated = [relay, peerBatteryLow](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
+            int32_t videoCode = 0;
             if (videoState == tgcalls::VideoState::Active)
-                mappedVideo = 1;
+                videoCode = 1;
             else if (videoState == tgcalls::VideoState::Paused)
-                mappedVideo = 2;
-            [callbackProxy emitRemoteVideoState:mappedVideo audioState:audioState == tgcalls::AudioState::Muted ? 0 : 1 batteryLow:*remoteBatteryLow];
+                videoCode = 2;
+            int32_t audioCode = audioState == tgcalls::AudioState::Muted ? 0 : 1;
+            [relay relayRemoteVideo:videoCode audio:audioCode batteryLow:*peerBatteryLow];
         };
-        descriptor.remoteBatteryLevelIsLowUpdated = [remoteBatteryLow](bool batteryLow) {
-            *remoteBatteryLow = batteryLow;
+        descriptor.remoteBatteryLevelIsLowUpdated = [peerBatteryLow](bool batteryLow) {
+            *peerBatteryLow = batteryLow;
         };
         descriptor.outgoingVideoSource = _outgoingVideoSource;
         descriptor.incomingVideoSink = _incomingVideoSink;
@@ -320,11 +335,12 @@ public:
         if (!_instance || data.length == 0)
             return;
 
-        std::vector<uint8_t> payload((const uint8_t *)data.bytes, (const uint8_t *)data.bytes + data.length);
-        _instance->receiveSignalingData(payload);
+        const uint8_t *bytes = (const uint8_t *)data.bytes;
+        std::vector<uint8_t> packet(bytes, bytes + data.length);
+        _instance->receiveSignalingData(packet);
     }
 
-    void stop(void (^completion)(NSString *, int64_t, int64_t, int64_t, int64_t)) {
+    void stop(OGCompatFinishBlock completion) {
         detachVideo();
         if (!_instance) {
             if (completion != nil)
@@ -332,14 +348,16 @@ public:
             return;
         }
 
-        std::shared_ptr<std::unique_ptr<tgcalls::Instance>> stopping(new std::unique_ptr<tgcalls::Instance>(std::move(_instance)));
+        typedef std::unique_ptr<tgcalls::Instance> InstanceHolder;
+        std::shared_ptr<InstanceHolder> stopping(new InstanceHolder(std::move(_instance)));
         (*stopping)->stop([stopping, completion](tgcalls::FinalState finalState) {
             if (completion != nil) {
                 NSString *debugLog = [NSString stringWithUTF8String:finalState.debugLog.c_str()] ?: @"";
-                const int64_t sentWifi = finalState.trafficStats.bytesSentWifi;
-                const int64_t receivedWifi = finalState.trafficStats.bytesReceivedWifi;
-                const int64_t sentMobile = finalState.trafficStats.bytesSentMobile;
-                const int64_t receivedMobile = finalState.trafficStats.bytesReceivedMobile;
+                const tgcalls::TrafficStats &stats = finalState.trafficStats;
+                const int64_t sentWifi = stats.bytesSentWifi;
+                const int64_t receivedWifi = stats.bytesReceivedWifi;
+                const int64_t sentMobile = stats.bytesSentMobile;
+                const int64_t receivedMobile = stats.bytesReceivedMobile;
                 dispatch_async(dispatch_get_main_queue(), ^{
                     completion(debugLog, sentWifi, receivedWifi, sentMobile, receivedMobile);
                 });
@@ -350,7 +368,7 @@ public:
 
 private:
     std::unique_ptr<tgcalls::Instance> _instance;
-    TGIOS6WebrtcCallbackProxy *_callbackProxy;
+    OGCompatWebrtcEventRelay *_relay;
     std::shared_ptr<tgcalls::VideoSourceHub> _outgoingVideoSource;
     std::shared_ptr<tgcalls::VideoSinkHub> _incomingVideoSink;
     TGCallVideoCapturer *_capturer;
@@ -361,11 +379,11 @@ private:
 @interface OngoingCallConnectionDescriptionWebrtc : NSObject
 
 @property (nonatomic, assign) uint8_t reflectorId;
+@property (nonatomic, assign) int32_t port;
 @property (nonatomic, assign) bool hasStun;
 @property (nonatomic, assign) bool hasTurn;
 @property (nonatomic, assign) bool hasTcp;
 @property (nonatomic, strong) NSString *ip;
-@property (nonatomic, assign) int32_t port;
 @property (nonatomic, strong) NSString *username;
 @property (nonatomic, strong) NSString *password;
 
@@ -380,11 +398,11 @@ private:
     self = [super init];
     if (self != nil) {
         _reflectorId = reflectorId;
+        _port = port;
         _hasStun = hasStun;
         _hasTurn = hasTurn;
         _hasTcp = hasTcp;
         _ip = [ip copy];
-        _port = port;
         _username = [username copy];
         _password = [password copy];
     }
@@ -393,44 +411,39 @@ private:
 
 - (NSString *)description
 {
-    return [NSString stringWithFormat:@"<WebrtcConnection id=%d ip=%@ port=%d stun=%d turn=%d tcp=%d user=%@ passLen=%d>",
-            (int)_reflectorId, _ip, _port, _hasStun ? 1 : 0, _hasTurn ? 1 : 0, _hasTcp ? 1 : 0, _username, (int)_password.length];
+    NSString *flags = [NSString stringWithFormat:@"stun=%d turn=%d tcp=%d", _hasStun ? 1 : 0, _hasTurn ? 1 : 0, _hasTcp ? 1 : 0];
+    return [NSString stringWithFormat:@"<WebrtcConnection id=%d ip=%@ port=%d %@ user=%@ passLen=%d>",
+            (int)_reflectorId, _ip, _port, flags, _username, (int)_password.length];
 }
 
 @end
 
 @interface OngoingCallThreadLocalContextWebrtc : NSObject
 
-@property (nonatomic, copy) void (^signalBarsChanged)(int32_t);
-@property (nonatomic, copy) void (^stateChanged)(int32_t, int32_t, int32_t, int32_t, int32_t, float);
+@property (nonatomic, copy) OGCompatSignalBarsBlock signalBarsChanged;
+@property (nonatomic, copy) OGCompatStateBlock stateChanged;
 
 - (instancetype)initWithVersion:(NSString *)version customParameters:(NSString *)customParameters queue:(id)queue proxy:(id)proxy networkType:(int32_t)networkType dataSaving:(int32_t)dataSaving derivedState:(NSData *)derivedState key:(NSData *)key isOutgoing:(bool)isOutgoing connections:(NSArray *)connections maxLayer:(int32_t)maxLayer allowP2P:(bool)allowP2P allowTCP:(bool)allowTCP enableStunMarking:(bool)enableStunMarking logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath sendSignalingData:(void (^)(NSData *))sendSignalingData videoCapturer:(id)videoCapturer preferredVideoCodec:(NSString *)preferredVideoCodec audioInputDeviceId:(NSString *)audioInputDeviceId audioDevice:(id)audioDevice directConnection:(id)directConnection;
-- (void)addSignalingData:(NSData *)data;
-- (void)setIsMuted:(bool)isMuted;
 + (bool)supportsVideoSending;
 + (bool)supportsVideoReceiving;
+- (void)addSignalingData:(NSData *)data;
+- (void)setIsMuted:(bool)isMuted;
 - (void)setOutgoingVideoEnabled:(bool)enabled;
 - (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
 - (void)setIncomingVideoView:(TGCallVideoView *)view;
 - (void)setNetworkType:(int32_t)networkType;
-- (void)stop:(void (^)(NSString *debugLog, int64_t bytesSentWifi, int64_t bytesReceivedWifi, int64_t bytesSentMobile, int64_t bytesReceivedMobile))completion;
+- (void)stop:(OGCompatFinishBlock)completion;
 
 @end
 
 @implementation OngoingCallThreadLocalContextWebrtc {
-    NSString *_version;
-    NSString *_customParameters;
-    NSData *_key;
-    NSArray *_connections;
-    bool _isOutgoing;
-    void (^_sendSignalingData)(NSData *);
-    TGIOS6WebrtcCallbackProxy *_callbackProxy;
-    TGIOS6WebrtcCppBridge *_cppBridge;
+    OGCompatWebrtcEventRelay *_relay;
+    OGCompatCallBridge *_bridge;
 }
 
 + (NSArray *)versionsWithIncludeReference:(bool)includeReference
 {
-    TGIOS6RegisterCallImplementations();
+    OGCompatRegisterCallImplementations();
     NSMutableArray *versions = [[NSMutableArray alloc] init];
     const std::vector<std::string> registeredVersions = tgcalls::Meta::Versions();
     for (auto it = registeredVersions.rbegin(); it != registeredVersions.rend(); ++it) {
@@ -451,41 +464,16 @@ private:
     return tgcalls::Ios6CanReceiveVideo();
 }
 
-- (void)setOutgoingVideoEnabled:(bool)enabled
-{
-    if (_cppBridge != NULL)
-        _cppBridge->setOutgoingVideoEnabled(enabled);
-}
-
-- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
-{
-    if (_cppBridge != NULL)
-        _cppBridge->setVideoCapturer(capturer);
-}
-
-- (void)setIncomingVideoView:(TGCallVideoView *)view
-{
-    if (_cppBridge != NULL)
-        _cppBridge->setIncomingVideoView(view);
-}
-
 - (instancetype)initWithVersion:(NSString *)version customParameters:(NSString *)customParameters queue:(id)queue proxy:(id)proxy networkType:(int32_t)networkType dataSaving:(int32_t)dataSaving derivedState:(NSData *)derivedState key:(NSData *)key isOutgoing:(bool)isOutgoing connections:(NSArray *)connections maxLayer:(int32_t)maxLayer allowP2P:(bool)allowP2P allowTCP:(bool)allowTCP enableStunMarking:(bool)enableStunMarking logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath sendSignalingData:(void (^)(NSData *))sendSignalingData videoCapturer:(id)videoCapturer preferredVideoCodec:(NSString *)preferredVideoCodec audioInputDeviceId:(NSString *)audioInputDeviceId audioDevice:(id)audioDevice directConnection:(id)directConnection
 {
     self = [super init];
     if (self != nil) {
-        _version = [version copy];
-        _customParameters = [customParameters copy];
-        _key = [key copy];
-        _connections = [connections copy];
-        _isOutgoing = isOutgoing;
-        _sendSignalingData = [sendSignalingData copy];
-        _callbackProxy = [[TGIOS6WebrtcCallbackProxy alloc] init];
-        
-        _cppBridge = new TGIOS6WebrtcCppBridge(_callbackProxy);
-        bool started = _cppBridge->start(_version, _customParameters, _key, _isOutgoing, _connections, maxLayer, allowP2P, allowTCP, TGIOS6WebrtcNetworkType(networkType), _sendSignalingData, _callbackProxy);
-        if (!started) {
-            delete _cppBridge;
-            _cppBridge = NULL;
+        _relay = [[OGCompatWebrtcEventRelay alloc] init];
+
+        _bridge = new OGCompatCallBridge(_relay);
+        if (!_bridge->start(version, customParameters, key, isOutgoing, connections, maxLayer, allowP2P, allowTCP, OGCompatNetworkType(networkType), sendSignalingData, _relay)) {
+            delete _bridge;
+            _bridge = NULL;
             return nil;
         }
     }
@@ -494,46 +482,64 @@ private:
 
 - (void)dealloc
 {
-    if (_cppBridge != NULL)
-        _cppBridge->detachVideo();
-    delete _cppBridge;
-    _cppBridge = NULL;
+    if (_bridge != NULL)
+        _bridge->detachVideo();
+    delete _bridge;
+    _bridge = NULL;
 }
 
-- (void)setSignalBarsChanged:(void (^)(int32_t))signalBarsChanged
+- (void)setSignalBarsChanged:(OGCompatSignalBarsBlock)signalBarsChanged
 {
+    _relay.signalBarsChanged = signalBarsChanged;
     _signalBarsChanged = [signalBarsChanged copy];
-    _callbackProxy.signalBarsChanged = _signalBarsChanged;
 }
 
-- (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged
+- (void)setStateChanged:(OGCompatStateBlock)stateChanged
 {
+    _relay.stateChanged = stateChanged;
     _stateChanged = [stateChanged copy];
-    _callbackProxy.stateChanged = _stateChanged;
 }
 
 - (void)addSignalingData:(NSData *)data
 {
-    if (_cppBridge != NULL)
-        _cppBridge->receiveSignalingData(data);
+    if (_bridge != NULL)
+        _bridge->receiveSignalingData(data);
 }
 
 - (void)setIsMuted:(bool)isMuted
 {
-    if (_cppBridge != NULL)
-        _cppBridge->setMuted(isMuted);
+    if (_bridge != NULL)
+        _bridge->setMuted(isMuted);
+}
+
+- (void)setOutgoingVideoEnabled:(bool)enabled
+{
+    if (_bridge != NULL)
+        _bridge->setOutgoingVideoEnabled(enabled);
+}
+
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
+{
+    if (_bridge != NULL)
+        _bridge->setVideoCapturer(capturer);
+}
+
+- (void)setIncomingVideoView:(TGCallVideoView *)view
+{
+    if (_bridge != NULL)
+        _bridge->setIncomingVideoView(view);
 }
 
 - (void)setNetworkType:(int32_t)networkType
 {
-    if (_cppBridge != NULL)
-        _cppBridge->setNetworkType(TGIOS6WebrtcNetworkType(networkType));
+    if (_bridge != NULL)
+        _bridge->setNetworkType(OGCompatNetworkType(networkType));
 }
 
-- (void)stop:(void (^)(NSString *, int64_t, int64_t, int64_t, int64_t))completion
+- (void)stop:(OGCompatFinishBlock)completion
 {
-    if (_cppBridge != NULL)
-        _cppBridge->stop(completion);
+    if (_bridge != NULL)
+        _bridge->stop(completion);
     else if (completion != nil)
         completion(@"", 0, 0, 0, 0);
 }

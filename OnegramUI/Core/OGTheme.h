@@ -15,6 +15,7 @@
 @class OGMusicPlayerAppearance;
 @class OGMusicPlayerScreenAppearance;
 @class OGCommunitySheetAppearance;
+@class OGMenuSheetAppearance;
 @class OGSurfaceRenderer;
 
 typedef enum {
@@ -41,6 +42,7 @@ typedef enum {
 @property (nonatomic, retain) OGMusicPlayerAppearance *musicPlayerAppearance;
 @property (nonatomic, retain) OGMusicPlayerScreenAppearance *musicPlayerScreenAppearance;
 @property (nonatomic, retain) OGCommunitySheetAppearance *communitySheetAppearance;
+@property (nonatomic, retain) OGMenuSheetAppearance *menuSheetAppearance;
 @property (nonatomic, retain) OGSurfaceRenderer *surfaceRenderer;
 + (OGTheme *)modernTheme;
 + (OGTheme *)classicTheme;

@@ -19,6 +19,16 @@ int64_t TGStoryPeerIdFromObject(TGTLDynamicObject *peer)
     return 0;
 }
 
+NSString *TGStoryReactionEmoticon(TGTLDynamicObject *reaction)
+{
+    if ([reaction isConstructor:@"reactionEmoji"])
+    {
+        NSString *emoticon = [reaction stringField:@"emoticon"];
+        return emoticon.length != 0 ? emoticon : nil;
+    }
+    return nil;
+}
+
 @interface TGStoryItem ()
 
 @property (nonatomic) TGStoryItemKind kind;
@@ -41,6 +51,10 @@ int64_t TGStoryPeerIdFromObject(TGTLDynamicObject *peer)
 @property (nonatomic, strong) TGDocumentMediaAttachment *videoDocument;
 @property (nonatomic) int32_t viewsCount;
 @property (nonatomic) bool hasViewsCount;
+@property (nonatomic) int32_t reactionsCount;
+@property (nonatomic) bool hasViewers;
+@property (nonatomic) bool hasSentReaction;
+@property (nonatomic, strong) NSString *sentReaction;
 @property (nonatomic) NSTimeInterval videoDuration;
 
 @end
@@ -91,6 +105,15 @@ int64_t TGStoryPeerIdFromObject(TGTLDynamicObject *peer)
     {
         item.hasViewsCount = true;
         item.viewsCount = [views int32Field:@"views_count"];
+        item.reactionsCount = [views int32Field:@"reactions_count"];
+        item.hasViewers = [views flag:@"has_viewers"];
+    }
+
+    TGTLDynamicObject *sentReaction = [object objectField:@"sent_reaction"];
+    if (sentReaction != nil && ![sentReaction isConstructor:@"reactionEmpty"])
+    {
+        item.hasSentReaction = true;
+        item.sentReaction = TGStoryReactionEmoticon(sentReaction);
     }
 
     TGTLDynamicObject *media = [object objectField:@"media"];
@@ -159,6 +182,42 @@ int64_t TGStoryPeerIdFromObject(TGTLDynamicObject *peer)
 - (bool)isActiveAtTime:(NSTimeInterval)time
 {
     return _kind != TGStoryItemKindDeleted && _expireDate > (int32_t)time;
+}
+
+- (TGStoryItem *)storyItemWithSentReaction:(NSString *)reaction
+{
+    TGStoryItem *item = [[TGStoryItem alloc] init];
+    item.kind = _kind;
+    item.peerId = _peerId;
+    item.storyId = _storyId;
+    item.date = _date;
+    item.expireDate = _expireDate;
+    item.pinned = _pinned;
+    item.isPublic = _isPublic;
+    item.closeFriends = _closeFriends;
+    item.contacts = _contacts;
+    item.selectedContacts = _selectedContacts;
+    item.outgoing = _outgoing;
+    item.noforwards = _noforwards;
+    item.edited = _edited;
+    item.min = _min;
+    item.caption = _caption;
+    item.image = _image;
+    item.video = _video;
+    item.videoDocument = _videoDocument;
+    item.viewsCount = _viewsCount;
+    item.hasViewsCount = _hasViewsCount;
+    item.hasViewers = _hasViewers;
+    item.videoDuration = _videoDuration;
+    item.hasSentReaction = reaction.length != 0;
+    item.sentReaction = reaction.length != 0 ? reaction : nil;
+    int32_t reactionsCount = _reactionsCount;
+    if (_hasSentReaction && !item.hasSentReaction)
+        reactionsCount = MAX(0, reactionsCount - 1);
+    else if (!_hasSentReaction && item.hasSentReaction)
+        reactionsCount++;
+    item.reactionsCount = reactionsCount;
+    return item;
 }
 
 @end

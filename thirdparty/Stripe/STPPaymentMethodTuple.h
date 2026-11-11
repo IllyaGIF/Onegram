@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "OGStripeCompat.h"
 #import "STPCardTuple.h"
 #import "STPPaymentMethod.h"
 
@@ -14,14 +15,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface STPPaymentMethodTuple : NSObject
 
-+ (instancetype)tupleWithPaymentMethods:(NSArray *)paymentMethods
++ (instancetype)tupleWithPaymentMethods:(OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *)paymentMethods
                   selectedPaymentMethod:(id<STPPaymentMethod>)selectedPaymentMethod;
 
 + (instancetype)tupleWithCardTuple:(STPCardTuple *)cardTuple
                    applePayEnabled:(BOOL)applePayEnabled;
 
-@property(nonatomic, readonly)id<STPPaymentMethod> selectedPaymentMethod;
-@property(nonatomic, readonly)NSArray *paymentMethods;
+@property(nonatomic, readonly)id<STPPaymentMethod> _Nullable selectedPaymentMethod;
+@property(nonatomic, readonly)OG_COMPAT_GENERIC(NSArray, id<STPPaymentMethod>) *paymentMethods;
 
 @end
 

@@ -432,11 +432,8 @@
         return;
     
     _checked3dTouch = true;
-    if (iosMajorVersion() >= 9)
-    {
-        if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
-            [self registerForPreviewingWithDelegate:(id)self sourceView:self.view];
-    }
+    if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
+        [self registerForPreviewingWithDelegate:(id)self sourceView:self.view];
 }
 
 - (UIViewController *)previewingContext:(id<UIViewControllerPreviewing>)previewingContext viewControllerForLocation:(CGPoint)location

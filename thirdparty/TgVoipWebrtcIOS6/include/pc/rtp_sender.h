@@ -1,12 +1,10 @@
-#ifndef TGIOS6_PC_RTP_SENDER_H
-#define TGIOS6_PC_RTP_SENDER_H
+#ifndef OG_COMPAT_PC_RTP_SENDER_H
+#define OG_COMPAT_PC_RTP_SENDER_H
 
 namespace webrtc {
 
-class RtpSenderInterface {
-public:
-	virtual ~RtpSenderInterface() {
-	}
+struct RtpSenderInterface {
+	virtual ~RtpSenderInterface() = default;
 };
 
 } // namespace webrtc

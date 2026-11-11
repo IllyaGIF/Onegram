@@ -188,6 +188,8 @@ IMAGE chatStickersTrendingIcon;
 IMAGE chatStickersRecentIcon;
 IMAGE chatStickersFavoritesIcon;
 IMAGE chatStickersSettingsIcon;
+IMAGE chatStickersCustomEmojiIcon;
+IMAGE chatStickersCreateStickerIcon;
 IMAGE chatStickersBadge;
 IMAGE chatStickersGroupButton;
 IMAGE chatStickersAddButton;

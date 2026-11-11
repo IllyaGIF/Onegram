@@ -63,6 +63,23 @@
 
 @end
 
+static NSString *OGCompatShareTitle(NSInteger photosCount, NSInteger videosCount, NSInteger totalCount)
+{
+    NSString *prefix = @"Media.ShareItem_";
+    NSInteger count = totalCount;
+    if (photosCount > 0 && videosCount == 0)
+    {
+        prefix = @"Media.SharePhoto_";
+        count = photosCount;
+    }
+    else if (videosCount > 0 && photosCount == 0)
+    {
+        prefix = @"Media.ShareVideo_";
+        count = videosCount;
+    }
+    return [NSString stringWithFormat:TGLocalized([TGStringUtils integerValueFormat:prefix value:count]), [NSString stringWithFormat:@"%ld", (long)count]];
+}
+
 @implementation TGGenericPeerMediaGalleryModel
 
 - (instancetype)initWithPeerId:(int64_t)peerId atMessageId:(int32_t)atMessageId allowActions:(bool)allowActions important:(bool)important
@@ -865,22 +882,7 @@
             if (totalCount == 0)
                 return;
             
-            NSString *title = nil;
-            if (photosCount > 0 && videosCount == 0)
-            {
-                NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.SharePhoto_" value:photosCount]);
-                title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)photosCount]];
-            }
-            else if (videosCount > 0 && photosCount == 0)
-            {
-                NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.ShareVideo_" value:videosCount]);
-                title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)videosCount]];
-            }
-            else
-            {
-                NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.ShareItem_" value:totalCount]);
-                title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)totalCount]];
-            }
+            NSString *title = OGCompatShareTitle(photosCount, videosCount, totalCount);
             
             TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
             __weak TGMenuSheetController *weakController = controller;
@@ -1151,22 +1153,7 @@
                 if (totalCount == 0)
                     return;
                 
-                NSString *title = nil;
-                if (photosCount > 0 && videosCount == 0)
-                {
-                    NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.SharePhoto_" value:photosCount]);
-                    title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)photosCount]];
-                }
-                else if (videosCount > 0 && photosCount == 0)
-                {
-                    NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.ShareVideo_" value:videosCount]);
-                    title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)videosCount]];
-                }
-                else
-                {
-                    NSString *format = TGLocalized([TGStringUtils integerValueFormat:@"Media.ShareItem_" value:totalCount]);
-                    title = [NSString stringWithFormat:format, [NSString stringWithFormat:@"%ld", (long)totalCount]];
-                }
+                NSString *title = OGCompatShareTitle(photosCount, videosCount, totalCount);
                 
                 TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
                 __weak TGMenuSheetController *weakController = controller;

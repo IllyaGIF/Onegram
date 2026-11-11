@@ -45,6 +45,9 @@
 		1D695AD20DA6CA6A3BCFC3D9 /* StarGiftHiddenIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 509E618841921F1664DC5417 /* StarGiftHiddenIcon@2x.png */; };
 		26938740CAE62F10527C335A /* StarGiftHiddenIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 291B96062261EF86E868782E /* StarGiftHiddenIcon.png */; };
 		725F545DE9744364A89B0AA0 /* StarGiftCloseIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 755896B8D0D5051CE345CA96 /* StarGiftCloseIcon@3x.png */; };
+		0DB73363413EEE56407F43CF /* PaidMessageStar@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 685A8DF63FEAE47C8CE76084 /* PaidMessageStar@3x.png */; };
+		D33E89931A4B630BC343C908 /* PaidMessageStar@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 526C98F6F1A4D9146D525DDB /* PaidMessageStar@2x.png */; };
+		BDDA81A9049B28D2FDACD546 /* PaidMessageStar.png in Resources */ = {isa = PBXBuildFile; fileRef = B0DFB635DD7BFFE38009DDEC /* PaidMessageStar.png */; };
 		16D973E4244DC5D6398549EA /* StarGiftCloseIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = EA628A30A18DCB6A2D848741 /* StarGiftCloseIcon@2x.png */; };
 		CC0958B86D0C2B329CC8E319 /* StarGiftCloseIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 0932B8A0C71E755022A68E8A /* StarGiftCloseIcon.png */; };
 		ADA442CD20C789F1982BAE7A /* StarGiftAnonymousIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 93E0E00DFABDC8E66ED72DAE /* StarGiftAnonymousIcon@3x.png */; };
@@ -1050,6 +1053,43 @@
 		D8F12F7E55CF7D24D0A1E856 /* TGSendAsSignals.m in Sources */ = {isa = PBXBuildFile; fileRef = 62605AE827D9977FD36D0F6D /* TGSendAsSignals.m */; };
 		35CAE5628B111345FC369683 /* TGMessageSelectionGestureRecognizer.m in Sources */ = {isa = PBXBuildFile; fileRef = F591450AF2E4C1BCF654648F /* TGMessageSelectionGestureRecognizer.m */; };
 		4EE9E4A74FEEC78EC7F945DC /* TGOnegramTranslator.m in Sources */ = {isa = PBXBuildFile; fileRef = BAA9B63DE6E533FDBC3633F0 /* TGOnegramTranslator.m */; };
+		F3FB8332E50A57EAAD1E9911 /* TGPaidMessagesSignals.m in Sources */ = {isa = PBXBuildFile; fileRef = E21C9743ACBA339DA371027B /* TGPaidMessagesSignals.m */; };
+		65860A27CA65F8A0816BD4FF /* TGPaidMessagesConfirmation.m in Sources */ = {isa = PBXBuildFile; fileRef = 8E4E45EB50E5F763856E0456 /* TGPaidMessagesConfirmation.m */; };
+		CD3CD54DC81782ABB0A8543B /* TGPaidMessagesSettingsController.m in Sources */ = {isa = PBXBuildFile; fileRef = 34E15073C1BA05758188CF5E /* TGPaidMessagesSettingsController.m */; };
+		8AFB95AF4B0E0BF5B9D8BB71 /* TGPaidMessagesFeeTitlePanel.m in Sources */ = {isa = PBXBuildFile; fileRef = E14F19EDE94748EBCDFC4346 /* TGPaidMessagesFeeTitlePanel.m */; };
+		460826BF5F3FD696B50452D5 /* TGStoryViewerCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = BEA9AB0D411775940BAD3E93 /* TGStoryViewerCollectionItem.m */; };
+		3DF774F6D3EA1FAAB65BD498 /* TGStoryViewerCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = A83DA665DF1D211A8AD23922 /* TGStoryViewerCollectionItemView.m */; };
+		FEA1AA630EF798D5E4D04689 /* TGStoryViewersController.m in Sources */ = {isa = PBXBuildFile; fileRef = C552AEF30CEAAE046CBB7B10 /* TGStoryViewersController.m */; };
+		828F0A86B8C081B0A0FB0797 /* TGCustomEmojiTextAttributes.m in Sources */ = {isa = PBXBuildFile; fileRef = 9FE26B2717333EF0FB0589D6 /* TGCustomEmojiTextAttributes.m */; };
+		595D7D847AFFE7D9F99EC25A /* TGCustomEmojiSignals.m in Sources */ = {isa = PBXBuildFile; fileRef = 3EFBF8EA62F1A12C0324EFD7 /* TGCustomEmojiSignals.m */; };
+		A1B2C3D4E5F6A1B2C3D4E5F6 /* TGCustomEmojiThumbnail.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A1B2C3D4E5F6A1 /* TGCustomEmojiThumbnail.mm */; };
+		D4E5F6A1B2C3D4E5F6A1B2C3 /* TGEmojiStatusView.m in Sources */ = {isa = PBXBuildFile; fileRef = E5F6A1B2C3D4E5F6A1B2C3D4 /* TGEmojiStatusView.m */; };
+		603DA67BAC0F157FA17575E4 /* TGCustomEmojiKeyboardView.m in Sources */ = {isa = PBXBuildFile; fileRef = A575DF3330B486162A4AC5C9 /* TGCustomEmojiKeyboardView.m */; };
+		C995E7BD5C861DEE2B5F0C39 /* TGStickerCreationSignals.m in Sources */ = {isa = PBXBuildFile; fileRef = F799ABC3AB5A8832ECBAB5F7 /* TGStickerCreationSignals.m */; };
+		0AC068970BA09F66097F2774 /* TGStickerCreationController.m in Sources */ = {isa = PBXBuildFile; fileRef = 11ADA98E48D8D268E4F2820C /* TGStickerCreationController.m */; };
+		01378AEE401E1768336507BE /* TGStickerPackCreationController.m in Sources */ = {isa = PBXBuildFile; fileRef = 209ED4B5FFC459A7A76080B0 /* TGStickerPackCreationController.m */; };
+		271665FA818AA2689F2F9785 /* TGStickerCreationPreviewItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 3DD35946453724BAB8519846 /* TGStickerCreationPreviewItem.m */; };
+		0E09F6A8BB15E5AC27C1CD51 /* TGStickerCreationPreviewItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = CA908F2008286410C0710051 /* TGStickerCreationPreviewItemView.m */; };
+		DCF677B079640E4396E5D219 /* TGWebPEncoder.c in Sources */ = {isa = PBXBuildFile; fileRef = 0D9A1AA143199B9AF778769E /* TGWebPEncoder.c */; };
+		93FF667FD3D5F87F4E1A8B1A /* TGPreparedPollMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = BBF78616B73818C5AB3596AA /* TGPreparedPollMessage.m */; };
+		81EAC21D07FB39D6F4F60ACE /* TGPollOptionCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 17859B9A2D57A624C504D9D8 /* TGPollOptionCollectionItem.m */; };
+		4EC2D0B237D18B4A5581F230 /* TGPollOptionCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = EBF7B93F27B5CB372801CCD4 /* TGPollOptionCollectionItemView.m */; };
+		F0FF63A1A73F2F65EDBE3279 /* TGCreatePollController.m in Sources */ = {isa = PBXBuildFile; fileRef = B6428FD19B88073BA7D2F073 /* TGCreatePollController.m */; };
+		BE5758AD626ADF96CEF1AFBA /* TGDialogFilter.m in Sources */ = {isa = PBXBuildFile; fileRef = CA845CB23AC81FF04866478D /* TGDialogFilter.m */; };
+		9442C9AF7153E588680BB2CD /* TGDialogFilterCategoryCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 46BE108037C36816087375B9 /* TGDialogFilterCategoryCollectionItem.m */; };
+		92A923F7CB1BA908F50ABD28 /* TGDialogFilterCategoryCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = 346C40AF849A8F9E04C82509 /* TGDialogFilterCategoryCollectionItemView.m */; };
+		3A0664957C9606BB5B79F821 /* TGDialogFilterCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 6F30F757B21FA40C85B44CF0 /* TGDialogFilterCollectionItem.m */; };
+		520D4C5CC54911A16321F8CD /* TGDialogFilterCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = 5E0B5D19BA54F01EEEC8147B /* TGDialogFilterCollectionItemView.m */; };
+		5813CD0A7DF16CED180DCE26 /* TGDialogFilterColorsCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 03A4F7E236623C33532E6360 /* TGDialogFilterColorsCollectionItem.m */; };
+		A5EB8E57BC8615CE15FD7AED /* TGDialogFilterColorsCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = 5D8E51BDAE76A77D6B6C9C33 /* TGDialogFilterColorsCollectionItemView.m */; };
+		BB8D97BB723212FA47F28467 /* TGDialogFilterEditController.m in Sources */ = {isa = PBXBuildFile; fileRef = E17AE9BE3F8D3B017C304EEF /* TGDialogFilterEditController.m */; };
+		AA6401298CBBB235985684C3 /* TGDialogFilterIcons.m in Sources */ = {isa = PBXBuildFile; fileRef = 4C4EAB89B4DA5232B1F49EBF /* TGDialogFilterIcons.m */; };
+		99AB7076751018FFF3497313 /* TGDialogFilterIconsCollectionItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 105EA3A555FC43580B3D3CBD /* TGDialogFilterIconsCollectionItem.m */; };
+		ACAB48FDFCF15DCD76009E8D /* TGDialogFilterIconsCollectionItemView.m in Sources */ = {isa = PBXBuildFile; fileRef = 73B2AEE473537D3577C2A593 /* TGDialogFilterIconsCollectionItemView.m */; };
+		DD85D3A54265F813E34C8DDE /* TGDialogFilterInviteController.m in Sources */ = {isa = PBXBuildFile; fileRef = D5721848884E5E04A36F5C91 /* TGDialogFilterInviteController.m */; };
+		3BDD5D472D8E8C44BD5F7011 /* TGDialogFilterPeersController.m in Sources */ = {isa = PBXBuildFile; fileRef = FE431F18BE34F574D8EACF83 /* TGDialogFilterPeersController.m */; };
+		3077B888845B16523E724892 /* TGDialogFilterSignals.m in Sources */ = {isa = PBXBuildFile; fileRef = CB9D282C64931EE0120CC747 /* TGDialogFilterSignals.m */; };
+		E6666B233DDBD8A9380B4407 /* TGDialogFiltersController.m in Sources */ = {isa = PBXBuildFile; fileRef = CB8764F48AB7EBE5A7F2CA1F /* TGDialogFiltersController.m */; };
 		29EBD99868F4E5F1AFBB679A /* TGOnegramUpdater.m in Sources */ = {isa = PBXBuildFile; fileRef = F8380EA770E34EB875BE82DA /* TGOnegramUpdater.m */; };
 		7F4E1ABE9272CD3B49B2786B /* TGOnegramUpdateController.m in Sources */ = {isa = PBXBuildFile; fileRef = D55CC37A02747FC4F33C7E8C /* TGOnegramUpdateController.m */; };
 		E9C3CB66432DF19FF2B6A153 /* TGOnegramSettingsController.m in Sources */ = {isa = PBXBuildFile; fileRef = 26F54CD5F99BE8829FBF1C5A /* TGOnegramSettingsController.m */; };
@@ -6505,6 +6545,9 @@
 		509E618841921F1664DC5417 /* StarGiftHiddenIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftHiddenIcon@2x.png"; sourceTree = "<group>"; };
 		291B96062261EF86E868782E /* StarGiftHiddenIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftHiddenIcon.png"; sourceTree = "<group>"; };
 		755896B8D0D5051CE345CA96 /* StarGiftCloseIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftCloseIcon@3x.png"; sourceTree = "<group>"; };
+		685A8DF63FEAE47C8CE76084 /* PaidMessageStar@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/PaidMessageStar@3x.png"; sourceTree = "<group>"; };
+		526C98F6F1A4D9146D525DDB /* PaidMessageStar@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/PaidMessageStar@2x.png"; sourceTree = "<group>"; };
+		B0DFB635DD7BFFE38009DDEC /* PaidMessageStar.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/PaidMessageStar.png"; sourceTree = "<group>"; };
 		EA628A30A18DCB6A2D848741 /* StarGiftCloseIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftCloseIcon@2x.png"; sourceTree = "<group>"; };
 		0932B8A0C71E755022A68E8A /* StarGiftCloseIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftCloseIcon.png"; sourceTree = "<group>"; };
 		93E0E00DFABDC8E66ED72DAE /* StarGiftAnonymousIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/StarGiftAnonymousIcon@3x.png"; sourceTree = "<group>"; };
@@ -6517,6 +6560,80 @@
 		676403804A6C02537B22F803 /* msg_copy.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/msg_copy.png"; sourceTree = "<group>"; };
 		BAA9B63DE6E533FDBC3633F0 /* TGOnegramTranslator.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGOnegramTranslator.m; sourceTree = "<group>"; };
 		C49011B64A3BB06D282F82DA /* TGOnegramTranslator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGOnegramTranslator.h; sourceTree = "<group>"; };
+		E21C9743ACBA339DA371027B /* TGPaidMessagesSignals.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPaidMessagesSignals.m; sourceTree = "<group>"; };
+		F26E78BDDAF96A481E1AFC29 /* TGPaidMessagesSignals.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPaidMessagesSignals.h; sourceTree = "<group>"; };
+		8E4E45EB50E5F763856E0456 /* TGPaidMessagesConfirmation.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPaidMessagesConfirmation.m; sourceTree = "<group>"; };
+		ADB14915F54263FB59830099 /* TGPaidMessagesConfirmation.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPaidMessagesConfirmation.h; sourceTree = "<group>"; };
+		34E15073C1BA05758188CF5E /* TGPaidMessagesSettingsController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPaidMessagesSettingsController.m; sourceTree = "<group>"; };
+		705E8DC3A4BD4B711A5754FF /* TGPaidMessagesSettingsController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPaidMessagesSettingsController.h; sourceTree = "<group>"; };
+		E14F19EDE94748EBCDFC4346 /* TGPaidMessagesFeeTitlePanel.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPaidMessagesFeeTitlePanel.m; sourceTree = "<group>"; };
+		0E367A872793DE86A374EEB8 /* TGPaidMessagesFeeTitlePanel.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPaidMessagesFeeTitlePanel.h; sourceTree = "<group>"; };
+		BEA9AB0D411775940BAD3E93 /* TGStoryViewerCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStoryViewerCollectionItem.m; sourceTree = "<group>"; };
+		A83DA665DF1D211A8AD23922 /* TGStoryViewerCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStoryViewerCollectionItemView.m; sourceTree = "<group>"; };
+		C552AEF30CEAAE046CBB7B10 /* TGStoryViewersController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStoryViewersController.m; sourceTree = "<group>"; };
+		C83E92A5E8E711B87793DF05 /* TGStoryViewerCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStoryViewerCollectionItem.h; sourceTree = "<group>"; };
+		32EBEC77195D05983CC6FE05 /* TGStoryViewerCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStoryViewerCollectionItemView.h; sourceTree = "<group>"; };
+		93EAD5E26716CE5DD4C1D221 /* TGStoryViewersController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStoryViewersController.h; sourceTree = "<group>"; };
+		9FE26B2717333EF0FB0589D6 /* TGCustomEmojiTextAttributes.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGCustomEmojiTextAttributes.m; sourceTree = "<group>"; };
+		3EFBF8EA62F1A12C0324EFD7 /* TGCustomEmojiSignals.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGCustomEmojiSignals.m; sourceTree = "<group>"; };
+		B2C3D4E5F6A1B2C3D4E5F6A1 /* TGCustomEmojiThumbnail.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = TGCustomEmojiThumbnail.mm; sourceTree = "<group>"; };
+		C3D4E5F6A1B2C3D4E5F6A1B2 /* TGCustomEmojiThumbnail.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGCustomEmojiThumbnail.h; sourceTree = "<group>"; };
+		E5F6A1B2C3D4E5F6A1B2C3D4 /* TGEmojiStatusView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGEmojiStatusView.m; sourceTree = "<group>"; };
+		F6A1B2C3D4E5F6A1B2C3D4E5 /* TGEmojiStatusView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGEmojiStatusView.h; sourceTree = "<group>"; };
+		A575DF3330B486162A4AC5C9 /* TGCustomEmojiKeyboardView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGCustomEmojiKeyboardView.m; sourceTree = "<group>"; };
+		F799ABC3AB5A8832ECBAB5F7 /* TGStickerCreationSignals.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStickerCreationSignals.m; sourceTree = "<group>"; };
+		11ADA98E48D8D268E4F2820C /* TGStickerCreationController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStickerCreationController.m; sourceTree = "<group>"; };
+		209ED4B5FFC459A7A76080B0 /* TGStickerPackCreationController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStickerPackCreationController.m; sourceTree = "<group>"; };
+		3DD35946453724BAB8519846 /* TGStickerCreationPreviewItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStickerCreationPreviewItem.m; sourceTree = "<group>"; };
+		CA908F2008286410C0710051 /* TGStickerCreationPreviewItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGStickerCreationPreviewItemView.m; sourceTree = "<group>"; };
+		461F21CC5163FE68D23E9C6C /* TGCustomEmojiTextAttributes.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGCustomEmojiTextAttributes.h; sourceTree = "<group>"; };
+		7A1E46584CAF6B1A4E4959D3 /* TGCustomEmojiSignals.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGCustomEmojiSignals.h; sourceTree = "<group>"; };
+		0C112B181363ABFD9082F055 /* TGCustomEmojiKeyboardView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGCustomEmojiKeyboardView.h; sourceTree = "<group>"; };
+		EE38484578BE405E2AFE9C12 /* TGStickerCreationSignals.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStickerCreationSignals.h; sourceTree = "<group>"; };
+		C1055A1C07D5D40E9B8160AC /* TGStickerCreationController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStickerCreationController.h; sourceTree = "<group>"; };
+		8B5734CA861D822C886DB596 /* TGStickerPackCreationController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStickerPackCreationController.h; sourceTree = "<group>"; };
+		D1DA62E8CB37670B20468734 /* TGStickerCreationPreviewItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStickerCreationPreviewItem.h; sourceTree = "<group>"; };
+		269A7C329E323963D7053970 /* TGStickerCreationPreviewItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGStickerCreationPreviewItemView.h; sourceTree = "<group>"; };
+		0D9A1AA143199B9AF778769E /* TGWebPEncoder.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = TGWebPEncoder.c; sourceTree = "<group>"; };
+		2CC522FB3F596B7B88E2FEB5 /* TGWebPEncoder.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGWebPEncoder.h; sourceTree = "<group>"; };
+		D6284FF9B46CFFC0B741E23D /* TGPreparedPollMessage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPreparedPollMessage.h; sourceTree = "<group>"; };
+		BBF78616B73818C5AB3596AA /* TGPreparedPollMessage.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPreparedPollMessage.m; sourceTree = "<group>"; };
+		C02EDF06FDA8B21BBA142182 /* TGPollOptionCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPollOptionCollectionItem.h; sourceTree = "<group>"; };
+		17859B9A2D57A624C504D9D8 /* TGPollOptionCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPollOptionCollectionItem.m; sourceTree = "<group>"; };
+		BB499D4CCA7F106E39FA2033 /* TGPollOptionCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGPollOptionCollectionItemView.h; sourceTree = "<group>"; };
+		EBF7B93F27B5CB372801CCD4 /* TGPollOptionCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGPollOptionCollectionItemView.m; sourceTree = "<group>"; };
+		319E2F8A8279D32C890B81E8 /* TGCreatePollController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGCreatePollController.h; sourceTree = "<group>"; };
+		B6428FD19B88073BA7D2F073 /* TGCreatePollController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGCreatePollController.m; sourceTree = "<group>"; };
+		EFC4576FD7244A0A53A65676 /* TGDialogFilter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilter.h; sourceTree = "<group>"; };
+		CA845CB23AC81FF04866478D /* TGDialogFilter.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilter.m; sourceTree = "<group>"; };
+		9AAA55BF89A36575711CAD95 /* TGDialogFilterCategoryCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterCategoryCollectionItem.h; sourceTree = "<group>"; };
+		46BE108037C36816087375B9 /* TGDialogFilterCategoryCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterCategoryCollectionItem.m; sourceTree = "<group>"; };
+		0DE73D50AA6ABA8DFF370DBD /* TGDialogFilterCategoryCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterCategoryCollectionItemView.h; sourceTree = "<group>"; };
+		346C40AF849A8F9E04C82509 /* TGDialogFilterCategoryCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterCategoryCollectionItemView.m; sourceTree = "<group>"; };
+		AF0E42F8D4860D16991A780F /* TGDialogFilterCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterCollectionItem.h; sourceTree = "<group>"; };
+		6F30F757B21FA40C85B44CF0 /* TGDialogFilterCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterCollectionItem.m; sourceTree = "<group>"; };
+		6EC88A9CC245DC56C956DA4F /* TGDialogFilterCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterCollectionItemView.h; sourceTree = "<group>"; };
+		5E0B5D19BA54F01EEEC8147B /* TGDialogFilterCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterCollectionItemView.m; sourceTree = "<group>"; };
+		FBC8DE6C2519959F567C35C4 /* TGDialogFilterColorsCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterColorsCollectionItem.h; sourceTree = "<group>"; };
+		03A4F7E236623C33532E6360 /* TGDialogFilterColorsCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterColorsCollectionItem.m; sourceTree = "<group>"; };
+		FA762FA6A0E6822F7C484A8E /* TGDialogFilterColorsCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterColorsCollectionItemView.h; sourceTree = "<group>"; };
+		5D8E51BDAE76A77D6B6C9C33 /* TGDialogFilterColorsCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterColorsCollectionItemView.m; sourceTree = "<group>"; };
+		C9D473985D862E9FC2912426 /* TGDialogFilterEditController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterEditController.h; sourceTree = "<group>"; };
+		E17AE9BE3F8D3B017C304EEF /* TGDialogFilterEditController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterEditController.m; sourceTree = "<group>"; };
+		1B99C6756726964D6BD7E601 /* TGDialogFilterIcons.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterIcons.h; sourceTree = "<group>"; };
+		4C4EAB89B4DA5232B1F49EBF /* TGDialogFilterIcons.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterIcons.m; sourceTree = "<group>"; };
+		968275F5F8ECC8BD8F15E028 /* TGDialogFilterIconsCollectionItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterIconsCollectionItem.h; sourceTree = "<group>"; };
+		105EA3A555FC43580B3D3CBD /* TGDialogFilterIconsCollectionItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterIconsCollectionItem.m; sourceTree = "<group>"; };
+		7674F42F932415FD9D7D14FD /* TGDialogFilterIconsCollectionItemView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterIconsCollectionItemView.h; sourceTree = "<group>"; };
+		73B2AEE473537D3577C2A593 /* TGDialogFilterIconsCollectionItemView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterIconsCollectionItemView.m; sourceTree = "<group>"; };
+		56A65066547FF61DC7F83B52 /* TGDialogFilterInviteController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterInviteController.h; sourceTree = "<group>"; };
+		D5721848884E5E04A36F5C91 /* TGDialogFilterInviteController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterInviteController.m; sourceTree = "<group>"; };
+		105800FD6CAF6174F74FBCDD /* TGDialogFilterPeersController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterPeersController.h; sourceTree = "<group>"; };
+		FE431F18BE34F574D8EACF83 /* TGDialogFilterPeersController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterPeersController.m; sourceTree = "<group>"; };
+		9106EDB7302C370D57512398 /* TGDialogFilterSignals.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFilterSignals.h; sourceTree = "<group>"; };
+		CB9D282C64931EE0120CC747 /* TGDialogFilterSignals.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFilterSignals.m; sourceTree = "<group>"; };
+		331F1A2EFF7925988D8AF656 /* TGDialogFiltersController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGDialogFiltersController.h; sourceTree = "<group>"; };
+		CB8764F48AB7EBE5A7F2CA1F /* TGDialogFiltersController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGDialogFiltersController.m; sourceTree = "<group>"; };
 		F8380EA770E34EB875BE82DA /* TGOnegramUpdater.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGOnegramUpdater.m; sourceTree = "<group>"; };
 		7220DF75308B9A9B04872A02 /* TGOnegramUpdater.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGOnegramUpdater.h; sourceTree = "<group>"; };
 		D55CC37A02747FC4F33C7E8C /* TGOnegramUpdateController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGOnegramUpdateController.m; sourceTree = "<group>"; };
@@ -11681,7 +11798,6 @@
 		D0FD89A2156FD4FB00CC3714 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		D0FFBDDD1BAB0E7300F532C9 /* TGChannelMembersController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGChannelMembersController.h; sourceTree = "<group>"; };
 		D0FFBDDE1BAB0E7300F532C9 /* TGChannelMembersController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGChannelMembersController.m; sourceTree = "<group>"; };
-		F0726C0DEC0DEC0DEC0D0001 /* TGIOS6LinkCompat.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGIOS6LinkCompat.m; sourceTree = "<group>"; };
 		F4A100021000000000000002 /* TGIOS4WeakRuntime.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGIOS4WeakRuntime.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -13063,6 +13179,9 @@
 				509E618841921F1664DC5417 /* StarGiftHiddenIcon@2x.png */,
 				291B96062261EF86E868782E /* StarGiftHiddenIcon.png */,
 				755896B8D0D5051CE345CA96 /* StarGiftCloseIcon@3x.png */,
+				685A8DF63FEAE47C8CE76084 /* PaidMessageStar@3x.png */,
+				526C98F6F1A4D9146D525DDB /* PaidMessageStar@2x.png */,
+				B0DFB635DD7BFFE38009DDEC /* PaidMessageStar.png */,
 				EA628A30A18DCB6A2D848741 /* StarGiftCloseIcon@2x.png */,
 				0932B8A0C71E755022A68E8A /* StarGiftCloseIcon.png */,
 				93E0E00DFABDC8E66ED72DAE /* StarGiftAnonymousIcon@3x.png */,
@@ -13075,6 +13194,80 @@
 				676403804A6C02537B22F803 /* msg_copy.png */,
 				BAA9B63DE6E533FDBC3633F0 /* TGOnegramTranslator.m */,
 				C49011B64A3BB06D282F82DA /* TGOnegramTranslator.h */,
+				E21C9743ACBA339DA371027B /* TGPaidMessagesSignals.m */,
+				F26E78BDDAF96A481E1AFC29 /* TGPaidMessagesSignals.h */,
+				8E4E45EB50E5F763856E0456 /* TGPaidMessagesConfirmation.m */,
+				ADB14915F54263FB59830099 /* TGPaidMessagesConfirmation.h */,
+				34E15073C1BA05758188CF5E /* TGPaidMessagesSettingsController.m */,
+				705E8DC3A4BD4B711A5754FF /* TGPaidMessagesSettingsController.h */,
+				E14F19EDE94748EBCDFC4346 /* TGPaidMessagesFeeTitlePanel.m */,
+				0E367A872793DE86A374EEB8 /* TGPaidMessagesFeeTitlePanel.h */,
+				BEA9AB0D411775940BAD3E93 /* TGStoryViewerCollectionItem.m */,
+				A83DA665DF1D211A8AD23922 /* TGStoryViewerCollectionItemView.m */,
+				C552AEF30CEAAE046CBB7B10 /* TGStoryViewersController.m */,
+				C83E92A5E8E711B87793DF05 /* TGStoryViewerCollectionItem.h */,
+				32EBEC77195D05983CC6FE05 /* TGStoryViewerCollectionItemView.h */,
+				93EAD5E26716CE5DD4C1D221 /* TGStoryViewersController.h */,
+				9FE26B2717333EF0FB0589D6 /* TGCustomEmojiTextAttributes.m */,
+				3EFBF8EA62F1A12C0324EFD7 /* TGCustomEmojiSignals.m */,
+				B2C3D4E5F6A1B2C3D4E5F6A1 /* TGCustomEmojiThumbnail.mm */,
+				C3D4E5F6A1B2C3D4E5F6A1B2 /* TGCustomEmojiThumbnail.h */,
+				E5F6A1B2C3D4E5F6A1B2C3D4 /* TGEmojiStatusView.m */,
+				F6A1B2C3D4E5F6A1B2C3D4E5 /* TGEmojiStatusView.h */,
+				A575DF3330B486162A4AC5C9 /* TGCustomEmojiKeyboardView.m */,
+				F799ABC3AB5A8832ECBAB5F7 /* TGStickerCreationSignals.m */,
+				11ADA98E48D8D268E4F2820C /* TGStickerCreationController.m */,
+				209ED4B5FFC459A7A76080B0 /* TGStickerPackCreationController.m */,
+				3DD35946453724BAB8519846 /* TGStickerCreationPreviewItem.m */,
+				CA908F2008286410C0710051 /* TGStickerCreationPreviewItemView.m */,
+				461F21CC5163FE68D23E9C6C /* TGCustomEmojiTextAttributes.h */,
+				7A1E46584CAF6B1A4E4959D3 /* TGCustomEmojiSignals.h */,
+				0C112B181363ABFD9082F055 /* TGCustomEmojiKeyboardView.h */,
+				EE38484578BE405E2AFE9C12 /* TGStickerCreationSignals.h */,
+				C1055A1C07D5D40E9B8160AC /* TGStickerCreationController.h */,
+				8B5734CA861D822C886DB596 /* TGStickerPackCreationController.h */,
+				D1DA62E8CB37670B20468734 /* TGStickerCreationPreviewItem.h */,
+				269A7C329E323963D7053970 /* TGStickerCreationPreviewItemView.h */,
+				0D9A1AA143199B9AF778769E /* TGWebPEncoder.c */,
+				2CC522FB3F596B7B88E2FEB5 /* TGWebPEncoder.h */,
+				D6284FF9B46CFFC0B741E23D /* TGPreparedPollMessage.h */,
+				BBF78616B73818C5AB3596AA /* TGPreparedPollMessage.m */,
+				C02EDF06FDA8B21BBA142182 /* TGPollOptionCollectionItem.h */,
+				17859B9A2D57A624C504D9D8 /* TGPollOptionCollectionItem.m */,
+				BB499D4CCA7F106E39FA2033 /* TGPollOptionCollectionItemView.h */,
+				EBF7B93F27B5CB372801CCD4 /* TGPollOptionCollectionItemView.m */,
+				319E2F8A8279D32C890B81E8 /* TGCreatePollController.h */,
+				B6428FD19B88073BA7D2F073 /* TGCreatePollController.m */,
+				EFC4576FD7244A0A53A65676 /* TGDialogFilter.h */,
+				CA845CB23AC81FF04866478D /* TGDialogFilter.m */,
+				9AAA55BF89A36575711CAD95 /* TGDialogFilterCategoryCollectionItem.h */,
+				46BE108037C36816087375B9 /* TGDialogFilterCategoryCollectionItem.m */,
+				0DE73D50AA6ABA8DFF370DBD /* TGDialogFilterCategoryCollectionItemView.h */,
+				346C40AF849A8F9E04C82509 /* TGDialogFilterCategoryCollectionItemView.m */,
+				AF0E42F8D4860D16991A780F /* TGDialogFilterCollectionItem.h */,
+				6F30F757B21FA40C85B44CF0 /* TGDialogFilterCollectionItem.m */,
+				6EC88A9CC245DC56C956DA4F /* TGDialogFilterCollectionItemView.h */,
+				5E0B5D19BA54F01EEEC8147B /* TGDialogFilterCollectionItemView.m */,
+				FBC8DE6C2519959F567C35C4 /* TGDialogFilterColorsCollectionItem.h */,
+				03A4F7E236623C33532E6360 /* TGDialogFilterColorsCollectionItem.m */,
+				FA762FA6A0E6822F7C484A8E /* TGDialogFilterColorsCollectionItemView.h */,
+				5D8E51BDAE76A77D6B6C9C33 /* TGDialogFilterColorsCollectionItemView.m */,
+				C9D473985D862E9FC2912426 /* TGDialogFilterEditController.h */,
+				E17AE9BE3F8D3B017C304EEF /* TGDialogFilterEditController.m */,
+				1B99C6756726964D6BD7E601 /* TGDialogFilterIcons.h */,
+				4C4EAB89B4DA5232B1F49EBF /* TGDialogFilterIcons.m */,
+				968275F5F8ECC8BD8F15E028 /* TGDialogFilterIconsCollectionItem.h */,
+				105EA3A555FC43580B3D3CBD /* TGDialogFilterIconsCollectionItem.m */,
+				7674F42F932415FD9D7D14FD /* TGDialogFilterIconsCollectionItemView.h */,
+				73B2AEE473537D3577C2A593 /* TGDialogFilterIconsCollectionItemView.m */,
+				56A65066547FF61DC7F83B52 /* TGDialogFilterInviteController.h */,
+				D5721848884E5E04A36F5C91 /* TGDialogFilterInviteController.m */,
+				105800FD6CAF6174F74FBCDD /* TGDialogFilterPeersController.h */,
+				FE431F18BE34F574D8EACF83 /* TGDialogFilterPeersController.m */,
+				9106EDB7302C370D57512398 /* TGDialogFilterSignals.h */,
+				CB9D282C64931EE0120CC747 /* TGDialogFilterSignals.m */,
+				331F1A2EFF7925988D8AF656 /* TGDialogFiltersController.h */,
+				CB8764F48AB7EBE5A7F2CA1F /* TGDialogFiltersController.m */,
 				F8380EA770E34EB875BE82DA /* TGOnegramUpdater.m */,
 				7220DF75308B9A9B04872A02 /* TGOnegramUpdater.h */,
 				D55CC37A02747FC4F33C7E8C /* TGOnegramUpdateController.m */,
@@ -19753,7 +19946,6 @@
 				D08805C0156E8F3600311537 /* TGAppDelegate.mm */,
 				937BBDEF164858DC003CF5F0 /* TGApplication.h */,
 				937BBDF0164858DC003CF5F0 /* TGApplication.m */,
-				F0726C0DEC0DEC0DEC0D0001 /* TGIOS6LinkCompat.m */,
 				D020ACBC1993625D007818DD /* TGHolderSet.h */,
 				D020ACBD1993625D007818DD /* TGHolderSet.m */,
 				D07F99461A9CFBC2002EA6E9 /* TGPasscodeWindow.h */,
@@ -24721,6 +24913,9 @@
 				1D695AD20DA6CA6A3BCFC3D9 /* StarGiftHiddenIcon@2x.png in Resources */,
 				26938740CAE62F10527C335A /* StarGiftHiddenIcon.png in Resources */,
 				725F545DE9744364A89B0AA0 /* StarGiftCloseIcon@3x.png in Resources */,
+				0DB73363413EEE56407F43CF /* PaidMessageStar@3x.png in Resources */,
+				D33E89931A4B630BC343C908 /* PaidMessageStar@2x.png in Resources */,
+				BDDA81A9049B28D2FDACD546 /* PaidMessageStar.png in Resources */,
 				16D973E4244DC5D6398549EA /* StarGiftCloseIcon@2x.png in Resources */,
 				CC0958B86D0C2B329CC8E319 /* StarGiftCloseIcon.png in Resources */,
 				ADA442CD20C789F1982BAE7A /* StarGiftAnonymousIcon@3x.png in Resources */,
@@ -27812,6 +28007,43 @@
 				D8F12F7E55CF7D24D0A1E856 /* TGSendAsSignals.m in Sources */,
 				35CAE5628B111345FC369683 /* TGMessageSelectionGestureRecognizer.m in Sources */,
 				4EE9E4A74FEEC78EC7F945DC /* TGOnegramTranslator.m in Sources */,
+				F3FB8332E50A57EAAD1E9911 /* TGPaidMessagesSignals.m in Sources */,
+				65860A27CA65F8A0816BD4FF /* TGPaidMessagesConfirmation.m in Sources */,
+				CD3CD54DC81782ABB0A8543B /* TGPaidMessagesSettingsController.m in Sources */,
+				8AFB95AF4B0E0BF5B9D8BB71 /* TGPaidMessagesFeeTitlePanel.m in Sources */,
+				460826BF5F3FD696B50452D5 /* TGStoryViewerCollectionItem.m in Sources */,
+				3DF774F6D3EA1FAAB65BD498 /* TGStoryViewerCollectionItemView.m in Sources */,
+				FEA1AA630EF798D5E4D04689 /* TGStoryViewersController.m in Sources */,
+				828F0A86B8C081B0A0FB0797 /* TGCustomEmojiTextAttributes.m in Sources */,
+				595D7D847AFFE7D9F99EC25A /* TGCustomEmojiSignals.m in Sources */,
+				A1B2C3D4E5F6A1B2C3D4E5F6 /* TGCustomEmojiThumbnail.mm in Sources */,
+				D4E5F6A1B2C3D4E5F6A1B2C3 /* TGEmojiStatusView.m in Sources */,
+				603DA67BAC0F157FA17575E4 /* TGCustomEmojiKeyboardView.m in Sources */,
+				C995E7BD5C861DEE2B5F0C39 /* TGStickerCreationSignals.m in Sources */,
+				0AC068970BA09F66097F2774 /* TGStickerCreationController.m in Sources */,
+				01378AEE401E1768336507BE /* TGStickerPackCreationController.m in Sources */,
+				271665FA818AA2689F2F9785 /* TGStickerCreationPreviewItem.m in Sources */,
+				0E09F6A8BB15E5AC27C1CD51 /* TGStickerCreationPreviewItemView.m in Sources */,
+				DCF677B079640E4396E5D219 /* TGWebPEncoder.c in Sources */,
+				93FF667FD3D5F87F4E1A8B1A /* TGPreparedPollMessage.m in Sources */,
+				81EAC21D07FB39D6F4F60ACE /* TGPollOptionCollectionItem.m in Sources */,
+				4EC2D0B237D18B4A5581F230 /* TGPollOptionCollectionItemView.m in Sources */,
+				F0FF63A1A73F2F65EDBE3279 /* TGCreatePollController.m in Sources */,
+				BE5758AD626ADF96CEF1AFBA /* TGDialogFilter.m in Sources */,
+				9442C9AF7153E588680BB2CD /* TGDialogFilterCategoryCollectionItem.m in Sources */,
+				92A923F7CB1BA908F50ABD28 /* TGDialogFilterCategoryCollectionItemView.m in Sources */,
+				3A0664957C9606BB5B79F821 /* TGDialogFilterCollectionItem.m in Sources */,
+				520D4C5CC54911A16321F8CD /* TGDialogFilterCollectionItemView.m in Sources */,
+				5813CD0A7DF16CED180DCE26 /* TGDialogFilterColorsCollectionItem.m in Sources */,
+				A5EB8E57BC8615CE15FD7AED /* TGDialogFilterColorsCollectionItemView.m in Sources */,
+				BB8D97BB723212FA47F28467 /* TGDialogFilterEditController.m in Sources */,
+				AA6401298CBBB235985684C3 /* TGDialogFilterIcons.m in Sources */,
+				99AB7076751018FFF3497313 /* TGDialogFilterIconsCollectionItem.m in Sources */,
+				ACAB48FDFCF15DCD76009E8D /* TGDialogFilterIconsCollectionItemView.m in Sources */,
+				DD85D3A54265F813E34C8DDE /* TGDialogFilterInviteController.m in Sources */,
+				3BDD5D472D8E8C44BD5F7011 /* TGDialogFilterPeersController.m in Sources */,
+				3077B888845B16523E724892 /* TGDialogFilterSignals.m in Sources */,
+				E6666B233DDBD8A9380B4407 /* TGDialogFiltersController.m in Sources */,
 				29EBD99868F4E5F1AFBB679A /* TGOnegramUpdater.m in Sources */,
 				7F4E1ABE9272CD3B49B2786B /* TGOnegramUpdateController.m in Sources */,
 				E9C3CB66432DF19FF2B6A153 /* TGOnegramSettingsController.m in Sources */,

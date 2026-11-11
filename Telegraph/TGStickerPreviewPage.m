@@ -16,6 +16,8 @@
 
 @end
 
+extern NSString *OGCompatStickerPreviewUri(TGDocumentMediaAttachment *documentMedia);
+
 @implementation TGStickerPreviewPageImageView
 
 - (void)setAnimatedDocument:(TGDocumentMediaAttachment *)document placeholderUri:(NSString *)placeholderUri
@@ -117,32 +119,7 @@
         imageView.hidden = false;
 
         TGDocumentMediaAttachment *documentMedia = documents[i];
-        NSMutableString *uri = [[NSMutableString alloc] initWithString:@"sticker-preview://?"];
-        if (documentMedia.documentId != 0)
-        {
-            [uri appendFormat:@"documentId=%" PRId64 "", documentMedia.documentId];
-            
-            TGMediaOriginInfo *originInfo = documentMedia.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:documentMedia];
-            if (originInfo != nil)
-                [uri appendFormat:@"&origin_info=%@", [originInfo stringRepresentation]];
-        }
-        else
-        {
-            [uri appendFormat:@"localDocumentId=%" PRId64 "", documentMedia.localDocumentId];
-        }
-        [uri appendFormat:@"&accessHash=%" PRId64 "", documentMedia.accessHash];
-        [uri appendFormat:@"&datacenterId=%" PRId32 "", (int32_t)documentMedia.datacenterId];
-        
-        NSString *legacyThumbnailUri = [documentMedia.thumbnailInfo imageUrlForLargestSize:NULL];
-        if (legacyThumbnailUri != nil)
-            [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-        [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[documentMedia safeFileName]]];
-        [uri appendFormat:@"&size=%d", documentMedia.size];
-        if (documentMedia.mimeType.length != 0)
-            [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:documentMedia.mimeType]];
-        
-        [uri appendFormat:@"&width=132&height=132"];
-        [uri appendFormat:@"&highQuality=1"];
+        NSString *uri = OGCompatStickerPreviewUri(documentMedia);
         if ([TGAnimatedStickerView isAnimatedStickerDocument:documentMedia])
             [imageView setAnimatedDocument:documentMedia placeholderUri:uri];
         else

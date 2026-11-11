@@ -2,25 +2,27 @@
 #import "TGApplication.h"
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
+static void OGCompatOpenExternally(NSURL *url)
+{
+    UIApplication *app = [UIApplication sharedApplication];
+    if ([app respondsToSelector:@selector(nativeOpenURL:)])
+        [(TGApplication *)app nativeOpenURL:url];
+    else
+        [app openURL:url];
+}
+
 @implementation SFSafariViewController
+
+- (instancetype)initWithURL:(NSURL *)URL entersReaderIfAvailable:(BOOL)__unused entersReaderIfAvailable
+{
+    if ((self = [super init]))
+        OGCompatOpenExternally(URL);
+    return self;
+}
 
 - (instancetype)initWithURL:(NSURL *)URL
 {
     return [self initWithURL:URL entersReaderIfAvailable:false];
-}
-
-- (instancetype)initWithURL:(NSURL *)URL entersReaderIfAvailable:(BOOL)__unused entersReaderIfAvailable
-{
-    self = [super init];
-    if (self != nil)
-    {
-        UIApplication *application = [UIApplication sharedApplication];
-        if ([application respondsToSelector:@selector(nativeOpenURL:)])
-            [(TGApplication *)application nativeOpenURL:URL];
-        else
-            [application openURL:URL];
-    }
-    return self;
 }
 
 - (NSArray *)previewActionItems

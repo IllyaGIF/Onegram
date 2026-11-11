@@ -432,19 +432,19 @@
 
 - (void)transitionIn {
     self.alpha = 0.0f;
-    TGSetLayerRasterizationScale(_panelView.layer, TGScreenScaling());
-    TGSetLayerShouldRasterize(_panelView.layer, true);
+    OGCompatLayerSetRasterizationScale(_panelView.layer, TGScreenScaling());
+    OGCompatLayerSetShouldRasterize(_panelView.layer, true);
     [UIView animateWithDuration:0.2 animations:^{
         self.alpha = 1.0f;
     } completion:^(BOOL finished) {
         if (finished) {
-            TGSetLayerShouldRasterize(_panelView.layer, false);
+            OGCompatLayerSetShouldRasterize(_panelView.layer, false);
         }
     }];
 }
 
 - (void)transitionOut:(void (^)(void))completion {
-    TGSetLayerShouldRasterize(_panelView.layer, true);
+    OGCompatLayerSetShouldRasterize(_panelView.layer, true);
     [UIView animateWithDuration:0.2 animations:^{
         self.alpha = 0.0f;
     } completion:^(__unused BOOL finished) {
@@ -606,8 +606,8 @@
         switchDisabled = true;
     
     if (switchDisabled || presentation.initialTheme == TGInstantPagePresentationThemeBlack) {
-        TGSetLayerRasterizationScale(_autoThemeWrapperView.layer, TGScreenScaling());
-        TGSetLayerShouldRasterize(_autoThemeWrapperView.layer, true);
+        OGCompatLayerSetRasterizationScale(_autoThemeWrapperView.layer, TGScreenScaling());
+        OGCompatLayerSetShouldRasterize(_autoThemeWrapperView.layer, true);
         
         [_autoThemeSwitch setOn:false animated:animated];
         _autoThemeSwitch.userInteractionEnabled = false;
@@ -623,7 +623,7 @@
     
     void (^completionBlock)(BOOL) = ^(BOOL finished) {
         if (finished && presentation.initialTheme != TGInstantPagePresentationThemeBlack) {
-            TGSetLayerShouldRasterize(_autoThemeWrapperView.layer, false);
+            OGCompatLayerSetShouldRasterize(_autoThemeWrapperView.layer, false);
         }
     };
 

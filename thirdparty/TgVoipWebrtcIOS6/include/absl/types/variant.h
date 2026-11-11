@@ -1,93 +1,58 @@
-#ifndef TGIOS6_ABSL_TYPES_VARIANT_H
-#define TGIOS6_ABSL_TYPES_VARIANT_H
+#ifndef OG_COMPAT_ABSL_VARIANT_H
+#define OG_COMPAT_ABSL_VARIANT_H
 
 #include <new>
 #include <utility>
 
 namespace absl {
 
-namespace tgios6_variant {
+namespace og_variant_detail {
 
-template <class T, class... Ts>
-struct max_size;
+constexpr size_t largestOf(size_t only) {
+	return only;
+}
+
+template <class... Rest>
+constexpr size_t largestOf(size_t first, size_t second, Rest... rest) {
+	return largestOf(first > second ? first : second, rest...);
+}
+
+template <class Target, class... Alternatives>
+struct SlotLookup;
+
+template <class Target>
+struct SlotLookup<Target> {
+	static const int value = -1;
+};
+
+template <class Target, class Head, class... Tail>
+struct SlotLookup<Target, Head, Tail...> {
+	static const int deeper = SlotLookup<Target, Tail...>::value;
+	static const int value = std::is_same<Target, Head>::value ? 0 : (deeper < 0 ? -1 : deeper + 1);
+};
 
 template <class T>
-struct max_size<T> {
-	static const size_t value = sizeof(T);
-};
-
-template <class T, class U, class... Ts>
-struct max_size<T, U, Ts...> {
-	static const size_t next = max_size<U, Ts...>::value;
-	static const size_t value = sizeof(T) > next ? sizeof(T) : next;
-};
-
-template <class T, class... Ts>
-struct max_align;
+void destroyAt(void *place) {
+	static_cast<T *>(place)->~T();
+}
 
 template <class T>
-struct max_align<T> {
-	static const size_t value = alignof(T);
+void copyInto(const void *source, void *place) {
+	new (place) T(*static_cast<const T *>(source));
+}
+
+struct SlotOps {
+	void (*destroy)(void *place);
+	void (*copy)(const void *source, void *place);
 };
 
-template <class T, class U, class... Ts>
-struct max_align<T, U, Ts...> {
-	static const size_t next = max_align<U, Ts...>::value;
-	static const size_t value = alignof(T) > next ? alignof(T) : next;
-};
+template <class... Alternatives>
+const SlotOps &opsFor(int slot) {
+	static const SlotOps table[] = {{&destroyAt<Alternatives>, &copyInto<Alternatives>}...};
+	return table[slot];
+}
 
-template <class Target, class Current, class... Rest>
-struct index_of {
-	static const int tail = index_of<Target, Rest...>::value;
-	static const int value = std::is_same<Target, Current>::value ? 0 : (tail < 0 ? -1 : 1 + tail);
-};
-
-template <class Target, class Current>
-struct index_of<Target, Current> {
-	static const int value = std::is_same<Target, Current>::value ? 0 : -1;
-};
-
-template <int Index, class... Ts>
-struct destroyer;
-
-template <int Index, class T, class... Rest>
-struct destroyer<Index, T, Rest...> {
-	static void destroy(int active, void *storage) {
-		if (active == Index) {
-			reinterpret_cast<T *>(storage)->~T();
-		} else {
-			destroyer<Index + 1, Rest...>::destroy(active, storage);
-		}
-	}
-};
-
-template <int Index>
-struct destroyer<Index> {
-	static void destroy(int, void *) {
-	}
-};
-
-template <int Index, class... Ts>
-struct copier;
-
-template <int Index, class T, class... Rest>
-struct copier<Index, T, Rest...> {
-	static void copy(int active, const void *from, void *to) {
-		if (active == Index) {
-			new (to) T(*reinterpret_cast<const T *>(from));
-		} else {
-			copier<Index + 1, Rest...>::copy(active, from, to);
-		}
-	}
-};
-
-template <int Index>
-struct copier<Index> {
-	static void copy(int, const void *, void *) {
-	}
-};
-
-} // namespace tgios6_variant
+} // namespace og_variant_detail
 
 template <class... Ts>
 class variant {
@@ -97,16 +62,16 @@ public:
 
 	template <class T>
 	variant(const T &value) : _active(-1) {
-		setValue(value);
+		assign(value);
 	}
 
 	template <class T, typename std::enable_if<!std::is_same<typename std::decay<T>::type, variant>::value, int>::type = 0>
 	variant(T &&value) : _active(-1) {
-		setValue(std::forward<T>(value));
+		assign(std::forward<T>(value));
 	}
 
 	variant(const variant &other) : _active(other._active) {
-		tgios6_variant::copier<0, Ts...>::copy(other._active, &other._storage, &_storage);
+		duplicateFrom(other);
 	}
 
 	~variant() {
@@ -117,14 +82,14 @@ public:
 		if (this != &other) {
 			reset();
 			_active = other._active;
-			tgios6_variant::copier<0, Ts...>::copy(other._active, &other._storage, &_storage);
+			duplicateFrom(other);
 		}
 		return *this;
 	}
 
 	template <class T, typename std::enable_if<!std::is_same<typename std::decay<T>::type, variant>::value, int>::type = 0>
 	variant &operator=(T &&value) {
-		setValue(std::forward<T>(value));
+		assign(std::forward<T>(value));
 		return *this;
 	}
 
@@ -134,39 +99,46 @@ public:
 
 	template <class T>
 	T *get_if() {
-		return _active == tgios6_variant::index_of<T, Ts...>::value
-			? reinterpret_cast<T *>(&_storage)
-			: nullptr;
+		return holds<T>() ? reinterpret_cast<T *>(&_storage) : nullptr;
 	}
 
 	template <class T>
 	const T *get_if() const {
-		return _active == tgios6_variant::index_of<T, Ts...>::value
-			? reinterpret_cast<const T *>(&_storage)
-			: nullptr;
+		return holds<T>() ? reinterpret_cast<const T *>(&_storage) : nullptr;
 	}
 
 private:
 	template <class T>
-	void setValue(T &&value) {
+	bool holds() const {
+		return _active == og_variant_detail::SlotLookup<T, Ts...>::value;
+	}
+
+	void duplicateFrom(const variant &other) {
+		if (other._active >= 0) {
+			og_variant_detail::opsFor<Ts...>(other._active).copy(&other._storage, &_storage);
+		}
+	}
+
+	template <class T>
+	void assign(T &&value) {
 		reset();
 		typedef typename std::decay<T>::type Decayed;
-		_active = tgios6_variant::index_of<Decayed, Ts...>::value;
-		static_assert(tgios6_variant::index_of<Decayed, Ts...>::value >= 0, "type is not in absl::variant");
+		_active = og_variant_detail::SlotLookup<Decayed, Ts...>::value;
+		static_assert(og_variant_detail::SlotLookup<Decayed, Ts...>::value >= 0, "type is not in absl::variant");
 		new (&_storage) Decayed(std::forward<T>(value));
 	}
 
 	void reset() {
 		if (_active >= 0) {
-			tgios6_variant::destroyer<0, Ts...>::destroy(_active, &_storage);
+			og_variant_detail::opsFor<Ts...>(_active).destroy(&_storage);
 			_active = -1;
 		}
 	}
 
 	int _active;
 	typename std::aligned_storage<
-		tgios6_variant::max_size<Ts...>::value,
-		tgios6_variant::max_align<Ts...>::value>::type _storage;
+		og_variant_detail::largestOf(sizeof(Ts)...),
+		og_variant_detail::largestOf(alignof(Ts)...)>::type _storage;
 };
 
 template <class T, class... Ts>

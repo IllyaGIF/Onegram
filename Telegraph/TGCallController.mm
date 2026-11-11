@@ -119,7 +119,7 @@
     [UIView setAnimationsEnabled:false];
     self.view = [[TGCallView alloc] init];
     self.view.safeAreaInset = [TGViewController safeAreaInsetForOrientation:UIInterfaceOrientationPortrait];
-    TGSetLayerRasterizationScale(self.view.layer, TGScreenScaling());
+    OGCompatLayerSetRasterizationScale(self.view.layer, TGScreenScaling());
     
     __weak TGCallController *weakSelf = self;
     self.view.minimizeRequested = ^
@@ -750,7 +750,7 @@
     self.overlayWindow.hidden = false;
     self.view.userInteractionEnabled = true;
     self.view.transform = CGAffineTransformMakeScale(1.1f, 1.1f);
-    TGSetLayerShouldRasterize(self.view.layer, true);
+    OGCompatLayerSetShouldRasterize(self.view.layer, true);
     
     [self.view onResume];
     
@@ -764,7 +764,7 @@
     } completion:^(__unused BOOL finished)
     {
         _appearing = false;
-        TGSetLayerShouldRasterize(self.view.layer, false);
+        OGCompatLayerSetShouldRasterize(self.view.layer, false);
         
         if (self.onTransitionIn != nil)
             self.onTransitionIn();
@@ -849,7 +849,7 @@
 {
     [self setProximityListenerEnabled:false];
     
-    TGSetLayerShouldRasterize(self.view.layer, true);
+    OGCompatLayerSetShouldRasterize(self.view.layer, true);
     [self setNeedsStatusBarAppearanceUpdate];
     if (fast)
     {

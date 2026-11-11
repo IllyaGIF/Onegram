@@ -10,18 +10,18 @@
 
 @interface STPCheckoutAccount()
 
-@property(nonatomic)NSString *email;
-@property(nonatomic)NSString *phone;
-@property(nonatomic)NSString *csrfToken;
-@property(nonatomic)NSString *sessionID;
-@property(nonatomic)STPCard *card;
+@property(nonatomic)NSString *_Nonnull email;
+@property(nonatomic)NSString *_Nonnull phone;
+@property(nonatomic)NSString *_Nonnull csrfToken;
+@property(nonatomic)NSString *_Nonnull sessionID;
+@property(nonatomic)STPCard *_Nonnull card;
 
 @end
 
 @implementation STPCheckoutAccount
 
-+ (instancetype)accountWithData:(NSData *)data
-                             URLResponse:(NSURLResponse *)response {
++ (instancetype _Nullable)accountWithData:(NSData *_Nullable)data
+                             URLResponse:(NSURLResponse *_Nullable)response {
     if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
         return nil;
     }

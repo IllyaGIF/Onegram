@@ -14,6 +14,21 @@
 
 @end
 
+static bool TGDocumentVideoLooksRound(TGDocumentAttributeVideo *video, NSString *mimeType, NSString *caption)
+{
+    if (video == nil || ![mimeType hasPrefix:@"video/"] || caption.length != 0)
+        return false;
+    if (video.duration < 0 || video.duration > 60)
+        return false;
+
+    CGSize size = video.size;
+    if (size.width < 120.0f || size.height < 120.0f)
+        return false;
+
+    CGFloat longSide = MAX(size.width, size.height);
+    return ABS(size.width - size.height) < longSide * 0.08f;
+}
+
 @implementation TGDocumentMediaAttachment
 
 - (id)init
@@ -409,34 +424,21 @@
 }
 
 - (bool)isRoundVideo {
-    TGDocumentAttributeVideo *videoAttribute = nil;
-    bool hasAnimatedAttribute = false;
-    bool hasStickerAttribute = false;
+    TGDocumentAttributeVideo *plainVideo = nil;
+    bool animatedOrSticker = false;
     for (id attribute in _attributes) {
         if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]]) {
             TGDocumentAttributeVideo *video = attribute;
             if (video.isRoundMessage) {
                 return true;
             }
-            videoAttribute = video;
-        } else if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]]) {
-            hasAnimatedAttribute = true;
-        } else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]]) {
-            hasStickerAttribute = true;
+            plainVideo = video;
+        } else if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]] || [attribute isKindOfClass:[TGDocumentAttributeSticker class]]) {
+            animatedOrSticker = true;
         }
     }
 
-    if (videoAttribute != nil && !hasAnimatedAttribute && !hasStickerAttribute &&
-        [_mimeType hasPrefix:@"video/"] && _caption.length == 0 &&
-        videoAttribute.duration >= 0 && videoAttribute.duration <= 60 &&
-        videoAttribute.size.width >= 120.0f && videoAttribute.size.height >= 120.0f)
-    {
-        CGFloat maxSide = MAX(videoAttribute.size.width, videoAttribute.size.height);
-        CGFloat difference = ABS(videoAttribute.size.width - videoAttribute.size.height);
-        return maxSide > FLT_EPSILON && difference / maxSide < 0.08f;
-    }
-
-    return false;
+    return !animatedOrSticker && TGDocumentVideoLooksRound(plainVideo, _mimeType, _caption);
 }
 
 - (CGSize)pictureSize {

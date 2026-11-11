@@ -75,9 +75,9 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     TGDocumentMediaAttachment *_document;
     TGMessageImageViewModel *_imageModel;
     TGAnimatedStickerViewModel *_animatedStickerModel;
-    NSString *_emojiFallbackText;
-    UILabel *_emojiFallbackLabel;
-    bool _emojiFallbackUntilImageLoaded;
+    NSString *_placeholderEmoji;
+    UILabel *_placeholderLabel;
+    bool _placeholderEmojiTransient;
     
     UITapGestureRecognizer *_tapGestureRecognizer;
     TGDoubleTapGestureRecognizer *_boundDoubleTapRecognizer;
@@ -115,7 +115,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
 
 @implementation TGStickerMessageViewModel
 
-- (NSString *)stickerAltText:(TGDocumentMediaAttachment *)document
+- (NSString *)emojiForStickerDocument:(TGDocumentMediaAttachment *)document
 {
     for (id attribute in document.attributes)
     {
@@ -126,172 +126,177 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     return nil;
 }
 
-- (bool)needsPreviewUriForDocument:(TGDocumentMediaAttachment *)document
+- (bool)documentUsesPosterUri:(TGDocumentMediaAttachment *)document
 {
-    NSString *mimeType = [document.mimeType lowercaseString];
-    NSString *extension = [[document.fileName pathExtension] lowercaseString];
-    return [mimeType isEqualToString:@"video/webm"] || [mimeType isEqualToString:@"application/x-tgsticker"] || [extension isEqualToString:@"webm"] || [extension isEqualToString:@"tgs"];
+    NSArray *posterMimeTypes = @[@"video/webm", @"application/x-tgsticker"];
+    NSArray *posterExtensions = @[@"webm", @"tgs"];
+    return [posterMimeTypes containsObject:[document.mimeType lowercaseString]] || [posterExtensions containsObject:[[document.fileName pathExtension] lowercaseString]];
 }
 
-- (bool)shouldKeepEmojiFallbackForDocument:(TGDocumentMediaAttachment *)document
+- (bool)keepsPlaceholderForDocument:(TGDocumentMediaAttachment *)document
 {
     return false;
 }
 
-- (NSString *)stickerImageUriForDocument:(TGDocumentMediaAttachment *)document displaySize:(CGSize)displaySize
+- (NSString *)currentStickerImageUriForDisplaySize:(CGSize)displaySize
 {
-    bool useStaticPreview = [self needsPreviewUriForDocument:document];
-    NSMutableString *uri = [[NSMutableString alloc] initWithString:(useStaticPreview ? @"sticker-preview://?" : @"sticker://?")];
-    if (document.documentId != 0)
-    {
-        [uri appendFormat:@"&documentId=%" PRId64, document.documentId];
+    bool previewOnly = [self documentUsesPosterUri:_document];
 
-        TGMediaOriginInfo *originInfo = document.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:document];
+    NSMutableString *imageUri = [[NSMutableString alloc] init];
+    [imageUri appendString:previewOnly ? @"sticker-preview://?" : @"sticker://?"];
+    if (_document.documentId != 0)
+    {
+        [imageUri appendFormat:@"&documentId=%" PRId64, _document.documentId];
+        
+        TGMediaOriginInfo *originInfo = _document.originInfo ?: [TGMediaOriginInfo mediaOriginInfoForDocumentAttachment:_document];
         if (originInfo != nil)
-            [uri appendFormat:@"&origin_info=%@", [originInfo stringRepresentation]];
+            [imageUri appendFormat:@"&origin_info=%@", [originInfo stringRepresentation]];
     }
     else
     {
-        [uri appendFormat:@"&localDocumentId=%" PRId64, document.localDocumentId];
+        [imageUri appendFormat:@"&localDocumentId=%" PRId64, _document.localDocumentId];
     }
-    [uri appendFormat:@"&accessHash=%" PRId64, document.accessHash];
-    [uri appendFormat:@"&datacenterId=%d", (int)document.datacenterId];
-
-    if (useStaticPreview)
+    [imageUri appendFormat:@"&accessHash=%" PRId64, _document.accessHash];
+    [imageUri appendFormat:@"&datacenterId=%d", (int)_document.datacenterId];
+    if (previewOnly)
     {
-        NSString *legacyThumbnailUri = [document.thumbnailInfo imageUrlForLargestSize:NULL];
-        if (legacyThumbnailUri.length != 0)
-            [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailUri]];
-        [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[document safeFileName]]];
-        [uri appendFormat:@"&size=%d", (int)document.size];
-        if (document.mimeType.length != 0)
-            [uri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:document.mimeType]];
-        [uri appendFormat:@"&width=%d&height=%d&highQuality=1", (int)displaySize.width, (int)displaySize.height];
+        NSString *thumbnailUri = [_document.thumbnailInfo imageUrlForLargestSize:NULL];
+        if (thumbnailUri.length != 0)
+            [imageUri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:thumbnailUri]];
+        [imageUri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:[_document safeFileName]]];
+        [imageUri appendFormat:@"&size=%d", (int)_document.size];
+        if (_document.mimeType.length != 0)
+            [imageUri appendFormat:@"&mimeType=%@", [TGStringUtils stringByEscapingForURL:_document.mimeType]];
+        [imageUri appendFormat:@"&width=%d&height=%d&highQuality=1", (int)displaySize.width, (int)displaySize.height];
     }
     else
     {
-        [uri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:document.fileName]];
-        [uri appendFormat:@"&size=%d", (int)document.size];
-        [uri appendFormat:@"&width=%d&height=%d", (int)displaySize.width, (int)displaySize.height];
-        [uri appendFormat:@"&mime-type=%@", [TGStringUtils stringByEscapingForURL:document.mimeType]];
-        if (document.documentUri.length != 0)
-            [uri appendFormat:@"&documentUri=%@", [TGStringUtils stringByEscapingForURL:document.documentUri]];
+        [imageUri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:_document.fileName]];
+        [imageUri appendFormat:@"&size=%d", (int)_document.size];
+        [imageUri appendFormat:@"&width=%d&height=%d", (int)displaySize.width, (int)displaySize.height];
+        [imageUri appendFormat:@"&mime-type=%@", [TGStringUtils stringByEscapingForURL:_document.mimeType]];
+        if (_document.documentUri.length != 0) {
+            [imageUri appendFormat:@"&documentUri=%@", [TGStringUtils stringByEscapingForURL:_document.documentUri]];
+        }
     }
     if (OGPlatformMediaDownloadsRequireUserAction())
-        [uri appendString:@"&cacheOnly=1"];
-    return uri;
+        [imageUri appendString:@"&cacheOnly=1"];
+    return imageUri;
 }
 
-- (bool)stickerImageIsLocallyAvailable:(TGDocumentMediaAttachment *)document
+static NSString *OGStickerFilesRootPath()
 {
-    static NSString *filesDirectory = nil;
+    static NSString *rootPath = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
+        rootPath = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
     });
-    
-    NSString *fileDirectoryName = nil;
-    if (document.documentId != 0)
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"%" PRIx64 "", document.documentId];
-    else if (document.localDocumentId != 0)
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"local%" PRIx64 "", document.localDocumentId];
-    
-    if (fileDirectoryName.length == 0)
-        return false;
-    
-    NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
-    NSString *filePath = [fileDirectory stringByAppendingPathComponent:document.fileName ?: @""];
-    
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    return [fileManager fileExistsAtPath:filePath] ||
-        [fileManager fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"cached.bin"]] ||
-        [fileManager fileExistsAtPath:[fileDirectory stringByAppendingPathComponent:@"thumbnail.cached.bin"]];
+    return rootPath;
 }
 
-- (bool)boundImageViewHasImage
+- (bool)stickerFilesExistForDocument:(TGDocumentMediaAttachment *)document
 {
-    UIView *boundView = [_imageModel boundView];
-    if ([boundView isKindOfClass:[TGMessageImageViewContainer class]])
-        return ((TGMessageImageViewContainer *)boundView).imageView.currentImage != nil;
+    NSString *folderName = nil;
+    if (document.documentId != 0)
+        folderName = [NSString stringWithFormat:@"%" PRIx64, document.documentId];
+    else if (document.localDocumentId != 0)
+        folderName = [NSString stringWithFormat:@"local%" PRIx64, document.localDocumentId];
+    if (folderName.length == 0)
+        return false;
     
+    NSString *folderPath = [OGStickerFilesRootPath() stringByAppendingPathComponent:folderName];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    for (NSString *name in @[document.fileName ?: @"", @"cached.bin", @"thumbnail.cached.bin"])
+    {
+        if ([fileManager fileExistsAtPath:[folderPath stringByAppendingPathComponent:name]])
+            return true;
+    }
     return false;
 }
 
-- (void)updateEmojiFallbackState
+- (bool)boundImageIsPresent
 {
-    NSString *alt = [self stickerAltText:_document];
-    bool showFallback = false;
-    bool untilLoaded = false;
-    if (alt.length != 0)
+    UIView *boundView = [_imageModel boundView];
+    return [boundView isKindOfClass:[TGMessageImageViewContainer class]] && ((TGMessageImageViewContainer *)boundView).imageView.currentImage != nil;
+}
+
+- (void)refreshPlaceholderEmoji
+{
+    NSString *emoji = [self emojiForStickerDocument:_document];
+    bool visible = false;
+    bool transient = false;
+    if (emoji.length != 0)
     {
         if (_animatedStickerModel != nil)
         {
-            showFallback = OGPlatformMediaDownloadsRequireUserAction() && ![[NSFileManager defaultManager] fileExistsAtPath:[TGAnimatedStickerView filePathForDocument:_document]];
-            untilLoaded = true;
+            visible = OGPlatformMediaDownloadsRequireUserAction() && ![[NSFileManager defaultManager] fileExistsAtPath:[TGAnimatedStickerView filePathForDocument:_document]];
+            transient = true;
         }
         else
         {
-            bool keepFallback = [self shouldKeepEmojiFallbackForDocument:_document];
-            showFallback = keepFallback || ![self stickerImageIsLocallyAvailable:_document];
-            untilLoaded = !keepFallback;
+            bool permanent = [self keepsPlaceholderForDocument:_document];
+            visible = permanent || ![self stickerFilesExistForDocument:_document];
+            transient = !permanent;
         }
     }
-    if (showFallback)
-    {
-        _emojiFallbackText = alt;
-        _emojiFallbackUntilImageLoaded = untilLoaded;
-    }
-    else
-    {
-        _emojiFallbackText = nil;
-        _emojiFallbackUntilImageLoaded = false;
-    }
-    [self updateEmojiFallbackLabel];
+    _placeholderEmoji = visible ? emoji : nil;
+    _placeholderEmojiTransient = visible && transient;
+    [self layoutPlaceholderLabel];
 }
 
-- (void)updateEmojiFallbackLabel
+- (void)dismissPlaceholderEmoji
+{
+    _placeholderEmojiTransient = false;
+    _placeholderEmoji = nil;
+    [self layoutPlaceholderLabel];
+}
+
+- (UILabel *)makePlaceholderLabelInBounds:(CGRect)bounds
+{
+    UILabel *label = [[UILabel alloc] initWithFrame:bounds];
+    label.backgroundColor = [UIColor clearColor];
+    label.textAlignment = NSTextAlignmentCenter;
+    label.userInteractionEnabled = false;
+    label.adjustsFontSizeToFitWidth = true;
+    if ([label respondsToSelector:@selector(setMinimumScaleFactor:)])
+        OGPlatformSetLabelMinimumScaleFactor(label, 0.5f);
+    else
+        label.minimumFontSize = label.font.pointSize * 0.5f;
+    label.shadowColor = UIColorRGBA(0xffffff, 0.65f);
+    label.shadowOffset = CGSizeMake(0.0f, 1.0f);
+    return label;
+}
+
+- (void)layoutPlaceholderLabel
 {
     UIView *containerView = [_imageModel boundView];
-    if (_emojiFallbackUntilImageLoaded && [self boundImageViewHasImage])
+    if (_placeholderEmojiTransient && [self boundImageIsPresent])
     {
-        _emojiFallbackUntilImageLoaded = false;
-        _emojiFallbackText = nil;
+        _placeholderEmojiTransient = false;
+        _placeholderEmoji = nil;
     }
     
-    if (_emojiFallbackText.length == 0 || containerView == nil)
+    if (_placeholderEmoji.length == 0 || containerView == nil)
     {
-        [_emojiFallbackLabel removeFromSuperview];
-        _emojiFallbackLabel = nil;
+        [_placeholderLabel removeFromSuperview];
+        _placeholderLabel = nil;
         return;
     }
     
-    if (_emojiFallbackLabel == nil)
-    {
-        _emojiFallbackLabel = [[UILabel alloc] initWithFrame:containerView.bounds];
-        _emojiFallbackLabel.backgroundColor = [UIColor clearColor];
-        _emojiFallbackLabel.textAlignment = NSTextAlignmentCenter;
-        _emojiFallbackLabel.userInteractionEnabled = false;
-        _emojiFallbackLabel.adjustsFontSizeToFitWidth = true;
-        if ([_emojiFallbackLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            OGPlatformSetLabelMinimumScaleFactor(_emojiFallbackLabel, 0.5f);
-        else
-            _emojiFallbackLabel.minimumFontSize = _emojiFallbackLabel.font.pointSize * 0.5f;
-        _emojiFallbackLabel.shadowColor = UIColorRGBA(0xffffff, 0.65f);
-        _emojiFallbackLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
-    }
+    if (_placeholderLabel == nil)
+        _placeholderLabel = [self makePlaceholderLabelInBounds:containerView.bounds];
     
-    UIFont *emojiFont = TGEmojiFontOfSize(68.0f);
-    _emojiFallbackLabel.font = emojiFont;
-    _emojiFallbackLabel.text = _emojiFallbackText;
-    _emojiFallbackLabel.frame = containerView.bounds;
+    _placeholderLabel.font = TGEmojiFontOfSize(68.0f);
+    _placeholderLabel.text = _placeholderEmoji;
+    _placeholderLabel.frame = containerView.bounds;
     
-    if (_emojiFallbackLabel.superview != containerView)
+    if (_placeholderLabel.superview != containerView)
     {
-        [_emojiFallbackLabel removeFromSuperview];
-        [containerView addSubview:_emojiFallbackLabel];
+        [_placeholderLabel removeFromSuperview];
+        [containerView addSubview:_placeholderLabel];
     }
-    [containerView bringSubviewToFront:_emojiFallbackLabel];
+    [containerView bringSubviewToFront:_placeholderLabel];
 }
 
 - (CGSize)displaySizeForSize:(CGSize)size
@@ -355,7 +360,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         
         CGSize displaySize = [self displaySizeForSize:_size];
         
-        NSString *imageUri = [self stickerImageUriForDocument:_document displaySize:displaySize];
+        NSString *imageUri = [self currentStickerImageUriForDisplaySize:displaySize];
         bool animatedSticker = [TGAnimatedStickerView isAnimatedStickerDocument:_document];
         
         if (animatedSticker)
@@ -370,18 +375,14 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
                 [animationLifetimeReference withValue:^(void *value)
                 {
                     __strong TGStickerMessageViewModel *strongSelf = (__bridge TGStickerMessageViewModel *)value;
-                    if (strongSelf != nil && strongSelf->_emojiFallbackText != nil)
-                    {
-                        strongSelf->_emojiFallbackUntilImageLoaded = false;
-                        strongSelf->_emojiFallbackText = nil;
-                        [strongSelf updateEmojiFallbackLabel];
-                    }
+                    if (strongSelf != nil && strongSelf->_placeholderEmoji != nil)
+                        [strongSelf dismissPlaceholderEmoji];
                 }];
             };
         }
         else
             [_imageModel setUri:imageUri];
-        [self updateEmojiFallbackState];
+        [self refreshPlaceholderEmoji];
         
         _imageModel.frame = CGRectMake(0.0f, 0.0f, displaySize.width, displaySize.height);
         _imageModel.skipDrawInContext = true;
@@ -413,12 +414,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
                     if (strongSelf->_progressVisible)
                         [strongSelf updateProgressInternal:false progress:1.0f animated:true];
 
-                    if (strongSelf->_emojiFallbackUntilImageLoaded && (!OGPlatformMediaDownloadsRequireUserAction() || [strongSelf stickerImageIsLocallyAvailable:strongSelf->_document]))
-                    {
-                        strongSelf->_emojiFallbackUntilImageLoaded = false;
-                        strongSelf->_emojiFallbackText = nil;
-                        [strongSelf updateEmojiFallbackLabel];
-                    }
+                    if (strongSelf->_placeholderEmojiTransient && (!OGPlatformMediaDownloadsRequireUserAction() || [strongSelf stickerFilesExistForDocument:strongSelf->_document]))
+                        [strongSelf dismissPlaceholderEmoji];
                 }
             }];
         };
@@ -741,13 +738,13 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     
     CGSize displaySize = [self displaySizeForSize:_size];
     
-    NSString *imageUri = [self stickerImageUriForDocument:_document displaySize:displaySize];
+    NSString *imageUri = [self currentStickerImageUriForDisplaySize:displaySize];
     
     if (_animatedStickerModel != nil)
         [_animatedStickerModel setDocument:_document placeholderUri:imageUri];
     else
         [_imageModel setUri:imageUri];
-    [self updateEmojiFallbackState];
+    [self refreshPlaceholderEmoji];
     
     TGBotReplyMarkup *replyMarkup = message.replyMarkup != nil && message.replyMarkup.isInline ? message.replyMarkup : nil;
     if (!TGObjectCompare(_replyMarkup, replyMarkup)) {
@@ -803,7 +800,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     [_imageModel bindViewToContainer:container viewStorage:viewStorage];
     [_imageModel boundView].frame = CGRectOffset([_imageModel boundView].frame, itemPosition.x, itemPosition.y);
     
-    [self updateEmojiFallbackLabel];
+    [self layoutPlaceholderLabel];
     [_reactionsModel bringToFrontInContainer:container];
 
     _replyBackgroundModel.parentOffset = itemPosition;
@@ -886,7 +883,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
         [_tapGestureRecognizer requireGestureRecognizerToFail:_boundDoubleTapRecognizer];
     
-    [self updateEmojiFallbackLabel];
+    [self layoutPlaceholderLabel];
     
     [self subscribeToCallbackButtonInProgress];
 }
@@ -906,8 +903,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     [[_contentModel boundView] removeGestureRecognizer:_replyTapRecognizer];
     _replyTapRecognizer = nil;
     
-    [_emojiFallbackLabel removeFromSuperview];
-    _emojiFallbackLabel = nil;
+    [_placeholderLabel removeFromSuperview];
+    _placeholderLabel = nil;
     
     if (_temporaryHighlightView != nil)
     {
@@ -1154,8 +1151,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         reactionExtraHeight = TGMessageReactionsCurrentMetrics().topSpacing + reactionsLayout.size.height;
     [_reactionsModel applyLayout:reactionsLayout origin:CGPointMake(CGRectGetMinX(imageFrame), CGRectGetMaxY(imageFrame) + TGMessageReactionsCurrentMetrics().topSpacing)];
     
-    if (_emojiFallbackLabel != nil)
-        _emojiFallbackLabel.frame = CGRectMake(0.0f, 0.0f, imageFrame.size.width, imageFrame.size.height);
+    if (_placeholderLabel != nil)
+        _placeholderLabel.frame = CGRectMake(0.0f, 0.0f, imageFrame.size.width, imageFrame.size.height);
     
     if (_contentModel != nil)
     {
@@ -1236,13 +1233,17 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         CGFloat replyButtonsAvailableWidth = _incomingAppearance ? (containerSize.width - 38.0f - backgroundFrame.origin.x) : (CGRectGetMaxX(backgroundFrame) - 38.0f);
         [_replyButtonsModel layoutForContainerSize:CGSizeMake(MAX(backgroundFrame.size.width + 10.0f, MIN([_replyButtonsModel minimumWidth], replyButtonsAvailableWidth)), containerSize.height)];
         
-        _replyButtonsModel.frame = CGRectMake((_incomingAppearance ? backgroundFrame.origin.x : (CGRectGetMaxX(backgroundFrame) - _replyButtonsModel.frame.size.width)) + (_incomingAppearance ? -5.0f : 5.0f), CGRectGetMaxY(backgroundFrame) + reactionExtraHeight, _replyButtonsModel.frame.size.width, _replyButtonsModel.frame.size.height);
+        CGSize buttonsSize = _replyButtonsModel.frame.size;
+        CGFloat buttonsAnchorX = _incomingAppearance ? backgroundFrame.origin.x : (CGRectGetMaxX(backgroundFrame) - buttonsSize.width);
+        CGFloat buttonsShiftX = _incomingAppearance ? -5.0f : 5.0f;
+        _replyButtonsModel.frame = CGRectMake(buttonsAnchorX + buttonsShiftX, CGRectGetMaxY(backgroundFrame) + reactionExtraHeight, buttonsSize.width, buttonsSize.height);
         replyButtonsHeight = _replyButtonsModel.frame.size.height;
         self.avatarOffset = replyButtonsHeight;
     }
     
     CGRect frame = self.frame;
-    frame.size = CGSizeMake(containerSize.width, _imageModel.frame.size.height + topSpacing + bottomSpacing + reactionExtraHeight + replyButtonsHeight);
+    CGFloat stackedHeight = topSpacing + _imageModel.frame.size.height + bottomSpacing + reactionExtraHeight + replyButtonsHeight;
+    frame.size = CGSizeMake(containerSize.width, stackedHeight);
     self.frame = frame;
     
     [super layoutForContainerSize:containerSize];

@@ -8,6 +8,15 @@
 
 @implementation TGNotificationBackgroundView
 
+- (UIView *)og_compat_fillingSubviewIn:(UIView *)container
+{
+    UIView *filler = [[UIView alloc] initWithFrame:CGRectZero];
+    filler.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    filler.frame = self.bounds;
+    [container addSubview:filler];
+    return filler;
+}
+
 - (instancetype)initWithFrame:(CGRect)frame
 {
     self = [super initWithFrame:frame];
@@ -18,18 +27,8 @@
         #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
         if (iosMajorVersion() >= 8)
         {
-            id blurEffect = nil;
-            
-            _blurEffectView = [[UIView alloc] initWithFrame:CGRectZero];
-            _blurEffectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            _blurEffectView.frame = self.bounds;
-            [self addSubview:_blurEffectView];
-            
-            _vibrantEffectView = [[UIView alloc] initWithFrame:CGRectZero];
-            _vibrantEffectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            _vibrantEffectView.frame = self.bounds;
-            [_blurEffectView addSubview:_vibrantEffectView];
-            
+            _blurEffectView = [self og_compat_fillingSubviewIn:self];
+            _vibrantEffectView = [self og_compat_fillingSubviewIn:_blurEffectView];
             backgroundAlpha = 0.4f;
         }
         #endif

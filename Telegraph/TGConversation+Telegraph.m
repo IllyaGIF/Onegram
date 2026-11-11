@@ -16,11 +16,11 @@
 #import "TGChannelAdminRights+Telegraph.h"
 #import "TGChannelBannedRights+Telegraph.h"
 
-static NSString *modernPeerPhotoUrl(int32_t dcId, int32_t peerType, int64_t peerId, int64_t accessHash, int64_t photoId, bool big)
+static NSString *OGCompatPeerPhotoLocator(int32_t dcId, int32_t peerType, int64_t peerId, int64_t accessHash, int64_t photoId, bool big)
 {
-    if (dcId == 0 || peerId == 0 || photoId == 0)
-        return nil;
-    return [[NSString alloc] initWithFormat:@"peerphoto:%d:%d:%lld:%lld:%lld:%d", dcId, peerType, peerId, accessHash, photoId, big ? 1 : 0];
+    if (dcId != 0 && peerId != 0 && photoId != 0)
+        return [[NSString alloc] initWithFormat:@"peerphoto:%d:%d:%lld:%lld:%lld:%d", dcId, peerType, peerId, accessHash, photoId, big ? 1 : 0];
+    return nil;
 }
 
 static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
@@ -30,6 +30,22 @@ static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
     UIImage *image = objc_getAssociatedObject(photo, NSSelectorFromString(@"onegramStrippedAvatar"));
     if (image != nil)
         [TGRemoteImageView cacheStrippedPlaceholderImage:image forUrl:url];
+}
+
+static void OGCompatApplyChatPhoto(TGConversation *conversation, TLChatPhoto$chatPhoto *photo, int32_t peerType, int64_t peerId, int64_t accessHash)
+{
+    conversation.chatPhotoMedium = nil;
+    if (photo.photo_id != 0 && photo.dc_id != 0)
+    {
+        conversation.chatPhotoSmall = OGCompatPeerPhotoLocator(photo.dc_id, peerType, peerId, accessHash, photo.photo_id, false);
+        conversation.chatPhotoBig = OGCompatPeerPhotoLocator(photo.dc_id, peerType, peerId, accessHash, photo.photo_id, true);
+        OnegramCacheStrippedConversationAvatar(photo, conversation.chatPhotoSmall);
+    }
+    else
+    {
+        conversation.chatPhotoSmall = extractFileUrl(photo.photo_small);
+        conversation.chatPhotoBig = extractFileUrl(photo.photo_big);
+    }
 }
 
 @implementation TGConversationParticipantsData (Telegraph)
@@ -111,19 +127,7 @@ static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
             if ([photo isKindOfClass:[TLChatPhoto$chatPhoto class]])
             {
                 TLChatPhoto$chatPhoto *concretePhoto = (TLChatPhoto$chatPhoto *)photo;
-                if (concretePhoto.photo_id != 0 && concretePhoto.dc_id != 0)
-                {
-                    self.chatPhotoSmall = modernPeerPhotoUrl(concretePhoto.dc_id, 2, apiChatId, 0, concretePhoto.photo_id, false);
-                    self.chatPhotoMedium = nil;
-                    self.chatPhotoBig = modernPeerPhotoUrl(concretePhoto.dc_id, 2, apiChatId, 0, concretePhoto.photo_id, true);
-                    OnegramCacheStrippedConversationAvatar(concretePhoto, self.chatPhotoSmall);
-                }
-                else
-                {
-                    self.chatPhotoSmall = extractFileUrl(concretePhoto.photo_small);
-                    self.chatPhotoMedium = nil;
-                    self.chatPhotoBig = extractFileUrl(concretePhoto.photo_big);
-                }
+                OGCompatApplyChatPhoto(self, concretePhoto, 2, apiChatId, 0);
                 
                 if ([concretePhoto.photo_small isKindOfClass:[TLFileLocation$fileLocation class]])
                     self.chatPhotoFileReferenceSmall = ((TLFileLocation$fileLocation *)concretePhoto.photo_small).file_reference;
@@ -167,19 +171,7 @@ static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
             if ([channel.photo isKindOfClass:[TLChatPhoto$chatPhoto class]])
             {
                 TLChatPhoto$chatPhoto *concretePhoto = (TLChatPhoto$chatPhoto *)channel.photo;
-                if (concretePhoto.photo_id != 0 && concretePhoto.dc_id != 0)
-                {
-                    self.chatPhotoSmall = modernPeerPhotoUrl(concretePhoto.dc_id, 3, apiChannelId, channel.access_hash, concretePhoto.photo_id, false);
-                    self.chatPhotoMedium = nil;
-                    self.chatPhotoBig = modernPeerPhotoUrl(concretePhoto.dc_id, 3, apiChannelId, channel.access_hash, concretePhoto.photo_id, true);
-                    OnegramCacheStrippedConversationAvatar(concretePhoto, self.chatPhotoSmall);
-                }
-                else
-                {
-                    self.chatPhotoSmall = extractFileUrl(concretePhoto.photo_small);
-                    self.chatPhotoMedium = nil;
-                    self.chatPhotoBig = extractFileUrl(concretePhoto.photo_big);
-                }
+                OGCompatApplyChatPhoto(self, concretePhoto, 3, apiChannelId, channel.access_hash);
                 
                 if ([concretePhoto.photo_small isKindOfClass:[TLFileLocation$fileLocation class]])
                     self.chatPhotoFileReferenceSmall = ((TLFileLocation$fileLocation *)concretePhoto.photo_small).file_reference;

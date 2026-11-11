@@ -21,18 +21,27 @@ typedef enum
 @property (nonatomic, readonly) UIImage *settingsIcon;
 @property (nonatomic, readonly) UIImage *badge;
 @property (nonatomic, readonly) UIColor *badgeTextColor;
+@property (nonatomic, readonly) UIImage *customEmojiIcon;
+@property (nonatomic, readonly) UIImage *createStickerIcon;
+
+- (instancetype)palleteWithCustomEmojiIcon:(UIImage *)customEmojiIcon createStickerIcon:(UIImage *)createStickerIcon;
 
 + (instancetype)palleteWithBackgroundColor:(UIColor *)backgroundColor separatorColor:(UIColor *)separatorColor selectionColor:(UIColor *)selectionColor gifIcon:(UIImage *)gifIcon trendingIcon:(UIImage *)trendingIcon favoritesIcon:(UIImage *)favoritesIcon recentIcon:(UIImage *)recentIcon settingsIcon:(UIImage *)settingsIcon badge:(UIImage *)badge badgeTextColor:(UIColor *)badgeTextColor;
 
 @end
 
+UIImage *TGStickerKeyboardCreateStickerIcon(UIColor *color);
+
 @interface TGStickerKeyboardTabPanel : UIView
 
 @property (nonatomic, copy) void (^currentStickerPackIndexChanged)(NSUInteger);
 @property (nonatomic, copy) void (^navigateToGifs)();
+@property (nonatomic, copy) void (^navigateToCustomEmoji)(void);
+@property (nonatomic) bool showCustomEmoji;
 @property (nonatomic, copy) void (^navigateToTrendingFirst)();
 @property (nonatomic, copy) void (^navigateToTrendingLast)();
 @property (nonatomic, copy) void (^openSettings)();
+@property (nonatomic, copy) void (^openStickerCreation)(void);
 
 @property (nonatomic, copy) void (^toggleExpanded)(void);
 @property (nonatomic, copy) void (^expandInteraction)(CGFloat offset);
@@ -45,6 +54,7 @@ typedef enum
 - (void)setStickerPacks:(NSArray *)stickerPacks showRecent:(bool)showRecent showFavorite:(bool)showFavorite showGroup:(bool)showGroup showGroupLast:(bool)showGroupLast showGifs:(bool)showGifs showTrendingFirst:(bool)showTrendingFirst showTrendingLast:(bool)showTrendingLast;
 - (void)setCurrentStickerPackIndex:(NSUInteger)currentStickerPackIndex animated:(bool)animated;
 - (void)setCurrentGifsModeSelected;
+- (void)setCurrentCustomEmojiModeSelected;
 - (void)setCurrentTrendingModeSelected;
 - (void)setTrendingStickersBadge:(NSString *)badge;
 

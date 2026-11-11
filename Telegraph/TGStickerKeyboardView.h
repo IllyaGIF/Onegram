@@ -4,6 +4,7 @@
 
 @class TGViewController;
 @class TGDocumentMediaAttachment;
+@class TGCustomEmojiItem;
 
 @interface TGStickerKeyboardView : UIView <TGModernConversationKeyboardView>
 
@@ -17,6 +18,7 @@
 @property (nonatomic, weak) TGViewController *parentViewController;
 @property (nonatomic, copy) void (^stickerSelected)(TGDocumentMediaAttachment *);
 @property (nonatomic, copy) void (^gifSelected)(TGDocumentMediaAttachment *);
+@property (nonatomic, copy) void (^customEmojiSelected)(TGCustomEmojiItem *item, UIImage *image);
 @property (nonatomic, copy) void (^gifTabActive)(bool active);
 
 @property (nonatomic, copy) void (^requestedExpand)(bool expand);

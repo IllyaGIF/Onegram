@@ -26,13 +26,14 @@ typedef enum {
 
 @end
 
-static NSString *TGModernCacheHexString(NSData *data)
+static NSString *OGModernCacheKeyName(NSData *key)
 {
-    const unsigned char *bytes = data.bytes;
-    NSMutableString *string = [[NSMutableString alloc] initWithCapacity:data.length * 2];
-    for (NSUInteger i = 0; i < data.length; i++)
-        [string appendFormat:@"%02x", bytes[i]];
-    return string;
+    NSUInteger size = key.length;
+    const unsigned char *raw = (const unsigned char *)key.bytes;
+    NSMutableString *name = [[NSMutableString alloc] initWithCapacity:size * 2];
+    while (size-- != 0)
+        [name appendFormat:@"%02x", *raw++];
+    return name;
 }
 
 @implementation TGModernCache
@@ -154,7 +155,7 @@ static NSString *TGModernCacheHexString(NSData *data)
 
 - (NSString *)_filePathForKey:(NSData *)key
 {
-    return [[_path stringByAppendingPathComponent:@"store"] stringByAppendingPathComponent:TGModernCacheHexString(key)];
+    return [[_path stringByAppendingPathComponent:@"store"] stringByAppendingPathComponent:OGModernCacheKeyName(key)];
 }
 
 - (void)_dumpState:(id<PSKeyValueReader, PSKeyValueWriter>)readerWriter

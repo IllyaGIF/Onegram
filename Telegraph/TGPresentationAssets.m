@@ -10,24 +10,67 @@
 #include <stdlib.h>
 #include <math.h>
 
-static bool TGClassicIOS6StyleEnabled(void)
+static bool OGCompatClassicStyleActive(void)
 {
     return (TGCurrentInterfaceStyle() != 0);
 }
 
 
-static UIImage *TGClassicIOS6ResourceImage(NSString *name)
+static UIImage *OGCompatClassicAsset(NSString *name)
 {
-    CGFloat scale = [UIScreen mainScreen].scale;
-    NSString *resourceName = scale > 1.5f ? [name stringByAppendingString:@"@2x"] : name;
-    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
-    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
-    if (image != nil && scale > 1.5f && image.CGImage != NULL)
+    bool retina = [UIScreen mainScreen].scale > 1.5f;
+    NSString *path = [[NSBundle mainBundle] pathForResource:(retina ? [name stringByAppendingString:@"@2x"] : name) ofType:@"png" inDirectory:@"ClassicIOS6"];
+    if (path.length == 0)
+        return nil;
+
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (retina && image.CGImage != NULL)
         image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
     return image;
 }
 
-static UIImage *TGBrandedIOS6DeliveryTagImage(NSString *timeText, bool incoming, bool read)
+static UIImage *OGCompatClassicTabIcon(NSString *name, UIColor *color)
+{
+    if (!OGCompatClassicStyleActive())
+        return nil;
+
+    UIImage *base = OGCompatClassicAsset(name);
+    return base == nil ? nil : [TGPresentation classicIOS6ThemedImage:base tintColor:color alpha:0.55f];
+}
+
+static void OGCompatDrawShadowedText(CGContextRef context, NSString *text, UIFont *font, UIColor *textColor, CGFloat shadowAlpha, CGPoint point)
+{
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, shadowAlpha).CGColor);
+    [textColor set];
+    [text drawAtPoint:point withFont:font];
+    CGContextRestoreGState(context);
+}
+
+static void OGCompatDrawTicks(CGContextRef context, UIColor *color, CGFloat lineWidth, CGFloat right, CGFloat y, bool doubled, CGFloat doubledShift)
+{
+    CGContextSaveGState(context);
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+
+    CGFloat shift = doubled ? doubledShift : 0.0f;
+    CGContextMoveToPoint(context, right - 8.0f + shift, y);
+    CGContextAddLineToPoint(context, right - 5.0f + shift, y + 2.5f);
+    CGContextAddLineToPoint(context, right + shift, y - 3.5f);
+    CGContextStrokePath(context);
+    if (doubled)
+    {
+        CGContextMoveToPoint(context, right - 5.0f, y);
+        CGContextAddLineToPoint(context, right - 2.0f, y + 2.5f);
+        CGContextAddLineToPoint(context, right + 3.0f, y - 3.5f);
+        CGContextStrokePath(context);
+    }
+    CGContextRestoreGState(context);
+}
+
+static UIImage *OGCompatBubbleDeliveryTag(NSString *timeText, bool incoming, bool read)
 {
     if (timeText.length == 0)
         return nil;
@@ -115,37 +158,10 @@ static UIImage *TGBrandedIOS6DeliveryTagImage(NSString *timeText, bool incoming,
     CGContextStrokePath(context);
     CGContextRestoreGState(context);
 
-    CGFloat textX = bodyLeft + textPadding;
-    CGFloat textY = 2.5f;
-    CGContextSaveGState(context);
-    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, 0.90f).CGColor);
-    [UIColorRGB(0x454545) set];
-    [timeText drawAtPoint:CGPointMake(textX, textY) withFont:font];
-    CGContextRestoreGState(context);
+    OGCompatDrawShadowedText(context, timeText, font, UIColorRGB(0x454545), 0.90f, CGPointMake(bodyLeft + textPadding, 2.5f));
 
     if (!incoming)
-    {
-        CGFloat checkRight = bodyRight - 4.0f;
-        CGFloat checkY = 9.5f;
-        CGContextSaveGState(context);
-        CGContextSetStrokeColorWithColor(context, UIColorRGB(0x39b51a).CGColor);
-        CGContextSetLineWidth(context, 1.7f);
-        CGContextSetLineCap(context, kCGLineCapRound);
-        CGContextSetLineJoin(context, kCGLineJoinRound);
-        CGFloat firstOffset = read ? -2.5f : 0.0f;
-        CGContextMoveToPoint(context, checkRight - 8.0f + firstOffset, checkY);
-        CGContextAddLineToPoint(context, checkRight - 5.0f + firstOffset, checkY + 2.5f);
-        CGContextAddLineToPoint(context, checkRight + firstOffset, checkY - 3.5f);
-        CGContextStrokePath(context);
-        if (read)
-        {
-            CGContextMoveToPoint(context, checkRight - 5.0f, checkY);
-            CGContextAddLineToPoint(context, checkRight - 2.0f, checkY + 2.5f);
-            CGContextAddLineToPoint(context, checkRight + 3.0f, checkY - 3.5f);
-            CGContextStrokePath(context);
-        }
-        CGContextRestoreGState(context);
-    }
+        OGCompatDrawTicks(context, UIColorRGB(0x39b51a), 1.7f, bodyRight - 4.0f, 9.5f, read, -2.5f);
 
     CGPathRelease(path);
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
@@ -153,44 +169,57 @@ static UIImage *TGBrandedIOS6DeliveryTagImage(NSString *timeText, bool incoming,
     return image;
 }
 
+static UIImage *OGCompatBitmapImage(CGSize size, void (^draw)(CGContextRef context))
+{
+    CGFloat scale = MAX([UIScreen mainScreen].scale, 1.0f);
+    size_t pixelsWide = (size_t)(size.width * scale + 0.5f);
+    size_t pixelsHigh = (size_t)(size.height * scale + 0.5f);
+    size_t rowBytes = pixelsWide * 4;
+
+    void *pixels = calloc(pixelsHigh, rowBytes);
+    if (pixels == NULL)
+        return nil;
+
+    CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = rgb == NULL ? NULL : CGBitmapContextCreate(pixels, pixelsWide, pixelsHigh, 8, rowBytes, rgb, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+
+    UIImage *result = nil;
+    if (context != NULL)
+    {
+        CGContextTranslateCTM(context, 0.0f, (CGFloat)pixelsHigh);
+        CGContextScaleCTM(context, scale, -scale);
+        CGContextSetShouldAntialias(context, true);
+        draw(context);
+
+        CGImageRef cgImage = CGBitmapContextCreateImage(context);
+        if (cgImage != NULL)
+        {
+            result = [UIImage imageWithCGImage:cgImage scale:scale orientation:UIImageOrientationUp];
+            CGImageRelease(cgImage);
+        }
+        CGContextRelease(context);
+    }
+    if (rgb != NULL)
+        CGColorSpaceRelease(rgb);
+    free(pixels);
+    return result;
+}
+
 static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bool active)
 {
-    CGFloat scale = [UIScreen mainScreen].scale;
-    if (scale < 1.0f)
-        scale = 1.0f;
-
-    size_t pixelWidth = (size_t)(size.width * scale + 0.5f);
-    size_t pixelHeight = (size_t)(size.height * scale + 0.5f);
-    size_t bytesPerRow = pixelWidth * 4;
-    void *bitmapData = calloc(pixelHeight, bytesPerRow);
-    if (bitmapData == NULL)
-        return nil;
-
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    if (colorSpace == NULL)
+    return OGCompatBitmapImage(size, ^(CGContextRef context)
     {
-        free(bitmapData);
-        return nil;
-    }
-    CGContextRef context = CGBitmapContextCreate(bitmapData, pixelWidth, pixelHeight, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-    if (context == NULL)
-    {
-        CGColorSpaceRelease(colorSpace);
-        free(bitmapData);
-        return nil;
-    }
+        if (!top)
+        {
+            CGContextSetFillColorWithColor(context, color.CGColor);
+            CGContextAddPath(context, [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.0f, 0.0f, 10.0f, 7.0f) cornerRadius:1.33f].CGPath);
+            CGContextFillPath(context);
+            return;
+        }
 
-    CGContextTranslateCTM(context, 0.0f, (CGFloat)pixelHeight);
-    CGContextScaleCTM(context, scale, -scale);
-    CGContextSetShouldAntialias(context, true);
-
-    if (top)
-    {
         CGContextSetLineWidth(context, 1.5f);
         CGContextSetStrokeColorWithColor(context, color.CGColor);
-
-        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.75f, 0.75f, 5.5f, 12.0f) cornerRadius:2.5f];
-        CGContextAddPath(context, path.CGPath);
+        CGContextAddPath(context, [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.75f, 0.75f, 5.5f, 12.0f) cornerRadius:2.5f].CGPath);
         CGContextStrokePath(context);
 
         if (!active)
@@ -198,24 +227,7 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
             CGContextSetBlendMode(context, kCGBlendModeClear);
             CGContextFillRect(context, CGRectMake(4.0f, 5.33f, 3.0f, 2.0f));
         }
-    }
-    else
-    {
-        CGContextSetFillColorWithColor(context, color.CGColor);
-        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.0f, 0.0f, 10.0f, 7.0f) cornerRadius:1.33f];
-        CGContextAddPath(context, path.CGPath);
-        CGContextFillPath(context);
-    }
-
-    CGImageRef imageRef = CGBitmapContextCreateImage(context);
-    UIImage *image = imageRef == NULL ? nil : [UIImage imageWithCGImage:imageRef scale:scale orientation:UIImageOrientationUp];
-    if (imageRef != NULL)
-        CGImageRelease(imageRef);
-    CGContextRelease(context);
-    CGColorSpaceRelease(colorSpace);
-    free(bitmapData);
-
-    return image;
+    });
 }
 
 static const CGFloat TGInputPanelIconLineWidth = 5.0f / 3.0f;
@@ -247,12 +259,9 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
 
 + (UIImage *)tabBarContactsIcon:(UIColor *)color
 {
-    if (TGClassicIOS6StyleEnabled())
-    {
-        UIImage *classicImage = TGClassicIOS6ResourceImage(@"TabIconContacts");
-        if (classicImage != nil)
-            return [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.55f];
-    }
+    UIImage *classicIcon = OGCompatClassicTabIcon(@"TabIconContacts", color);
+    if (classicIcon != nil)
+        return classicIcon;
 
     NSString *code = @"M46.5,13 C27.428409,13 12,28.428409 12,47.5 C12,57.512776 16.2627225,66.5135605 23.0625,72.8125 C28.754193,68.7098485 37.4142195,68.0640625 39.1875,63.296875 C39.4065,60.878875 39.328125,59.17825 39.328125,56.96875 C38.230125,56.39425 36.189375,52.74925 35.859375,49.65625 C34.998375,49.58575 33.633375,48.754 33.234375,45.4375 C33.021375,43.657 33.88875,42.65875 34.40625,42.34375 C31.49475,31.13875 33.078375,21.353875 46.359375,21.109375 C49.678875,21.109375 52.2525,21.982375 53.25,23.734375 C62.943,25.081375 59.99475,38.13025 58.59375,42.34375 C59.11275,42.65875 59.980125,43.657 59.765625,45.4375 C59.368125,48.754 58.001625,49.58575 57.140625,49.65625 C56.809125,52.75075 54.860625,56.39425 53.765625,56.96875 C53.765625,59.17825 53.68725,60.878875 53.90625,63.296875 C55.6750635,68.0575585 64.270464,68.728288 69.9375,72.8125 C76.7372775,66.5135605 81,57.512776 81,47.5 C81,28.428409 65.571591,13 46.5,13 Z";
     
@@ -309,12 +318,9 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
 
 + (UIImage *)tabBarChatsIcon:(UIColor *)color downArrow:(NSNumber *)downArrow
 {
-    if (TGClassicIOS6StyleEnabled() && downArrow == nil)
-    {
-        UIImage *classicImage = TGClassicIOS6ResourceImage(@"TabIconMessages");
-        if (classicImage != nil)
-            return [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.55f];
-    }
+    UIImage *classicIcon = downArrow == nil ? OGCompatClassicTabIcon(@"TabIconMessages", color) : nil;
+    if (classicIcon != nil)
+        return classicIcon;
 
     NSString *code = @"M36.3991203,72.9863676 C36.7653912,72.9954488 37.1323771,73 37.5,73 C58.6483576,73 76,57.9116153 76,39 C76,32.2746124 73.8055889,26.0327374 70.0263925,20.7810195 C81.821834,25.5490491 90,35.9440407 90,48 C90,57.4495579 85.3853733,65.1952817 77.5330155,70.69422 C76.5288377,71.397437 75.6039392,75.3047404 77.8422549,78.5867691 C80.0805706,81.8687978 82.8711876,83.3686517 81.471701,83.9301475 C80.6088976,84.2763177 75.5108064,84.447552 71.8312186,82.4737142 C66.5697786,79.651325 65.0988406,76.8415645 63.9666822,77.0899522 C61.2576974,77.6842845 58.4212488,78 55.5,78 C48.4361182,78 41.8680823,76.1539405 36.3991203,72.9863676 Z M37.5,69 C34.5787512,69 31.7423026,68.6842845 29.0333178,68.0899522 C27.9011594,67.8415645 26.4302214,70.651325 21.1687814,73.4737142 C17.4891936,75.447552 12.3911024,75.2763177 11.528299,74.9301475 C10.1288124,74.3686517 12.9194294,72.8687978 15.1577451,69.5867691 C17.3960608,66.3047404 16.4711623,62.397437 15.4669845,61.69422 C7.61462671,56.1952817 3,48.4495579 3,39 C3,22.4314575 18.4461761,9 37.5,9 C56.5538239,9 72,22.4314575 72,39 C72,55.5685425 56.5538239,69 37.5,69 Z";
     
@@ -374,12 +380,9 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
 
 + (UIImage *)tabBarSettingsIcon:(UIColor *)color
 {
-    if (TGClassicIOS6StyleEnabled())
-    {
-        UIImage *classicImage = TGClassicIOS6ResourceImage(@"TabIconSettings");
-        if (classicImage != nil)
-            return [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.55f];
-    }
+    UIImage *classicIcon = OGCompatClassicTabIcon(@"TabIconSettings", color);
+    if (classicIcon != nil)
+        return classicIcon;
 
     NSString *outerCode = @"M68.3275496,69.3275496 L76.5,55.1724504 L76.5,38.8275496 L68.3275496,24.6724504 L54.1724504,16.5 L37.8275496,16.5 L23.6724504,24.6724504 L15.5,38.8275496 L15.5,55.1724504 L23.6724504,69.3275496 L37.8275496,77.5 L54.1724504,77.5 L68.3275496,69.3275496 Z M69.2499195,70.2499195 L66.8327471,72.8901647 C65.9489387,73.8555369 65.7929874,75.2824598 66.4474072,76.4159481 L67.5980762,78.4089653 C68.4265033,79.8438432 67.9348779,81.6786144 66.5,82.5070416 C65.0651221,83.3354687 63.2303509,82.8438432 62.4019238,81.4089653 L61.2512548,79.4159481 C60.596835,78.2824598 59.2831079,77.7040561 58.0051668,77.9867706 L54.5100612,78.7599807 L51.0966059,79.8379139 C49.8485192,80.2320466 49,81.3898224 49,82.6986619 L49,85 C49,86.6568542 47.6568542,88 46,88 C44.3431458,88 43,86.6568542 43,85 L43,82.6986619 C43,81.3898224 42.1514808,80.2320466 40.9033941,79.8379139 L37.4899388,78.7599807 L33.9948332,77.9867706 C32.7168921,77.7040561 31.403165,78.2824598 30.7487452,79.4159481 L29.5980762,81.4089653 C28.7696491,82.8438432 26.9348779,83.3354687 25.5,82.5070416 C24.0651221,81.6786144 23.5734967,79.8438432 24.4019238,78.4089653 L25.5525928,76.4159481 C26.2070126,75.2824598 26.0510613,73.8555369 25.1672529,72.8901647 L22.7500805,70.2499195 L20.1098353,67.8327471 C19.1444631,66.9489387 17.7175402,66.7929874 16.5840519,67.4474072 L14.5910347,68.5980762 C13.1561568,69.4265033 11.3213856,68.9348779 10.4929584,67.5 C9.66453132,66.0651221 10.1561568,64.2303509 11.5910347,63.4019238 L13.5840519,62.2512548 C14.7175402,61.596835 15.2959439,60.2831079 15.0132294,59.0051668 L14.2400193,55.5100612 L13.1620861,52.0966059 C12.7679534,50.8485192 11.6101776,50 10.3013381,50 L8,50 L8,50 C6.34314575,50 5,48.6568542 5,47 C5,45.3431458 6.34314575,44 8,44 L10.3013381,44 C11.6101776,44 12.7679534,43.1514808 13.1620861,41.9033941 L14.2400193,38.4899388 L15.0132294,34.9948332 C15.2959439,33.7168921 14.7175402,32.403165 13.5840519,31.7487452 L11.5910347,30.5980762 L11.5910347,30.5980762 C10.1561568,29.7696491 9.66453132,27.9348779 10.4929584,26.5 C11.3213856,25.0651221 13.1561568,24.5734967 14.5910347,25.4019238 L16.5840519,26.5525928 C17.7175402,27.2070126 19.1444631,27.0510613 20.1098353,26.1672529 L22.7500805,23.7500805 L25.1672529,21.1098353 C26.0510613,20.1444631 26.2070126,18.7175402 25.5525928,17.5840519 L24.4019238,15.5910347 L24.4019238,15.5910347 C23.5734967,14.1561568 24.0651221,12.3213856 25.5,11.4929584 C26.9348779,10.6645313 28.7696491,11.1561568 29.5980762,12.5910347 L30.7487452,14.5840519 C31.403165,15.7175402 32.7168921,16.2959439 33.9948332,16.0132294 L37.4899388,15.2400193 L40.9033941,14.1620861 C42.1514808,13.7679534 43,12.6101776 43,11.3013381 L43,9 L43,9 C43,7.34314575 44.3431458,6 46,6 C47.6568542,6 49,7.34314575 49,9 L49,11.3013381 C49,12.6101776 49.8485192,13.7679534 51.0966059,14.1620861 L54.5100612,15.2400193 L58.0051668,16.0132294 C59.2831079,16.2959439 60.596835,15.7175402 61.2512548,14.5840519 L62.4019238,12.5910347 L62.4019238,12.5910347 C63.2303509,11.1561568 65.0651221,10.6645313 66.5,11.4929584 C67.9348779,12.3213856 68.4265033,14.1561568 67.5980762,15.5910347 L66.4474072,17.5840519 C65.7929874,18.7175402 65.9489387,20.1444631 66.8327471,21.1098353 L69.2499195,23.7500805 L71.8901647,26.1672529 C72.8555369,27.0510613 74.2824598,27.2070126 75.4159481,26.5525928 L77.4089653,25.4019238 C78.8438432,24.5734967 80.6786144,25.0651221 81.5070416,26.5 C82.3354687,27.9348779 81.8438432,29.7696491 80.4089653,30.5980762 L78.4159481,31.7487452 C77.2824598,32.403165 76.7040561,33.7168921 76.9867706,34.9948332 L77.7599807,38.4899388 L78.8379139,41.9033941 C79.2320466,43.1514808 80.3898224,44 81.6986619,44 L84,44 C85.6568542,44 87,45.3431458 87,47 C87,48.6568542 85.6568542,50 84,50 L81.6986619,50 C80.3898224,50 79.2320466,50.8485192 78.8379139,52.0966059 L77.7599807,55.5100612 L76.9867706,59.0051668 C76.7040561,60.2831079 77.2824598,61.596835 78.4159481,62.2512548 L80.4089653,63.4019238 L80.4089653,63.4019238 C81.8438432,64.2303509 82.3354687,66.0651221 81.5070416,67.5 C80.6786144,68.9348779 78.8438432,69.4265033 77.4089653,68.5980762 L75.4159481,67.4474072 C74.2824598,66.7929874 72.8555369,66.9489387 71.8901647,67.8327471 L69.2499195,70.2499195 Z";
     
@@ -1222,14 +1225,14 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
     UIImage *image = [cache objectForKey:key];
     if (image == nil)
     {
-        image = TGBrandedIOS6DeliveryTagImage(timeText, incoming, read);
+        image = OGCompatBubbleDeliveryTag(timeText, incoming, read);
         if (image != nil)
             [cache setObject:image forKey:key];
     }
     return image;
 }
 
-static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incoming, bool read)
+static UIImage *OGCompatFlatDeliveryTag(NSString *timeText, bool incoming, bool read)
 {
     if (timeText.length == 0)
         return nil;
@@ -1246,35 +1249,10 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, height), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
 
-    CGContextSaveGState(context);
-    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, 0.9f).CGColor);
-    [UIColorRGB(0x5f5f5f) set];
-    [timeText drawAtPoint:CGPointMake(0.0f, 1.0f) withFont:font];
-    CGContextRestoreGState(context);
+    OGCompatDrawShadowedText(context, timeText, font, UIColorRGB(0x5f5f5f), 0.9f, CGPointMake(0.0f, 1.0f));
 
     if (!incoming)
-    {
-        CGFloat checkRight = width - 1.0f;
-        CGFloat checkY = 8.0f;
-        CGContextSaveGState(context);
-        CGContextSetStrokeColorWithColor(context, UIColorRGB(0x666666).CGColor);
-        CGContextSetLineWidth(context, 1.5f);
-        CGContextSetLineCap(context, kCGLineCapRound);
-        CGContextSetLineJoin(context, kCGLineJoinRound);
-        CGFloat firstOffset = read ? -3.0f : 0.0f;
-        CGContextMoveToPoint(context, checkRight - 8.0f + firstOffset, checkY);
-        CGContextAddLineToPoint(context, checkRight - 5.0f + firstOffset, checkY + 2.5f);
-        CGContextAddLineToPoint(context, checkRight + firstOffset, checkY - 3.5f);
-        CGContextStrokePath(context);
-        if (read)
-        {
-            CGContextMoveToPoint(context, checkRight - 5.0f, checkY);
-            CGContextAddLineToPoint(context, checkRight - 2.0f, checkY + 2.5f);
-            CGContextAddLineToPoint(context, checkRight + 3.0f, checkY - 3.5f);
-            CGContextStrokePath(context);
-        }
-        CGContextRestoreGState(context);
-    }
+        OGCompatDrawTicks(context, UIColorRGB(0x666666), 1.5f, width - 1.0f, 8.0f, read, -3.0f);
 
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -1283,7 +1261,7 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
 
 + (UIImage *)brandedIOS6FlatDeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read
 {
-    return TGBrandedIOS6FlatDeliveryTagImage(timeText, incoming, read);
+    return OGCompatFlatDeliveryTag(timeText, incoming, read);
 }
 
 + (CGFloat)brandedIOS6DeliveryTagBottomInset
@@ -1310,9 +1288,9 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
 
 + (UIImage *)chatBubbleFull:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing
 {
-    if (TGClassicIOS6StyleEnabled())
+    if (OGCompatClassicStyleActive())
     {
-        UIImage *classicImage = TGClassicIOS6ResourceImage(outgoing ? @"bubbleMine" : @"bubbleSomeone");
+        UIImage *classicImage = OGCompatClassicAsset(outgoing ? @"bubbleMine" : @"bubbleSomeone");
         if (classicImage != nil)
         {
             UIImage *adaptedImage = classicImage;
@@ -1330,8 +1308,6 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(40, 33), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
 
-    UIColor *effectiveBorderColor = borderColor;
-
     CGContextSaveGState(context);
     CGContextScaleCTM(context, 0.3333f, 0.3333f);
     if (!outgoing)
@@ -1346,8 +1322,8 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     CGContextSetLineWidth(context, TGScreenPixel * 2 * 3.0f);
 
     CGContextSetFillColorWithColor(context, color.CGColor);
-    CGContextSetStrokeColorWithColor(context, effectiveBorderColor.CGColor);
-    if (effectiveBorderColor != nil)
+    CGContextSetStrokeColorWithColor(context, borderColor.CGColor);
+    if (borderColor != nil)
         TGDrawSvgPath(context, strokeCode);
     TGDrawSvgPath(context, fillCode);
     CGContextRestoreGState(context);
@@ -1414,19 +1390,17 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
 
 + (UIImage *)chatBubblePartial:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing
 {
-    if (TGClassicIOS6StyleEnabled())
+    if (OGCompatClassicStyleActive())
         return [self chatBubbleFull:color borderColor:borderColor outgoing:outgoing];
 
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(40, 33), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
 
-    UIColor *effectiveBorderColor = borderColor;
-
     CGContextSetFillColorWithColor(context, color.CGColor);
-    CGContextSetStrokeColorWithColor(context, effectiveBorderColor.CGColor);
+    CGContextSetStrokeColorWithColor(context, borderColor.CGColor);
     CGPoint origin = CGPointMake(outgoing ? 1.0f : 6.0f, 1.0f);
     CGContextSetLineWidth(context, TGScreenPixel * 2);
-    if (effectiveBorderColor != nil)
+    if (borderColor != nil)
         CGContextStrokeEllipseInRect(context, CGRectMake(origin.x, origin.y, 33.0f, 31.0f));
     CGContextFillEllipseInRect(context, CGRectMake(origin.x, origin.y, 33.0f, 31.0f));
 
@@ -1438,7 +1412,7 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
 
 + (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail radius:(NSInteger)radius
 {
-    if (radius >= 0 && !TGClassicIOS6StyleEnabled())
+    if (radius >= 0 && !OGCompatClassicStyleActive())
         return [self customRadiusChatBubble:color borderColor:borderColor outgoing:outgoing hasTail:hasTail radius:MIN([self defaultChatBubbleRadius], (CGFloat)radius)];
     if (hasTail)
         return [self chatBubbleFull:color borderColor:borderColor outgoing:outgoing];
@@ -2017,9 +1991,9 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
 
 + (UIImage *)inputPanelFieldBackground:(UIColor *)color borderColor:(UIColor *)borderColor
 {
-    if (TGClassicIOS6StyleEnabled())
+    if (OGCompatClassicStyleActive())
     {
-        UIImage *classicImage = TGClassicIOS6ResourceImage(@"textbg");
+        UIImage *classicImage = OGCompatClassicAsset(@"textbg");
         if (classicImage != nil)
         {
             UIImage *adaptedImage = [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.82f];
@@ -2032,8 +2006,7 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
     CGContextRef context = UIGraphicsGetCurrentContext();
     
     CGContextSetFillColorWithColor(context, color.CGColor);
-    UIColor *effectiveBorderColor = borderColor;
-    CGContextSetStrokeColorWithColor(context, effectiveBorderColor.CGColor);
+    CGContextSetStrokeColorWithColor(context, borderColor.CGColor);
     
     CGContextSetLineWidth(context, 1.0f);
     CGRect rect = CGRectMake(0.5f, 0.5f, 32.0f, 32.0f);
@@ -2198,38 +2171,32 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
 
 + (UIImage *)inputPanelStickersIcon:(UIColor *)color
 {
-    UIImage *icon = TGTintedImage(TGImageNamed(@"ConversationInputFieldStickerIcon.png"), color);
-    return icon;
+    return TGTintedImage(TGImageNamed(@"ConversationInputFieldStickerIcon.png"), color);
 }
 
 + (UIImage *)inputPanelKeyboardIcon:(UIColor *)color
 {
-    UIImage *icon = TGTintedImage(TGImageNamed(@"ConversationInputFieldKeyboardIcon.png"), color);
-    return icon;
+    return TGTintedImage(TGImageNamed(@"ConversationInputFieldKeyboardIcon.png"), color);
 }
 
 + (UIImage *)inputPanelCommandsIcon:(UIColor *)color
 {
-    UIImage *icon = TGTintedImage(TGImageNamed(@"ConversationInputFieldCommandIcon.png"), color);
-    return icon;
+    return TGTintedImage(TGImageNamed(@"ConversationInputFieldCommandIcon.png"), color);
 }
 
 + (UIImage *)inputPanelBotKeyboardIcon:(UIColor *)color
 {
-    UIImage *icon = TGTintedImage(TGImageNamed(@"ConversationInputFieldActionsIcon.png"), color);
-    return icon;
+    return TGTintedImage(TGImageNamed(@"ConversationInputFieldActionsIcon.png"), color);
 }
 
 + (UIImage *)inputPanelBroadcastIcon:(UIColor *)color active:(bool)active
 {
-    UIImage *icon = TGTintedImage(active ? TGImageNamed(@"ConversationInputFieldBroadcastIconActive.png") : TGImageNamed(@"ConversationInputFieldBroadcastIconInactive.png"), color);
-    return icon;
+    return TGTintedImage(active ? TGImageNamed(@"ConversationInputFieldBroadcastIconActive.png") : TGImageNamed(@"ConversationInputFieldBroadcastIconInactive.png"), color);
 }
 
 + (UIImage *)inputPanelTimerIcon:(UIColor *)color
 {
-    UIImage *icon = TGTintedImage(TGImageNamed(@"ModernConversationSecretAccessoryTimer.png"), color);
-    return icon;
+    return TGTintedImage(TGImageNamed(@"ModernConversationSecretAccessoryTimer.png"), color);
 }
 
 + (UIImage *)inputPanelClearIcon:(UIColor *)backgroundColor color:(UIColor *)color
@@ -2329,6 +2296,25 @@ static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, 
 + (UIImage *)stickersSettingsIcon:(UIColor *)color
 {
     return TGTintedImage(TGComponentsImageNamed(@"StickerKeyboardSettingsIcon.png"), color);
+}
+
++ (UIImage *)stickersCustomEmojiIcon:(UIColor *)color
+{
+    CGFloat side = 24.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, 1.6f);
+    CGContextStrokeEllipseInRect(context, CGRectMake(2.5f, 2.5f, side - 5.0f, side - 5.0f));
+    CGContextFillEllipseInRect(context, CGRectMake(8.0f, 8.5f, 2.4f, 3.0f));
+    CGContextFillEllipseInRect(context, CGRectMake(13.6f, 8.5f, 2.4f, 3.0f));
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextAddArc(context, side / 2.0f, 12.5f, 5.0f, (CGFloat)(M_PI * 0.15), (CGFloat)(M_PI * 0.85), 0);
+    CGContextStrokePath(context);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
 }
 
 + (UIImage *)stickersHollowButton:(UIColor *)color radius:(CGFloat)radius

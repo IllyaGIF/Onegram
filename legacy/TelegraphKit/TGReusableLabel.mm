@@ -2089,7 +2089,8 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
             CFIndex emojiGlyphCount = CTRunGetGlyphCount(run);
             if (emojiValue == NULL || emojiGlyphCount == 0)
                 continue;
-            if (TGReusableLabelRunDecorationForRun(run).coverColor != nil)
+            TGReusableLabelRunDecoration *runDecoration = TGReusableLabelRunDecorationForRun(run);
+            if (runDecoration.coverColor != nil || runDecoration.drawContent != nil)
                 continue;
 
             CGPoint runPosition = CGPointZero;

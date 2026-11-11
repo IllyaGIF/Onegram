@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTValueInterpolator.m
 //  Pods
@@ -12,13 +12,13 @@
 
 @interface LOTValueInterpolator ()
 
-@property (nonatomic, strong) NSArray *keyframes;
+@property (nonatomic, strong) OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *keyframes;
 
 @end
 
 @implementation LOTValueInterpolator
 
-- (instancetype)initWithKeyframes:(NSArray *)keyframes {
+- (instancetype)initWithKeyframes:(OG_COMPAT_GENERIC(NSArray, LOTKeyframe *) *)keyframes {
   self = [super init];
   if (self) {
     _keyframes = keyframes;
@@ -63,7 +63,7 @@
   if (self.leadingKeyframe == nil &&
       self.trailingKeyframe == nil) {
     // Set Initial Keyframes
-    LOTKeyframe *first = [_keyframes objectAtIndex:0];
+    LOTKeyframe *first = _keyframes.firstObject;
     if (first.keyframeTime.floatValue > 0) {
       self.trailingKeyframe = first;
     } else {
@@ -161,7 +161,7 @@
   return progession;
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate {
   NSAssert((NO), @"Interpolator does not support value callbacks");
 }
 

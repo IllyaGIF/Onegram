@@ -73,20 +73,25 @@
 #import "TGMessage+Telegraph.h"
 #import "TGUserDataRequestBuilder.h"
 #import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesFeeTitlePanel.h"
 
-@interface TGIOS6PrivatePinnedMessagesFilter : TLMessagesFilter
+static const int32_t OGPrivatePinnedFilterSignature = 0x1bb00451;
+static const int32_t OGPrivatePinnedFilterNoName = -1;
+
+@interface OGPrivatePinnedSearchFilter : TLMessagesFilter
 @end
 
-@implementation TGIOS6PrivatePinnedMessagesFilter
+@implementation OGPrivatePinnedSearchFilter
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x1bb00451;
+    return OGPrivatePinnedFilterSignature;
 }
 
 - (int32_t)TLconstructorName
 {
-    return -1;
+    return OGPrivatePinnedFilterNoName;
 }
 
 - (void)TLserialize:(NSOutputStream *)__unused os
@@ -94,6 +99,91 @@
 }
 
 @end
+
+static TGMessage *OGPrivatePinnedTargetOfServiceMessage(TGMessage *serviceMessage)
+{
+    TGMessage *quoted = nil;
+    bool pinsSomething = false;
+    for (id media in serviceMessage.mediaAttachments)
+    {
+        if ([media isKindOfClass:[TGReplyMessageMediaAttachment class]])
+            quoted = ((TGReplyMessageMediaAttachment *)media).replyMessage;
+        else if ([media isKindOfClass:[TGActionMediaAttachment class]] && ((TGActionMediaAttachment *)media).actionType == TGMessageActionPinnedMessage)
+            pinsSomething = true;
+    }
+    return pinsSomething ? quoted : nil;
+}
+
+static NSComparisonResult OGPrivatePinnedNewestFirst(TGMessage *left, TGMessage *right)
+{
+    int32_t leftDate = [left actualDate];
+    int32_t rightDate = [right actualDate];
+    if (leftDate != rightDate)
+        return leftDate > rightDate ? NSOrderedAscending : NSOrderedDescending;
+    return left.mid > right.mid ? NSOrderedAscending : NSOrderedDescending;
+}
+
+static void OGPrivatePinnedAppendDistinct(NSMutableArray *destination, NSMutableSet *knownIds, NSArray *source)
+{
+    for (TGMessage *candidate in source)
+    {
+        if (candidate.mid == 0 || [knownIds containsObject:@(candidate.mid)])
+            continue;
+        [knownIds addObject:@(candidate.mid)];
+        [destination addObject:candidate];
+    }
+}
+
+static NSString *OGPrivatePinnedMenuLabel(TGMessage *message)
+{
+    NSString *raw = message.text.length != 0 ? message.text : message.caption;
+    NSString *label = [[raw componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" "];
+    while ([label rangeOfString:@"  "].location != NSNotFound)
+        label = [label stringByReplacingOccurrencesOfString:@"  " withString:@" "];
+    label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return label.length == 0 ? TGLocalized(@"Conversation.PinnedMessage") : label;
+}
+
+static NSString *OGPrivatePinnedClassicButtonTitle(NSUInteger slot, NSString *label)
+{
+    NSString *numbered = [NSString stringWithFormat:@"%d. %@", (int)slot + 1, label];
+    if (numbered.length <= 24)
+        return numbered;
+    NSRange keep = [numbered rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
+    return [[numbered substringWithRange:keep] stringByAppendingString:@"…"];
+}
+
+static NSString *OGPrivatePinnedPageTitle(NSUInteger from, NSUInteger to, bool backward)
+{
+    NSString *format = backward ? @"‹ %d–%d" : @"%d–%d ›";
+    return [NSString stringWithFormat:format, (int)from + 1, (int)to];
+}
+
+static TGMenuSheetButtonItemView *OGPrivatePinnedSheetButton(NSString *title, void (^action)(void))
+{
+    return [[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:action];
+}
+
+static NSArray *OGPrivateDecodePinnedResult(TLmessages_Messages *result)
+{
+    [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
+    NSMutableArray *decoded = [[NSMutableArray alloc] init];
+    for (TLMessage *messageDesc in result.messages)
+    {
+        TGMessage *decodedMessage = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
+        if (decodedMessage.mid != 0)
+            [decoded addObject:decodedMessage];
+    }
+    return decoded;
+}
+
+static TGMenuSheetController *OGPrivateMakeSheet(void)
+{
+    TGMenuSheetController *sheet = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
+    sheet.dismissesByOutsideTap = true;
+    sheet.narrowInLandscape = true;
+    return sheet;
+}
 
 typedef enum {
     TGPhoneSharingStatusUnknown = 0,
@@ -115,6 +205,9 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 @interface TGPrivateModernConversationCompanion () <TGModernConversationContactLinkTitlePanelDelegate>
 {
     NSString *_initialActivity;
+    SMetaDisposable *_paidMessagesPriceDisposable;
+    SMetaDisposable *_paidMessagesFeeDisposable;
+    int64_t _paidMessagesFeeStars;
     
     
     bool _isLoadingFirstMessages;
@@ -159,14 +252,14 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     SVariable *_linkPanelVariable;
     
     NSArray *_liveLocations;
-    NSArray *_pinnedMessages;
-    TGPinnedMessageTitlePanel *_pinnedMessagePanel;
-    bool _pinnedMessagePanelDismissed;
+    NSArray *_pinnedMessageList;
+    TGPinnedMessageTitlePanel *_pinnedBanner;
+    bool _pinnedBannerDismissed;
     
     bool _shouldReportSpam;
     id<SDisposable> _shouldReportSpamDisposable;
     id<SDisposable> _liveLocationDisposable;
-    id<SDisposable> _pinnedMessagesDisposable;
+    id<SDisposable> _pinnedFetchDisposable;
     id<SDisposable> _updatedPeerSettingsDisposable;
     id<SDisposable> _updatedCachedDataDisposable;
     id<SDisposable> _cachedDataDisposable;
@@ -194,7 +287,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     {
         _uid = uid;
         _initialActivity = activity;
-        _pinnedMessages = @[];
+        _pinnedMessageList = @[];
         [_linkPanelVariable set:[SSignal single:nil]];
         
         __weak TGPrivateModernConversationCompanion *weakSelf = self;
@@ -210,7 +303,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         {
             bool hasOwn = false;
             bool isUnpinned = false;
-            int32_t lastUnpinnedMessageId = [result.lastObject intValue];
+            int32_t lastUnpinnedMessageId = [[result lastObject] intValue];
             for (TGLiveLocation *liveLocation in result.firstObject)
             {
                 if (liveLocation.hasOwnSession)
@@ -259,7 +352,9 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     [_shouldReportSpamDisposable dispose];
     [_updatedPeerSettingsDisposable dispose];
     [_liveLocationDisposable dispose];
-    [_pinnedMessagesDisposable dispose];
+    [_pinnedFetchDisposable dispose];
+    [_paidMessagesPriceDisposable dispose];
+    [_paidMessagesFeeDisposable dispose];
     [_emojiStatusDisposable dispose];
 }
 
@@ -404,258 +499,179 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     });
 }
 
-- (TGMessage *)_pinnedMessageFromServiceMessage:(TGMessage *)message
+- (void)og_presentSheet:(TGMenuSheetController *)sheet anchoredAt:(UIView *)anchor
 {
-    bool isPinnedMessageAction = false;
-    TGMessage *replyMessage = nil;
-    for (id attachment in message.mediaAttachments)
+    __weak TGPrivateModernConversationCompanion *weakOwner = self;
+    __weak UIView *weakAnchor = anchor;
+    sheet.sourceRect = ^CGRect
     {
-        if ([attachment isKindOfClass:[TGActionMediaAttachment class]] && ((TGActionMediaAttachment *)attachment).actionType == TGMessageActionPinnedMessage)
-            isPinnedMessageAction = true;
-        else if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
-            replyMessage = ((TGReplyMessageMediaAttachment *)attachment).replyMessage;
-    }
-    return isPinnedMessageAction ? replyMessage : nil;
+        TGPrivateModernConversationCompanion *owner = weakOwner;
+        UIView *anchorView = weakAnchor;
+        if (owner == nil || anchorView == nil)
+            return CGRectZero;
+        return [anchorView convertRect:anchorView.bounds toView:owner.controller.view];
+    };
+    sheet.permittedArrowDirections = UIPopoverArrowDirectionUp;
+    [sheet presentInViewController:self.controller sourceView:self.controller.view animated:true];
 }
 
-- (NSArray *)_pinnedMessagesFromMessages:(NSArray *)messages
+- (NSArray *)og_latestPinnedFromMessages:(NSArray *)messages
 {
-    NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *message1, TGMessage *message2)
+    NSArray *newestFirst = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *left, TGMessage *right)
     {
-        int32_t date1 = [message1 actualDate];
-        int32_t date2 = [message2 actualDate];
-        if (date1 == date2)
-            return message1.mid > message2.mid ? NSOrderedAscending : NSOrderedDescending;
-        return date1 > date2 ? NSOrderedAscending : NSOrderedDescending;
+        return OGPrivatePinnedNewestFirst(left, right);
     }];
-
-    for (TGMessage *message in sortedMessages)
+    
+    for (TGMessage *candidate in newestFirst)
     {
-        TGMessage *pinnedMessage = [self _pinnedMessageFromServiceMessage:message];
-        if (pinnedMessage != nil && pinnedMessage.mid != 0)
-            return @[pinnedMessage];
+        TGMessage *target = OGPrivatePinnedTargetOfServiceMessage(candidate);
+        if (target != nil && target.mid != 0)
+            return @[target];
     }
     return @[];
 }
 
-- (void)_mergePinnedMessages:(NSArray *)messages
+- (void)og_applyPinnedMessages:(NSArray *)updated
+{
+    int32_t formerLeadId = ((TGMessage *)_pinnedMessageList.firstObject).mid;
+    _pinnedMessageList = updated;
+    if (((TGMessage *)_pinnedMessageList.firstObject).mid != formerLeadId)
+        _pinnedBannerDismissed = false;
+    [self _updateContactLinkPanel];
+}
+
+- (void)og_foldPinnedMessages:(NSArray *)messages
 {
     if (messages.count == 0)
         return;
-
+    
     TGDispatchOnMainThread(^
     {
-        int32_t previousFirstMessageId = ((TGMessage *)_pinnedMessages.firstObject).mid;
-        NSMutableArray *mergedMessages = [[NSMutableArray alloc] init];
-        NSMutableSet *messageIds = [[NSMutableSet alloc] init];
-        for (TGMessage *message in messages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [mergedMessages addObject:message];
-            }
-        }
-        for (TGMessage *message in _pinnedMessages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [mergedMessages addObject:message];
-            }
-        }
-        _pinnedMessages = mergedMessages;
-        if (((TGMessage *)_pinnedMessages.firstObject).mid != previousFirstMessageId)
-            _pinnedMessagePanelDismissed = false;
-        [self _updateContactLinkPanel];
+        NSMutableArray *folded = [[NSMutableArray alloc] init];
+        NSMutableSet *knownIds = [[NSMutableSet alloc] init];
+        OGPrivatePinnedAppendDistinct(folded, knownIds, messages);
+        OGPrivatePinnedAppendDistinct(folded, knownIds, _pinnedMessageList);
+        [self og_applyPinnedMessages:folded];
     });
 }
 
-- (void)_replacePinnedMessagesFromServer:(NSArray *)messages
+- (void)og_adoptServerPinnedMessages:(NSArray *)messages
 {
     TGDispatchOnMainThread(^
     {
-        int32_t previousFirstMessageId = ((TGMessage *)_pinnedMessages.firstObject).mid;
-        TGMessage *preferredMessage = _pinnedMessages.firstObject;
-        NSMutableArray *result = [[NSMutableArray alloc] init];
-        NSMutableSet *messageIds = [[NSMutableSet alloc] init];
-        if (preferredMessage != nil)
+        TGMessage *current = _pinnedMessageList.firstObject;
+        NSMutableArray *adopted = [[NSMutableArray alloc] init];
+        NSMutableSet *knownIds = [[NSMutableSet alloc] init];
+        
+        for (TGMessage *candidate in (current != nil ? messages : @[]))
         {
-            for (TGMessage *message in messages)
+            if (candidate.mid == current.mid)
             {
-                if (message.mid == preferredMessage.mid)
-                {
-                    [result addObject:message];
-                    [messageIds addObject:@(message.mid)];
-                    break;
-                }
+                [adopted addObject:candidate];
+                [knownIds addObject:@(candidate.mid)];
+                break;
             }
         }
-        for (TGMessage *message in messages)
-        {
-            if (message.mid != 0 && ![messageIds containsObject:@(message.mid)])
-            {
-                [messageIds addObject:@(message.mid)];
-                [result addObject:message];
-            }
-        }
-        _pinnedMessages = result;
-        if (((TGMessage *)_pinnedMessages.firstObject).mid != previousFirstMessageId)
-            _pinnedMessagePanelDismissed = false;
-        [self _updateContactLinkPanel];
+        OGPrivatePinnedAppendDistinct(adopted, knownIds, messages);
+        [self og_applyPinnedMessages:adopted];
     });
 }
 
-- (NSString *)_menuTitleForPinnedMessage:(TGMessage *)message
+- (void)og_jumpToPinnedMessage:(TGMessage *)message
 {
-    NSString *text = message.text.length != 0 ? message.text : message.caption;
-    text = [[text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" "];
-    while ([text rangeOfString:@"  "].location != NSNotFound)
-        text = [text stringByReplacingOccurrencesOfString:@"  " withString:@" "];
-    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (text.length == 0)
-        text = TGLocalized(@"Conversation.PinnedMessage");
-    return text;
+    int32_t targetId = message.mid;
+    if (targetId == 0)
+        return;
+    [self navigateToMessageId:targetId scrollBackMessageId:0 forceUnseenMention:false animated:true];
 }
 
-- (void)_navigateToPinnedMessage:(TGMessage *)message
+- (void)og_fillPinnedSheet:(TGMenuSheetController *)sheet fromOffset:(NSUInteger)offset animated:(bool)animated
 {
-    if (message.mid != 0)
-        [self navigateToMessageId:message.mid scrollBackMessageId:0 forceUnseenMention:false animated:true];
-}
-
-- (void)_setPinnedMessagesMenuItemsForController:(TGMenuSheetController *)controller offset:(NSUInteger)offset animated:(bool)animated
-{
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    const NSUInteger pageSize = classicIOS6Style ? 5 : 8;
-    NSUInteger messageCount = _pinnedMessages.count;
-    if (messageCount == 0)
+    bool classicSheet = [TGPresentation classicThemeStyle];
+    const NSUInteger perPage = classicSheet ? 5 : 8;
+    NSUInteger total = _pinnedMessageList.count;
+    if (total == 0)
     {
-        [controller dismissAnimated:true];
+        [sheet dismissAnimated:true];
         return;
     }
-
-    NSUInteger maximumOffset = ((messageCount - 1) / pageSize) * pageSize;
-    offset = MIN(offset, maximumOffset);
-    NSUInteger endIndex = MIN(offset + pageSize, messageCount);
-
-    NSMutableArray *items = [[NSMutableArray alloc] init];
-    if (!classicIOS6Style)
-        [items addObject:[[TGPinnedMessagesMenuHeaderItemView alloc] initWithMessageCount:messageCount]];
-
-    __weak TGPrivateModernConversationCompanion *weakSelf = self;
-    __weak TGMenuSheetController *weakController = controller;
-    for (NSUInteger index = offset; index < endIndex; index++)
+    
+    NSUInteger firstShown = MIN(offset, ((total - 1) / perPage) * perPage);
+    NSUInteger pastLast = MIN(firstShown + perPage, total);
+    
+    __weak TGPrivateModernConversationCompanion *weakOwner = self;
+    __weak TGMenuSheetController *weakSheet = sheet;
+    void (^openPage)(NSUInteger) = ^(NSUInteger target)
     {
-        TGMessage *message = _pinnedMessages[index];
-        NSString *title = [self _menuTitleForPinnedMessage:message];
-        void (^action)(void) = ^
-        {
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongController dismissAnimated:true];
-            __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-            [strongSelf _navigateToPinnedMessage:message];
-        };
-
-        if (classicIOS6Style)
-        {
-            NSString *buttonTitle = [NSString stringWithFormat:@"%d. %@", (int)index + 1, title];
-            if (buttonTitle.length > 24)
-            {
-                NSRange range = [buttonTitle rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
-                buttonTitle = [[buttonTitle substringWithRange:range] stringByAppendingString:@"\u2026"];
-            }
-            [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:buttonTitle type:TGMenuSheetButtonTypeDefault action:action]];
-        }
-        else
-        {
-            [items addObject:[[TGPinnedMessageMenuItemView alloc] initWithTitle:title index:index action:action]];
-        }
-    }
-
-    if (offset > 0)
-    {
-        NSUInteger previousOffset = offset >= pageSize ? offset - pageSize : 0;
-        NSUInteger previousEnd = MIN(previousOffset + pageSize, messageCount);
-        NSString *title = [NSString stringWithFormat:@"\u2039 %d\u2013%d", (int)previousOffset + 1, (int)previousEnd];
-        [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:^
-        {
-            __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongSelf _setPinnedMessagesMenuItemsForController:strongController offset:previousOffset animated:true];
-        }]];
-    }
-
-    if (endIndex < messageCount)
-    {
-        NSUInteger nextOffset = endIndex;
-        NSUInteger nextEnd = MIN(nextOffset + pageSize, messageCount);
-        NSString *title = [NSString stringWithFormat:@"%d\u2013%d \u203a", (int)nextOffset + 1, (int)nextEnd];
-        [items addObject:[[TGMenuSheetButtonItemView alloc] initWithTitle:title type:TGMenuSheetButtonTypeDefault action:^
-        {
-            __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-            __strong TGMenuSheetController *strongController = weakController;
-            [strongSelf _setPinnedMessagesMenuItemsForController:strongController offset:nextOffset animated:true];
-        }]];
-    }
-
-    if (animated)
-        [controller setItemViews:items animated:true];
-    else
-        [controller setItemViews:items];
-}
-
-- (void)_presentPinnedMessagesMenuFromPanel:(TGPinnedMessageTitlePanel *)panel
-{
-    if (_pinnedMessages.count == 0)
-        return;
-
-    [self.controller endEditing];
-    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-    controller.dismissesByOutsideTap = true;
-    controller.narrowInLandscape = true;
-    controller.maxHeight = MIN(420.0f, self.controller.view.bounds.size.height - 44.0f);
-
-    __weak TGPrivateModernConversationCompanion *weakSelf = self;
-    [self _setPinnedMessagesMenuItemsForController:controller offset:0 animated:false];
-    __weak TGPinnedMessageTitlePanel *weakPanel = panel;
-    controller.sourceRect = ^CGRect
-    {
-        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-        __strong TGPinnedMessageTitlePanel *strongPanel = weakPanel;
-        if (strongSelf == nil || strongPanel == nil)
-            return CGRectZero;
-        return [strongPanel convertRect:strongPanel.bounds toView:strongSelf.controller.view];
+        [weakOwner og_fillPinnedSheet:weakSheet fromOffset:target animated:true];
     };
-    controller.permittedArrowDirections = UIPopoverArrowDirectionUp;
-    [controller presentInViewController:self.controller sourceView:self.controller.view animated:true];
+    
+    NSMutableArray *rows = [[NSMutableArray alloc] init];
+    if (!classicSheet)
+        [rows addObject:[[TGPinnedMessagesMenuHeaderItemView alloc] initWithMessageCount:total]];
+    
+    for (NSUInteger slot = firstShown; slot < pastLast; slot++)
+    {
+        TGMessage *pinned = _pinnedMessageList[slot];
+        NSString *label = OGPrivatePinnedMenuLabel(pinned);
+        void (^choose)(void) = ^
+        {
+            [weakSheet dismissAnimated:true];
+            [weakOwner og_jumpToPinnedMessage:pinned];
+        };
+        
+        if (classicSheet)
+            [rows addObject:OGPrivatePinnedSheetButton(OGPrivatePinnedClassicButtonTitle(slot, label), choose)];
+        else
+            [rows addObject:[[TGPinnedMessageMenuItemView alloc] initWithTitle:label index:slot action:choose]];
+    }
+    
+    if (firstShown > 0)
+    {
+        NSUInteger backStart = firstShown >= perPage ? firstShown - perPage : 0;
+        NSUInteger backEnd = MIN(backStart + perPage, total);
+        [rows addObject:OGPrivatePinnedSheetButton(OGPrivatePinnedPageTitle(backStart, backEnd, true), ^{ openPage(backStart); })];
+    }
+    
+    if (pastLast < total)
+    {
+        NSUInteger forwardEnd = MIN(pastLast + perPage, total);
+        [rows addObject:OGPrivatePinnedSheetButton(OGPrivatePinnedPageTitle(pastLast, forwardEnd, false), ^{ openPage(pastLast); })];
+    }
+    
+    if (animated)
+        [sheet setItemViews:rows animated:true];
+    else
+        [sheet setItemViews:rows];
+}
+
+- (void)og_showPinnedSheetFromPanel:(TGPinnedMessageTitlePanel *)panel
+{
+    if (_pinnedMessageList.count == 0)
+        return;
+    
+    [self.controller endEditing];
+    TGMenuSheetController *sheet = OGPrivateMakeSheet();
+    sheet.maxHeight = MIN(420.0f, self.controller.view.bounds.size.height - 44.0f);
+    [self og_fillPinnedSheet:sheet fromOffset:0 animated:false];
+    [self og_presentSheet:sheet anchoredAt:panel];
 }
 
 - (SSignal *)_requestPinnedMessages
 {
-    TLRPCmessages_search *search = [[TLRPCmessages_search alloc] init];
-    search.peer = [TGTelegraphInstance createInputPeerForConversation:_conversationId accessHash:_accessHash];
-    search.q = @"";
-    search.filter = [[TGIOS6PrivatePinnedMessagesFilter alloc] init];
-    search.min_date = 0;
-    search.max_date = 0;
-    search.offset = 0;
-    search.max_id = 0;
-    search.limit = 50;
-    search.flags = 0;
-
+    TLRPCmessages_search *query = [[TLRPCmessages_search alloc] init];
+    query.peer = [TGTelegraphInstance createInputPeerForConversation:_conversationId accessHash:_accessHash];
+    query.q = @"";
+    query.filter = [[OGPrivatePinnedSearchFilter alloc] init];
+    query.min_date = query.max_date = 0;
+    query.offset = query.max_id = 0;
+    query.limit = 50;
+    query.flags = 0;
+    
     int64_t peerId = _conversationId;
-    return [[[[TGTelegramNetworking instance] requestSignal:search] map:^id(TLmessages_Messages *result)
+    return [[[[TGTelegramNetworking instance] requestSignal:query] map:^id(TLmessages_Messages *result)
     {
-        [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-        NSMutableArray *messages = [[NSMutableArray alloc] init];
-        for (TLMessage *messageDesc in result.messages)
-        {
-            TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
-            if (message.mid != 0)
-                [messages addObject:message];
-        }
-        return messages;
+        return OGPrivateDecodePinnedResult(result);
     }] catch:^SSignal *(id error)
     {
         TGLog(@"TRACE pinned.search.error peer=%lld filter=inputMessagesFilterPinned scope=private error=%@", peerId, error);
@@ -663,34 +679,71 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     }];
 }
 
-- (void)_refreshPinnedMessages
+- (void)og_reloadPinnedMessages
 {
-    [_pinnedMessagesDisposable dispose];
-    __weak TGPrivateModernConversationCompanion *weakSelf = self;
-    _pinnedMessagesDisposable = [[[self _requestPinnedMessages] deliverOn:[SQueue mainQueue]] startWithNext:^(id next)
+    [_pinnedFetchDisposable dispose];
+    __weak TGPrivateModernConversationCompanion *weakOwner = self;
+    _pinnedFetchDisposable = [[[self _requestPinnedMessages] deliverOn:[SQueue mainQueue]] startWithNext:^(id payload)
     {
-        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-        if (strongSelf != nil && [next isKindOfClass:[NSArray class]])
-            [strongSelf _replacePinnedMessagesFromServer:next];
+        TGPrivateModernConversationCompanion *owner = weakOwner;
+        if (owner != nil && [payload isKindOfClass:[NSArray class]])
+            [owner og_adoptServerPinnedMessages:payload];
     }];
 }
 
-- (void)_updatePinnedMessagesFromConversationItems
+- (void)og_collectPinnedFromVisibleItems
 {
-    NSMutableArray *messages = [[NSMutableArray alloc] init];
-    for (TGMessageModernConversationItem *item in [self.controller _items])
+    NSMutableArray *visible = [[NSMutableArray alloc] init];
+    for (TGMessageModernConversationItem *entry in [self.controller _items])
     {
-        if ([item isKindOfClass:[TGMessageModernConversationItem class]])
-            [messages addObject:item->_message];
+        if ([entry isKindOfClass:[TGMessageModernConversationItem class]])
+            [visible addObject:entry->_message];
     }
-    [self _mergePinnedMessages:[self _pinnedMessagesFromMessages:messages]];
+    [self og_foldPinnedMessages:[self og_latestPinnedFromMessages:visible]];
+}
+
+- (TGPinnedMessageTitlePanel *)og_bannerForPinnedMessage:(TGMessage *)message reusing:(TGModernConversationTitlePanel *)existing
+{
+    TGPinnedMessageTitlePanel *banner = nil;
+    if ([existing isKindOfClass:[TGPinnedMessageTitlePanel class]] && ((TGPinnedMessageTitlePanel *)existing).message.mid == message.mid)
+    {
+        banner = (TGPinnedMessageTitlePanel *)existing;
+        [banner updateMessage:message];
+    }
+    else
+    {
+        banner = [[TGPinnedMessageTitlePanel alloc] initWithMessage:message];
+        __weak TGPrivateModernConversationCompanion *weakOwner = self;
+        __weak TGPinnedMessageTitlePanel *weakBanner = banner;
+        banner.tapped = ^
+        {
+            TGPrivateModernConversationCompanion *owner = weakOwner;
+            if (owner == nil)
+                return;
+            if (owner->_pinnedMessageList.count > 1)
+                [owner og_showPinnedSheetFromPanel:weakBanner];
+            else
+                [owner og_jumpToPinnedMessage:owner->_pinnedMessageList.firstObject];
+        };
+        banner.dismiss = ^
+        {
+            TGPrivateModernConversationCompanion *owner = weakOwner;
+            if (owner == nil)
+                return;
+            owner->_pinnedBannerDismissed = true;
+            [owner _updateContactLinkPanel];
+        };
+    }
+    _pinnedBanner = banner;
+    [_pinnedBanner setMessageCount:_pinnedMessageList.count];
+    return banner;
 }
 
 - (void)_updateContactLinkPanel
 {
     TGDispatchOnMainThread(^
     {
-        if (![self shouldDisplayContactLinkPanel] && _liveLocations.count == 0 && (_pinnedMessages.count == 0 || _pinnedMessagePanelDismissed))
+        if (![self shouldDisplayContactLinkPanel] && _paidMessagesFeeStars <= 0 && _liveLocations.count == 0 && (_pinnedMessageList.count == 0 || _pinnedBannerDismissed))
         {
             [_linkPanelVariable set:[SSignal single:nil]];
             return;
@@ -699,7 +752,26 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         TGModernConversationTitlePanel *panel = _primaryPanel;
         TGUser *user = [TGDatabaseInstance() loadUser:_uid];
         
-        if (_liveLocations.count > 0)
+        if (_paidMessagesFeeStars > 0)
+        {
+            TGPaidMessagesFeeTitlePanel *feePanel = nil;
+            if (![panel isKindOfClass:[TGPaidMessagesFeeTitlePanel class]])
+            {
+                feePanel = [[TGPaidMessagesFeeTitlePanel alloc] init];
+                __weak TGPrivateModernConversationCompanion *weakSelf = self;
+                feePanel.removeFeePressed = ^
+                {
+                    __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+                    if (strongSelf != nil)
+                        [strongSelf _removePaidMessagesFeePressed];
+                };
+                panel = feePanel;
+            }
+            else
+                feePanel = (TGPaidMessagesFeeTitlePanel *)panel;
+            [feePanel setUserName:user.displayFirstName stars:_paidMessagesFeeStars];
+        }
+        else if (_liveLocations.count > 0)
         {
             TGLiveLocationTitlePanel *locationPanel = nil;
             if (![panel isKindOfClass:[TGLiveLocationTitlePanel class]])
@@ -757,45 +829,24 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                     
                     if (hasOwn)
                     {
-                        TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-                        controller.dismissesByOutsideTap = true;
-                        controller.narrowInLandscape = true;
-                        
-                        __weak TGMenuSheetController *weakController = controller;
-                        NSArray *items = @
-                        [
-                         [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Map.StopLiveLocation") type:TGMenuSheetButtonTypeDestructive action:^
-                          {
-                              __strong TGMenuSheetController *strongController = weakController;
-                              if (strongController == nil)
-                                  return;
-                              
-                              [strongController dismissAnimated:true];
-                              [TGTelegraphInstance.liveLocationManager stopWithPeerId:strongSelf.conversationId];
-                          }],
-                         [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
-                          {
-                              __strong TGMenuSheetController *strongController = weakController;
-                              if (strongController != nil)
-                                  [strongController dismissAnimated:true];
-                          }]
-                         ];
-                        
-                        [controller setItemViews:items];
-                        controller.sourceRect = ^CGRect
+                        TGMenuSheetController *sheet = OGPrivateMakeSheet();
+                        __weak TGMenuSheetController *weakSheet = sheet;
+                        TGMenuSheetButtonItemView *stopButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Map.StopLiveLocation") type:TGMenuSheetButtonTypeDestructive action:^
                         {
-                            __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-                            if (strongSelf == nil)
-                                return CGRectZero;
+                            TGMenuSheetController *openSheet = weakSheet;
+                            if (openSheet == nil)
+                                return;
                             
-                            __strong TGLiveLocationTitlePanel *strongPanel = weakPanel;
-                            if (strongPanel == nil)
-                                return CGRectZero;
-                            
-                            return [strongPanel convertRect:strongPanel.bounds toView:strongSelf.controller.view];
-                        };
-                        controller.permittedArrowDirections = UIPopoverArrowDirectionUp;
-                        [controller presentInViewController:strongSelf.controller sourceView:strongSelf.controller.view animated:true];
+                            [openSheet dismissAnimated:true];
+                            [TGTelegraphInstance.liveLocationManager stopWithPeerId:strongSelf.conversationId];
+                        }];
+                        TGMenuSheetButtonItemView *cancelButton = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
+                        {
+                            [weakSheet dismissAnimated:true];
+                        }];
+                        
+                        [sheet setItemViews:@[stopButton, cancelButton]];
+                        [strongSelf og_presentSheet:sheet anchoredAt:weakPanel];
                     }
                     else
                     {
@@ -810,43 +861,9 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
             [locationPanel setLiveLocations:_liveLocations];
             panel = locationPanel;
         }
-        else if (_pinnedMessages.count > 0 && !_pinnedMessagePanelDismissed)
+        else if (_pinnedMessageList.count > 0 && !_pinnedBannerDismissed)
         {
-            TGMessage *message = _pinnedMessages.firstObject;
-            if (![panel isKindOfClass:[TGPinnedMessageTitlePanel class]] || ((TGPinnedMessageTitlePanel *)panel).message.mid != message.mid)
-            {
-                TGPinnedMessageTitlePanel *pinnedMessagePanel = [[TGPinnedMessageTitlePanel alloc] initWithMessage:message];
-                __weak TGPrivateModernConversationCompanion *weakSelf = self;
-                __weak TGPinnedMessageTitlePanel *weakPanel = pinnedMessagePanel;
-                pinnedMessagePanel.tapped = ^
-                {
-                    __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-                    __strong TGPinnedMessageTitlePanel *strongPanel = weakPanel;
-                    if (strongSelf == nil)
-                        return;
-                    if (strongSelf->_pinnedMessages.count > 1)
-                        [strongSelf _presentPinnedMessagesMenuFromPanel:strongPanel];
-                    else
-                        [strongSelf _navigateToPinnedMessage:strongSelf->_pinnedMessages.firstObject];
-                };
-                pinnedMessagePanel.dismiss = ^
-                {
-                    __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
-                    if (strongSelf != nil)
-                    {
-                        strongSelf->_pinnedMessagePanelDismissed = true;
-                        [strongSelf _updateContactLinkPanel];
-                    }
-                };
-                _pinnedMessagePanel = pinnedMessagePanel;
-                panel = pinnedMessagePanel;
-            }
-            else
-            {
-                _pinnedMessagePanel = (TGPinnedMessageTitlePanel *)panel;
-                [_pinnedMessagePanel updateMessage:message];
-            }
-            [_pinnedMessagePanel setMessageCount:_pinnedMessages.count];
+            panel = [self og_bannerForPinnedMessage:_pinnedMessageList.firstObject reusing:panel];
         }
         else if (!_isContact && user.phoneNumber.length != 0)
         {
@@ -1228,12 +1245,119 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     [self _updateContactLinkPanel];
 }
 
+- (bool)_supportsPaidMessages
+{
+    return !_isBot && _uid != TGTelegraphInstance.clientUserId && TGPeerIdIsUser(_conversationId);
+}
+
+- (int64_t)paidMessagesPricePeerId
+{
+    return [self _supportsPaidMessages] ? _uid : 0;
+}
+
+- (void)paidMessagesPriceChanged:(int64_t)stars
+{
+    [self setPaidMessageStars:[self _supportsPaidMessages] ? stars : 0];
+}
+
+- (void)_refreshPaidMessagesPrice
+{
+    if (![self _supportsPaidMessages])
+        return;
+    if ([TGPaidMessagesSignals hasCachedPriceForPeerId:_uid])
+        [self setPaidMessageStars:[TGPaidMessagesSignals cachedPriceForPeerId:_uid]];
+    if (_paidMessagesPriceDisposable == nil)
+        _paidMessagesPriceDisposable = [[SMetaDisposable alloc] init];
+    __weak TGPrivateModernConversationCompanion *weakSelf = self;
+    [_paidMessagesPriceDisposable setDisposable:[[TGPaidMessagesSignals priceForUserId:_uid] startWithNext:^(NSNumber *stars)
+    {
+        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf paidMessagesPriceChanged:[stars longLongValue]];
+    } error:nil completed:nil]];
+}
+
+- (void)_refreshPaidMessagesFee
+{
+    if (![self _supportsPaidMessages])
+        return;
+    if (_paidMessagesFeeDisposable == nil)
+        _paidMessagesFeeDisposable = [[SMetaDisposable alloc] init];
+    __weak TGPrivateModernConversationCompanion *weakSelf = self;
+    [_paidMessagesFeeDisposable setDisposable:[[[TGPaidMessagesSignals chargedStarsFromUserId:_uid] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *stars)
+    {
+        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+        if (strongSelf != nil && strongSelf->_paidMessagesFeeStars != [stars longLongValue])
+        {
+            strongSelf->_paidMessagesFeeStars = [stars longLongValue];
+            [strongSelf _updateContactLinkPanel];
+        }
+    } error:nil completed:nil]];
+}
+
+- (void)_removePaidMessagesFeePressed
+{
+    int64_t uid = _uid;
+    TGUser *user = [TGDatabaseInstance() loadUser:uid];
+    NSString *userName = user.displayFirstName ?: @"";
+    __weak TGPrivateModernConversationCompanion *weakSelf = self;
+    TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
+    [progressWindow showWithDelay:0.2];
+    [_paidMessagesFeeDisposable setDisposable:[[[[TGPaidMessagesSignals revenueFromUserId:uid] catch:^SSignal *(__unused id error)
+    {
+        return [SSignal single:@0];
+    }] deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *revenue)
+    {
+        [progressWindow dismiss:true];
+        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+        TGModernConversationController *controller = strongSelf.controller;
+        if (strongSelf == nil || controller == nil)
+            return;
+        int64_t earned = [revenue longLongValue];
+        NSString *title = [[NSString alloc] initWithFormat:TGLocalized(@"PaidMessages.RemoveFeeConfirm"), userName];
+        NSMutableArray *actions = [[NSMutableArray alloc] init];
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"PaidMessages.RemoveFee") action:@"remove"]];
+        if (earned > 0)
+            [actions addObject:[[TGActionSheetAction alloc] initWithTitle:[[NSString alloc] initWithFormat:TGLocalized(@"PaidMessages.RemoveFeeRefund"), [TGPaidMessagesSignals starsString:earned]] action:@"refund"]];
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]];
+        TGCustomActionSheet *actionSheet = [[TGCustomActionSheet alloc] initWithTitle:title actions:actions actionBlock:^(__unused id target, NSString *action)
+        {
+            if ([action isEqualToString:@"remove"] || [action isEqualToString:@"refund"])
+                [weakSelf _commitRemovePaidMessagesFeeWithRefund:[action isEqualToString:@"refund"]];
+        } target:controller];
+        [actionSheet showInView:controller.view];
+    } error:nil completed:nil]];
+}
+
+- (void)_commitRemovePaidMessagesFeeWithRefund:(bool)refund
+{
+    __weak TGPrivateModernConversationCompanion *weakSelf = self;
+    TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
+    [progressWindow showWithDelay:0.2];
+    [_paidMessagesFeeDisposable setDisposable:[[[TGPaidMessagesSignals setFeeRemoved:true forUserId:_uid refundCharged:refund] deliverOn:[SQueue mainQueue]] startWithNext:nil error:^(__unused id error)
+    {
+        [progressWindow dismiss:true];
+        [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"PaidMessages.Settings.SaveFailed") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+    } completed:^
+    {
+        [progressWindow dismissWithSuccess];
+        __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+        if (strongSelf != nil)
+        {
+            strongSelf->_paidMessagesFeeStars = 0;
+            [strongSelf _updateContactLinkPanel];
+        }
+    }]];
+}
+
 - (void)_controllerDidAppear:(bool)firstTime {
     [super _controllerDidAppear:firstTime];
-    [self _updatePinnedMessagesFromConversationItems];
-    [self _refreshPinnedMessages];
+    [self og_collectPinnedFromVisibleItems];
+    [self og_reloadPinnedMessages];
     
     if (firstTime) {
+        [self _refreshPaidMessagesPrice];
+        [self _refreshPaidMessagesFee];
         if (_botAutostartPayload != nil) {
             [self requestBotStart];
         }
@@ -1638,14 +1762,14 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]])
     {
         TGDispatchOnMainThread(^{
-            [self _refreshPinnedMessages];
+            [self og_reloadPinnedMessages];
         });
     }
 
-    if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messages", _conversationId]])
+    if ([path isEqualToString:[NSString stringWithFormat:@"/tg/conversation/(%lld)/messages", _conversationId]])
     {
         NSArray *messages = ((SGraphObjectNode *)resource).object;
-        [self _mergePinnedMessages:[self _pinnedMessagesFromMessages:messages]];
+        [self og_foldPinnedMessages:[self og_latestPinnedFromMessages:messages]];
     }
 
     if ([path isEqualToString:@"/tg/userdatachanges"] || [path isEqualToString:@"/tg/userpresencechanges"])
@@ -1818,6 +1942,11 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 - (bool)allowReplies
 {
     return true;
+}
+
+- (bool)allowPollSending
+{
+    return _isBot;
 }
 
 - (bool)allowSelfDescructingMedia

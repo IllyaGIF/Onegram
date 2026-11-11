@@ -9,6 +9,7 @@
 #import "../OnegramRuntime/OGUpdateArchive.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
@@ -26,6 +27,8 @@ static NSString *const TGOnegramUpdaterUniversalMarker = @"armv6-armv7-arm64";
 static NSString *const TGOnegramUpdaterLastCheckKey = @"TGOnegramUpdaterLastCheck";
 static NSString *const TGOnegramUpdaterStagingName = @".onegram-update";
 static NSString *const TGOnegramUpdaterPackageName = @"onegram-update.ipa";
+static NSString *const TGOnegramUpdaterInstallEntitlement = @"com.apple.private.mobileinstall.allowedSPI";
+static NSString *const TGOnegramUpdaterInstallSPI = @"InstallForLaunchServices";
 static const NSTimeInterval TGOnegramUpdaterCheckInterval = 6.0 * 60.0 * 60.0;
 static const uint64_t TGOnegramUpdaterMetadataLimit = 2ULL * 1024ULL * 1024ULL;
 static const uint64_t TGOnegramUpdaterChecksumLimit = 4096ULL;
@@ -103,6 +106,46 @@ static NSData *TGOnegramUpdaterDigestFromChecksumText(NSData *data)
             return digest;
     }
     return nil;
+}
+
+static bool TGOnegramUpdaterHasInstallEntitlement(void)
+{
+    typedef void *(*TGOnegramUpdaterTaskCreate)(CFAllocatorRef allocator);
+    typedef CFTypeRef (*TGOnegramUpdaterTaskCopyEntitlement)(void *task, CFStringRef entitlement, CFErrorRef *error);
+    TGOnegramUpdaterTaskCreate createTask = (TGOnegramUpdaterTaskCreate)dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+    TGOnegramUpdaterTaskCopyEntitlement copyEntitlement = (TGOnegramUpdaterTaskCopyEntitlement)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+    if (createTask == NULL || copyEntitlement == NULL)
+        return false;
+    void *task = createTask(kCFAllocatorDefault);
+    if (task == NULL)
+        return false;
+    CFTypeRef value = copyEntitlement(task, (__bridge CFStringRef)TGOnegramUpdaterInstallEntitlement, NULL);
+    CFRelease(task);
+    if (value == NULL)
+        return false;
+    bool allowed = CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayContainsValue((CFArrayRef)value, CFRangeMake(0, CFArrayGetCount((CFArrayRef)value)), (__bridge CFStringRef)TGOnegramUpdaterInstallSPI);
+    CFRelease(value);
+    return allowed;
+}
+
+static id TGOnegramUpdaterApplicationWorkspace(void)
+{
+    Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
+    SEL defaultSelector = NSSelectorFromString(@"defaultWorkspace");
+    if (workspaceClass == nil || ![workspaceClass respondsToSelector:defaultSelector] || ![workspaceClass instancesRespondToSelector:NSSelectorFromString(@"installApplication:withOptions:error:")])
+        return nil;
+    id (*defaultWorkspace)(id, SEL) = (id (*)(id, SEL))[workspaceClass methodForSelector:defaultSelector];
+    return defaultWorkspace == NULL ? nil : defaultWorkspace(workspaceClass, defaultSelector);
+}
+
+static bool TGOnegramUpdaterInstallPackage(NSString *packagePath, NSString *bundleIdentifier, NSError **error)
+{
+    id workspace = TGOnegramUpdaterApplicationWorkspace();
+    if (workspace == nil || bundleIdentifier.length == 0)
+        return false;
+    SEL selector = NSSelectorFromString(@"installApplication:withOptions:error:");
+    BOOL (*install)(id, SEL, NSURL *, NSDictionary *, NSError **) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **))[workspace methodForSelector:selector];
+    return install != NULL && install(workspace, selector, [NSURL fileURLWithPath:packagePath], @{@"CFBundleIdentifier": bundleIdentifier}, error);
 }
 
 @interface TGOnegramRelease ()
@@ -290,6 +333,7 @@ static int TGOnegramUpdaterTransferReceive(void *context, const uint8_t *bytes, 
         _backgroundTask = OGPlatformBackgroundTaskInvalid;
         id lastCheck = [[NSUserDefaults standardUserDefaults] objectForKey:TGOnegramUpdaterLastCheckKey];
         _lastCheckDate = [lastCheck isKindOfClass:[NSDate class]] ? lastCheck : nil;
+        unlink([[NSTemporaryDirectory() stringByAppendingPathComponent:TGOnegramUpdaterPackageName] fileSystemRepresentation]);
     }
     return self;
 }
@@ -322,6 +366,27 @@ static int TGOnegramUpdaterTransferReceive(void *context, const uint8_t *bytes, 
 - (bool)canInstallInPlace
 {
     return access([[[NSBundle mainBundle] bundlePath] fileSystemRepresentation], W_OK | X_OK) == 0;
+}
+
+- (bool)systemInstallerAvailable
+{
+    static bool available = false;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        available = TGOnegramUpdaterHasInstallEntitlement() && TGOnegramUpdaterApplicationWorkspace() != nil;
+    });
+    return available;
+}
+
+- (bool)usesSystemInstaller
+{
+    return ![self canInstallInPlace] && [self systemInstallerAvailable];
+}
+
+- (bool)canInstall
+{
+    return [self canInstallInPlace] || [self systemInstallerAvailable];
 }
 
 - (bool)canCancel
@@ -616,12 +681,50 @@ static int TGOnegramUpdaterTransferReceive(void *context, const uint8_t *bytes, 
 
 - (TGOnegramUpdaterError)performInstallationOfRelease:(TGOnegramRelease *)release
 {
+    if ([self canInstallInPlace])
+        return [self performInPlaceInstallationOfRelease:release];
+    if ([self systemInstallerAvailable])
+        return [self performSystemInstallationOfRelease:release];
+    return TGOnegramUpdaterErrorNotWritable;
+}
+
+- (TGOnegramUpdaterError)performSystemInstallationOfRelease:(TGOnegramRelease *)release
+{
+    NSString *packagePath = [NSTemporaryDirectory() stringByAppendingPathComponent:TGOnegramUpdaterPackageName];
+    TGOnegramUpdaterError error = [self downloadRelease:release toPath:packagePath];
+    if (error == TGOnegramUpdaterErrorNone && _cancelled != 0)
+        error = TGOnegramUpdaterErrorInstall;
+    if (error == TGOnegramUpdaterErrorNone && chmod([packagePath fileSystemRepresentation], 0644) != 0)
+        error = TGOnegramUpdaterErrorStorage;
+    if (error != TGOnegramUpdaterErrorNone)
+    {
+        unlink([packagePath fileSystemRepresentation]);
+        return error;
+    }
+
+    _committing = 1;
+    TGDispatchOnMainThread(^
+    {
+        if (_state == TGOnegramUpdaterStateDownloading)
+            [self setState:TGOnegramUpdaterStateInstalling error:TGOnegramUpdaterErrorNone];
+    });
+
+    NSError *installError = nil;
+    bool installed = TGOnegramUpdaterInstallPackage(packagePath, [[NSBundle mainBundle] bundleIdentifier], &installError);
+    unlink([packagePath fileSystemRepresentation]);
+    if (!installed)
+    {
+        TGLog(@"UPDATE system.install.failed error=%@", installError);
+        return TGOnegramUpdaterErrorInstall;
+    }
+    return TGOnegramUpdaterErrorNone;
+}
+
+- (TGOnegramUpdaterError)performInPlaceInstallationOfRelease:(TGOnegramRelease *)release
+{
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     NSString *packagePath = [NSTemporaryDirectory() stringByAppendingPathComponent:TGOnegramUpdaterPackageName];
     NSString *stagingPath = [bundlePath stringByAppendingPathComponent:TGOnegramUpdaterStagingName];
-
-    if (![self canInstallInPlace])
-        return TGOnegramUpdaterErrorNotWritable;
 
     TGOnegramUpdaterError error = [self downloadRelease:release toPath:packagePath];
     if (error != TGOnegramUpdaterErrorNone)

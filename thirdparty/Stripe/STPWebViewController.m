@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation STPWebViewController
 
-- (instancetype)initWithURL:(NSURL *)url title:(NSString *)title {
+- (instancetype)initWithURL:(NSURL *)url title:(NSString *_Nonnull)title {
     self = [super init];
     if (self) {
         _url = url;
@@ -30,10 +30,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)viewDidLoad {
     [super viewDidLoad];
  
-    CGRect frame = CGRectMake(0, 
-                              0.0f, 
-                              CGRectGetWidth(self.view.frame), 
-                              CGRectGetHeight(self.view.frame) - 0.0f - 0.0f);
+    CGRect frame = CGRectMake(0, 0, CGRectGetWidth(self.view.frame), CGRectGetHeight(self.view.frame));
     
     WKWebView *webView = [[WKWebView alloc] initWithFrame:frame];
     [self.view addSubview:webView];

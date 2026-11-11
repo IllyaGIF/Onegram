@@ -14,6 +14,7 @@
 
 + (SSignal *)sendTextMessageWithPeerId:(int64_t)peerId text:(NSString *)text replyToMid:(int32_t)replyToMid;
 + (SSignal *)sendTextMessageWithPeerId:(int64_t)peerId text:(NSString *)text entities:(NSArray *)entities replyToMid:(int32_t)replyToMid;
++ (SSignal *)sendStoryReplyWithPeerId:(int64_t)peerId storyId:(int32_t)storyId text:(NSString *)text entities:(NSArray *)entities;
 
 + (SSignal *)sendLocationWithPeerId:(int64_t)peerId replyToMid:(int32_t)replyToMid locationAttachment:(TGLocationMediaAttachment *)locationAttachment;
 + (SSignal *)sendRemoteDocumentWithPeerId:(int64_t)peerId replyToMid:(int32_t)replyToMid documentAttachment:(TGDocumentMediaAttachment *)documentAttachment;

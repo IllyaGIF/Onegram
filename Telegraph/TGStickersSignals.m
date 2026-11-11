@@ -41,6 +41,43 @@ static bool TGStickerPacksPersistenceScheduled = false;
 static uint64_t TGStickerPacksPersistenceGeneration = 0;
 static const NSTimeInterval TGStickerPacksPersistenceDelay = 2.0;
 
+static NSArray *OGCompatArrayOrEmpty(id candidate)
+{
+    return [candidate isKindOfClass:[NSArray class]] ? candidate : @[];
+}
+
+static TGStickerPack *OGCompatValidPack(id candidate)
+{
+    return [candidate isKindOfClass:[TGStickerPack class]] ? candidate : nil;
+}
+
+static NSArray *OGCompatValidPacks(id candidates)
+{
+    NSMutableArray *result = [[NSMutableArray alloc] init];
+    if ([candidates isKindOfClass:[NSArray class]])
+    {
+        for (id candidate in candidates)
+        {
+            TGStickerPack *pack = OGCompatValidPack(candidate);
+            if (pack != nil)
+                [result addObject:pack];
+        }
+    }
+    return result;
+}
+
+static id OGCompatUnarchive(id (^unarchive)(void))
+{
+    @try
+    {
+        return unarchive();
+    }
+    @catch (__unused NSException *exception)
+    {
+        return nil;
+    }
+}
+
 static bool TGStickerPacksWriteData(NSData *data, NSString *path)
 {
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
@@ -76,10 +113,8 @@ static NSString *TGStickerPacksShardName(TGStickerPack *pack, NSString *prefix)
 static NSArray *TGStickerPacksStoreShards(NSArray *packs, NSString *prefix, NSString *directory, NSMutableSet *usedFiles, NSUInteger *writtenCount)
 {
     NSMutableArray *names = [[NSMutableArray alloc] initWithCapacity:packs.count];
-    for (TGStickerPack *pack in packs)
+    for (TGStickerPack *pack in OGCompatValidPacks(packs))
     {
-        if (![pack isKindOfClass:[TGStickerPack class]])
-            continue;
         NSString *name = TGStickerPacksShardName(pack, prefix);
         NSString *file = [directory stringByAppendingPathComponent:name];
         if (![[NSFileManager defaultManager] fileExistsAtPath:file])
@@ -110,14 +145,10 @@ static NSArray *TGStickerPacksLoadShards(NSArray *names, NSString *directory, bo
             *complete = false;
             continue;
         }
-        TGStickerPack *pack = nil;
-        @try
+        TGStickerPack *pack = OGCompatUnarchive(^id
         {
-            pack = [NSKeyedUnarchiver unarchiveObjectWithFile:[directory stringByAppendingPathComponent:name]];
-        }
-        @catch (__unused NSException *exception)
-        {
-        }
+            return [NSKeyedUnarchiver unarchiveObjectWithFile:[directory stringByAppendingPathComponent:name]];
+        });
         if ([pack isKindOfClass:[TGStickerPack class]])
             [packs addObject:pack];
         else
@@ -163,14 +194,10 @@ static void TGStickerPacksPersistPendingGeneration(uint64_t generation)
             manifest[@"packs"] = packs;
             manifest[@"featuredPacks"] = featured;
             manifest[@"ios6ShardedStickerPacks"] = @true;
-            NSDictionary *previousManifest = nil;
-            @try
+            NSDictionary *previousManifest = OGCompatUnarchive(^id
             {
-                previousManifest = [NSKeyedUnarchiver unarchiveObjectWithFile:path];
-            }
-            @catch (__unused NSException *exception)
-            {
-            }
+                return [NSKeyedUnarchiver unarchiveObjectWithFile:path];
+            });
             if ([previousManifest isKindOfClass:[NSDictionary class]] && [previousManifest isEqualToDictionary:manifest])
             {
                 OGPlatformDiagnosticLog(@"STICKERCACHE state=unchanged shards_written=%lu shards_reused=%lu", (unsigned long)writtenCount, (unsigned long)(usedFiles.count - writtenCount));
@@ -249,141 +276,128 @@ static dispatch_queue_t TGStickerPacksPersistenceQueue(void)
     });
     return queue;
 }
-static NSMutableDictionary *cachedStickerPackInfo = nil;
-static OSSpinLock cachedStickerPackInfoLock = 0;
-static const NSUInteger TGIOS6StickerPackInfoRefreshLimit = 32;
+static NSMutableDictionary *OGCompatPackInfoCache = nil;
+static OSSpinLock OGCompatPackInfoCacheLock = 0;
+static const NSUInteger OGCompatPackInfoBatchSize = 32;
 
-static SSignal *TGIOS6CombineStickerPackInfoSignals(NSArray *signals)
+static SSignal *TGStickersNullOnFailure(SSignal *signal, NSTimeInterval timeout)
 {
-    if (signals.count <= TGIOS6StickerPackInfoRefreshLimit)
-        return [SSignal combineSignals:signals];
-    
-    NSArray *batch = [signals subarrayWithRange:NSMakeRange(0, TGIOS6StickerPackInfoRefreshLimit)];
-    NSArray *remaining = [signals subarrayWithRange:NSMakeRange(TGIOS6StickerPackInfoRefreshLimit, signals.count - TGIOS6StickerPackInfoRefreshLimit)];
-    return [[SSignal combineSignals:batch] mapToSignal:^SSignal *(NSArray *batchPacks)
+    SSignal *nullSignal = [SSignal single:[NSNull null]];
+    return [[signal timeout:timeout onQueue:[SQueue concurrentDefaultQueue] orSignal:nullSignal] catch:^SSignal *(__unused id error)
     {
-        return [TGIOS6CombineStickerPackInfoSignals(remaining) map:^id(NSArray *remainingPacks)
-        {
-            return [batchPacks arrayByAddingObjectsFromArray:remainingPacks];
-        }];
+        return nullSignal;
     }];
 }
 
-static SMulticastSignalManager *TGIOS6StickerPackInfoSignalManagerInstance = nil;
-static OSSpinLock TGIOS6StickerPackInfoSignalManagerLock = OS_SPINLOCK_INIT;
-
-static SMulticastSignalManager *TGIOS6StickerPackInfoSignalManager()
+static SSignal *OGCompatCombinePackInfoSignals(NSArray *signals)
 {
-    OSSpinLockLock(&TGIOS6StickerPackInfoSignalManagerLock);
-    if (TGIOS6StickerPackInfoSignalManagerInstance == nil)
-        TGIOS6StickerPackInfoSignalManagerInstance = [[SMulticastSignalManager alloc] init];
-    SMulticastSignalManager *manager = TGIOS6StickerPackInfoSignalManagerInstance;
-    OSSpinLockUnlock(&TGIOS6StickerPackInfoSignalManagerLock);
+    NSUInteger total = signals.count;
+    if (total <= OGCompatPackInfoBatchSize)
+        return [SSignal combineSignals:signals];
+    
+    NSUInteger start = ((total - 1) / OGCompatPackInfoBatchSize) * OGCompatPackInfoBatchSize;
+    SSignal *chained = [SSignal combineSignals:[signals subarrayWithRange:NSMakeRange(start, total - start)]];
+    while (start > 0)
+    {
+        start -= OGCompatPackInfoBatchSize;
+        SSignal *laterSignal = chained;
+        chained = [[SSignal combineSignals:[signals subarrayWithRange:NSMakeRange(start, OGCompatPackInfoBatchSize)]] mapToSignal:^SSignal *(NSArray *earlierPacks)
+        {
+            return [laterSignal map:^id(NSArray *laterPacks)
+            {
+                return [earlierPacks arrayByAddingObjectsFromArray:laterPacks];
+            }];
+        }];
+    }
+    return chained;
+}
+
+static SMulticastSignalManager *OGCompatPackInfoManagerStorage = nil;
+static OSSpinLock OGCompatPackInfoManagerLock = OS_SPINLOCK_INIT;
+
+static SMulticastSignalManager *OGCompatPackInfoManager()
+{
+    OSSpinLockLock(&OGCompatPackInfoManagerLock);
+    if (OGCompatPackInfoManagerStorage == nil)
+        OGCompatPackInfoManagerStorage = [[SMulticastSignalManager alloc] init];
+    SMulticastSignalManager *manager = OGCompatPackInfoManagerStorage;
+    OSSpinLockUnlock(&OGCompatPackInfoManagerLock);
     return manager;
 }
 
-static NSString *TGIOS6StickerPackReferenceKey(id<TGStickerPackReference> packReference, int32_t packHash, bool featured)
+static NSString *OGCompatPackInfoKey(id<TGStickerPackReference> packReference, int32_t packHash, bool featured)
 {
+    NSString *head = nil;
     if ([packReference isKindOfClass:[TGStickerPackIdReference class]])
     {
-        TGStickerPackIdReference *reference = (TGStickerPackIdReference *)packReference;
-        return [[NSString alloc] initWithFormat:@"id:%lld:%lld:%d:%d", reference.packId, reference.packAccessHash, packHash, featured ? 1 : 0];
+        TGStickerPackIdReference *idReference = (TGStickerPackIdReference *)packReference;
+        head = [NSString stringWithFormat:@"id:%lld:%lld", idReference.packId, idReference.packAccessHash];
     }
     else if ([packReference isKindOfClass:[TGStickerPackShortnameReference class]])
+        head = [NSString stringWithFormat:@"short:%@", ((TGStickerPackShortnameReference *)packReference).shortName ?: @""];
+    else
+        head = [NSString stringWithFormat:@"%@", packReference];
+    return [head stringByAppendingFormat:@":%d:%d", packHash, featured ? 1 : 0];
+}
+
+static TGStickerPack *OGCompatPackInfoCacheLookup(NSString *key)
+{
+    TGStickerPack *found = nil;
+    if (key.length != 0)
     {
-        TGStickerPackShortnameReference *reference = (TGStickerPackShortnameReference *)packReference;
-        return [[NSString alloc] initWithFormat:@"short:%@:%d:%d", reference.shortName ?: @"", packHash, featured ? 1 : 0];
+        OSSpinLockLock(&OGCompatPackInfoCacheLock);
+        found = OGCompatPackInfoCache[key];
+        OSSpinLockUnlock(&OGCompatPackInfoCacheLock);
     }
-    return [[NSString alloc] initWithFormat:@"%@:%d:%d", packReference, packHash, featured ? 1 : 0];
+    return found;
 }
 
-static TGStickerPack *TGIOS6CachedStickerPackInfo(NSString *key)
+static void OGCompatPackInfoCacheInsert(NSString *key, TGStickerPack *pack)
 {
-    if (key.length == 0)
-        return nil;
-    
-    OSSpinLockLock(&cachedStickerPackInfoLock);
-    TGStickerPack *pack = cachedStickerPackInfo[key];
-    OSSpinLockUnlock(&cachedStickerPackInfoLock);
-    
-    return pack;
-}
-
-static void TGIOS6StoreCachedStickerPackInfo(NSString *key, TGStickerPack *pack)
-{
-    if (key.length == 0 || pack == nil)
+    if (pack == nil || key.length == 0)
         return;
     
-    OSSpinLockLock(&cachedStickerPackInfoLock);
-    if (cachedStickerPackInfo == nil)
-        cachedStickerPackInfo = [[NSMutableDictionary alloc] init];
-    else if (cachedStickerPackInfo.count > 64)
-        [cachedStickerPackInfo removeAllObjects];
-    cachedStickerPackInfo[key] = pack;
-    OSSpinLockUnlock(&cachedStickerPackInfoLock);
+    OSSpinLockLock(&OGCompatPackInfoCacheLock);
+    if (OGCompatPackInfoCache == nil || OGCompatPackInfoCache.count > 64)
+        OGCompatPackInfoCache = [[NSMutableDictionary alloc] init];
+    OGCompatPackInfoCache[key] = pack;
+    OSSpinLockUnlock(&OGCompatPackInfoCacheLock);
 }
 
-static NSDictionary *TGIOS6EmptyStickerPacks(void)
+static void OGCompatPackInfoCacheReset(void)
 {
-    return @{
-        @"packs": @[],
-        @"featuredPacks": @[],
-        @"featuredPacksUnreadIds": @[],
-        @"archivedPacksSummary": [[TGArchivedStickerPacksSummary alloc] initWithCount:0],
-        @"cacheUpdateDate": @0,
-        @"featuredCacheUpdateDate": @0,
-        @"documentIdsUseCount": @{},
-        @"maxDocumentIdsUseCount_v2": @0
-    };
+    OSSpinLockLock(&OGCompatPackInfoCacheLock);
+    [OGCompatPackInfoCache removeAllObjects];
+    OSSpinLockUnlock(&OGCompatPackInfoCacheLock);
 }
 
-static NSArray *TGIOS6StaticStickerDocuments(NSArray *documents)
+static NSDictionary *OGCompatEmptyPackDictionary(void)
 {
-    return [documents isKindOfClass:[NSArray class]] ? documents : @[];
+    NSArray *keys = @[@"packs", @"featuredPacks", @"featuredPacksUnreadIds", @"documentIdsUseCount", @"archivedPacksSummary", @"cacheUpdateDate", @"featuredCacheUpdateDate", @"maxDocumentIdsUseCount_v2"];
+    NSArray *values = @[@[], @[], @[], @{}, [[TGArchivedStickerPacksSummary alloc] initWithCount:0], @0, @0, @0];
+    return [NSDictionary dictionaryWithObjects:values forKeys:keys];
 }
 
-static TGStickerPack *TGIOS6StaticStickerPack(TGStickerPack *pack)
+static NSDictionary *OGCompatSanitizedPackDictionary(id candidate)
 {
-    return [pack isKindOfClass:[TGStickerPack class]] ? pack : nil;
-}
-
-static NSArray *TGIOS6StaticStickerPacks(NSArray *packs)
-{
-    if (![packs isKindOfClass:[NSArray class]])
-        return @[];
+    NSDictionary *fallbacks = OGCompatEmptyPackDictionary();
+    if (![candidate isKindOfClass:[NSDictionary class]])
+        return fallbacks;
     
-    NSMutableArray *result = [[NSMutableArray alloc] init];
-    for (TGStickerPack *pack in packs)
+    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithDictionary:(NSDictionary *)candidate];
+    for (NSString *key in @[@"packs", @"featuredPacks"])
+        result[key] = OGCompatValidPacks(result[key]);
+    NSDictionary *requiredClasses = @{@"featuredPacksUnreadIds": [NSArray class], @"documentIdsUseCount": [NSDictionary class]};
+    for (NSString *key in @[@"featuredPacksUnreadIds", @"documentIdsUseCount"])
     {
-        TGStickerPack *filteredPack = TGIOS6StaticStickerPack(pack);
-        if (filteredPack != nil)
-            [result addObject:filteredPack];
+        if (![result[key] isKindOfClass:requiredClasses[key]])
+            result[key] = fallbacks[key];
     }
-    return result;
-}
-
-static NSDictionary *TGIOS6SafeStickerPacks(id dict)
-{
-    if (![dict isKindOfClass:[NSDictionary class]])
+    for (NSString *key in @[@"archivedPacksSummary", @"cacheUpdateDate", @"featuredCacheUpdateDate", @"maxDocumentIdsUseCount_v2"])
     {
-        return TGIOS6EmptyStickerPacks();
+        if (result[key] == nil)
+            result[key] = fallbacks[key];
     }
-    
-    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithDictionary:(NSDictionary *)dict];
-    result[@"packs"] = TGIOS6StaticStickerPacks(result[@"packs"]);
-    result[@"featuredPacks"] = TGIOS6StaticStickerPacks(result[@"featuredPacks"]);
-    if (![result[@"featuredPacksUnreadIds"] isKindOfClass:[NSArray class]])
-        result[@"featuredPacksUnreadIds"] = @[];
-    if (result[@"archivedPacksSummary"] == nil)
-        result[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
-    if (result[@"cacheUpdateDate"] == nil)
-        result[@"cacheUpdateDate"] = @0;
-    if (result[@"featuredCacheUpdateDate"] == nil)
-        result[@"featuredCacheUpdateDate"] = @0;
-    if (![result[@"documentIdsUseCount"] isKindOfClass:[NSDictionary class]])
-        result[@"documentIdsUseCount"] = @{};
-    if (result[@"maxDocumentIdsUseCount_v2"] == nil)
-        result[@"maxDocumentIdsUseCount_v2"] = @0;
     return result;
 }
 
@@ -403,7 +417,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)updateStickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
     {
         SSignal *signal = [SSignal complete];
         
@@ -424,7 +438,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         }
         alreadyReloadedStickerPacksFromRemote = true;
         
-        SSignal *periodicFetchSignal = [[[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+        SSignal *periodicFetchSignal = [[SSignal defer:^SSignal *
         {
             NSDictionary *cachedPacks = [self cachedStickerPacks];
             return [self remoteStickerPacksWithCacheHash:[self hashForStickerPacks:cachedPacks[@"packs"]]];
@@ -440,7 +454,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)updateFeaturedStickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
     {
         SSignal *signal = [SSignal complete];
         
@@ -461,7 +475,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         }
         alreadyReloadedFeaturedPacksFromRemote = true;
         
-        SSignal *periodicFetchSignal = [[[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+        SSignal *periodicFetchSignal = [[SSignal defer:^SSignal *
         {
             NSDictionary *cachedPacks = [self cachedStickerPacks];
             return [self remoteFeaturedPacksWithCacheHash:[self hashForStickerPacks:cachedPacks[@"featuredPacks"]]];
@@ -547,31 +561,31 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 + (void)forceUpdateStickers {
     [[[TGTelegramNetworking instance] genericTasksSignalManager] startStandaloneSignalIfNotRunningForKey:@"forceUpdateStickers" producer:^SSignal *{
         return [[self remoteStickerPacksWithCacheHash:0] onNext:^(NSDictionary *dict) {
-            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeStickerPacks(dict) toMulticastedPipeForKey:@"stickerPacks"];
+            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedPackDictionary(dict) toMulticastedPipeForKey:@"stickerPacks"];
         }];
     }];
 }
 
 + (void)dispatchStickers {
-    [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeStickerPacks([self cachedStickerPacks]) toMulticastedPipeForKey:@"stickerPacks"];
+    [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedPackDictionary([self cachedStickerPacks]) toMulticastedPipeForKey:@"stickerPacks"];
 }
 
 + (SSignal *)stickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id defer)
+    return [SSignal defer:^SSignal *
     {
         [[[TGTelegramNetworking instance] genericTasksSignalManager] startStandaloneSignalIfNotRunningForKey:@"updateStickers" producer:^SSignal *
         {
             return [[self updateStickerPacks] onNext:^(NSDictionary *dict)
             {
-                dict = TGIOS6SafeStickerPacks(dict);
+                dict = OGCompatSanitizedPackDictionary(dict);
                 [self updateShowStickerButtonModeForStickerPacks:dict[@"packs"]];
                 
                 [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:dict toMulticastedPipeForKey:@"stickerPacks"];
             }];
         }];
         
-        SSignal *signal = [SSignal single:TGIOS6EmptyStickerPacks()];
+        SSignal *signal = [SSignal single:OGCompatEmptyPackDictionary()];
      
         NSDictionary *cachedPacks = [self cachedStickerPacks];
         if (cachedPacks.count != 0)
@@ -592,15 +606,13 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     if (data == nil) {
         data = [[NSUserDefaults standardUserDefaults] objectForKey:@"TG_stickerPacks"];
         if (data == nil)
-        {
-            NSDictionary *emptyPacks = TGIOS6EmptyStickerPacks();
-            data = [NSKeyedArchiver archivedDataWithRootObject:emptyPacks];
-        }
+            data = [NSKeyedArchiver archivedDataWithRootObject:OGCompatEmptyPackDictionary()];
         
-        NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
+        NSString *packsPath = [self filePath];
+        [[NSFileManager defaultManager] createDirectoryAtPath:[packsPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
         
-        if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
+        bool persisted = data.length != 0 && [data writeToFile:packsPath atomically:true];
+        if (!persisted) {
             TGLog(@"***** TGStickersSignalsClass loadPacksData couldn't write to file");
         } else {
             [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TG_stickerPacks"];
@@ -609,9 +621,9 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     return data;
 }
 
-+ (void)storePacksDictionary:(NSDictionary *)dictionary
++ (void)schedulePacksPersist:(NSDictionary *)dictionary
 {
-    if (![dictionary isKindOfClass:[NSDictionary class]])
+    if ([dictionary isKindOfClass:[NSDictionary class]] == false)
         return;
 
     dispatch_queue_t queue = TGStickerPacksPersistenceQueue();
@@ -644,9 +656,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     cachedPacks = nil;
     OSSpinLockUnlock(&cachedPacksLock);
     
-    OSSpinLockLock(&cachedStickerPackInfoLock);
-    [cachedStickerPackInfo removeAllObjects];
-    OSSpinLockUnlock(&cachedStickerPackInfoLock);
+    OGCompatPackInfoCacheReset();
     TGStickerPacksDiscardPending();
     NSString *path = [self filePath];
     dispatch_sync(TGStickerPacksPersistenceQueue(), ^
@@ -668,13 +678,11 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     cachedPacks = nil;
     OSSpinLockUnlock(&cachedPacksLock);
     
-    OSSpinLockLock(&cachedStickerPackInfoLock);
-    [cachedStickerPackInfo removeAllObjects];
-    OSSpinLockUnlock(&cachedStickerPackInfoLock);
+    OGCompatPackInfoCacheReset();
     
-    OSSpinLockLock(&TGIOS6StickerPackInfoSignalManagerLock);
-    TGIOS6StickerPackInfoSignalManagerInstance = nil;
-    OSSpinLockUnlock(&TGIOS6StickerPackInfoSignalManagerLock);
+    OSSpinLockLock(&OGCompatPackInfoManagerLock);
+    OGCompatPackInfoManagerStorage = nil;
+    OSSpinLockUnlock(&OGCompatPackInfoManagerLock);
     
     alreadyReloadedStickerPacksFromRemote = false;
     alreadyReloadedFeaturedPacksFromRemote = false;
@@ -727,22 +735,16 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     NSData *cachedStickerPacksData = [self loadPacksData];
     if (cachedStickerPacksData == nil)
     {
-        return TGIOS6EmptyStickerPacks();
+        return OGCompatEmptyPackDictionary();
     }
     
-    NSDictionary *dict = nil;
-    @try
+    NSDictionary *dict = OGCompatUnarchive(^id
     {
-        dict = [NSKeyedUnarchiver unarchiveObjectWithData:cachedStickerPacksData];
-    }
-    @catch (__unused NSException *e)
-    {
-    }
+        return [NSKeyedUnarchiver unarchiveObjectWithData:cachedStickerPacksData];
+    });
     
-    if (dict == nil || ![dict isKindOfClass:[NSDictionary class]])
-    {
-        dict = TGIOS6EmptyStickerPacks();
-    }
+    if (![dict isKindOfClass:[NSDictionary class]])
+        dict = OGCompatEmptyPackDictionary();
     if ([dict[@"ios6ShardedStickerPacks"] boolValue])
     {
         bool completeInstalled = true;
@@ -760,33 +762,19 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         dict = expanded;
     }
     
-    NSMutableDictionary *normalizedDict = [[NSMutableDictionary alloc] initWithDictionary:dict];
-    if (![normalizedDict[@"packs"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"packs"] = @[];
-    if (![normalizedDict[@"featuredPacks"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"featuredPacks"] = @[];
-    if (![normalizedDict[@"featuredPacksUnreadIds"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"featuredPacksUnreadIds"] = @[];
-    if (![normalizedDict[@"documentIdsUseCount"] isKindOfClass:[NSDictionary class]])
-        normalizedDict[@"documentIdsUseCount"] = @{};
-    if (normalizedDict[@"cacheUpdateDate"] == nil)
-        normalizedDict[@"cacheUpdateDate"] = @0;
-    if (normalizedDict[@"featuredCacheUpdateDate"] == nil)
-        normalizedDict[@"featuredCacheUpdateDate"] = @0;
-    if (normalizedDict[@"maxDocumentIdsUseCount_v2"] == nil)
-        normalizedDict[@"maxDocumentIdsUseCount_v2"] = @0;
-    if (![normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]])
+    NSMutableDictionary *normalizedDict = [NSMutableDictionary dictionaryWithDictionary:dict];
+    if ([normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]] == false)
         normalizedDict[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
     bool needsLazyArchivesRewrite = ![normalizedDict[@"ios6LazyStickerArchives"] boolValue];
     [normalizedDict removeObjectForKey:@"ios6LazyStickerDocuments"];
     normalizedDict[@"ios6LazyStickerArchives"] = @true;
-    const int32_t staticPackFetchVersion = 4;
-    if ([normalizedDict[@"ios6StaticPackFetchVersion"] intValue] != staticPackFetchVersion)
+    const int32_t currentFetchRevision = 4;
+    if ([normalizedDict[@"ios6StaticPackFetchVersion"] intValue] != currentFetchRevision)
     {
-        normalizedDict[@"cacheUpdateDate"] = @0;
-        normalizedDict[@"ios6StaticPackFetchVersion"] = @(staticPackFetchVersion);
+        [normalizedDict setObject:@(currentFetchRevision) forKey:@"ios6StaticPackFetchVersion"];
+        [normalizedDict setObject:@0 forKey:@"cacheUpdateDate"];
     }
-    dict = TGIOS6SafeStickerPacks(normalizedDict);
+    dict = OGCompatSanitizedPackDictionary(normalizedDict);
     
     if ([dict[@"packs"] isKindOfClass:[NSArray class]])
     {
@@ -808,13 +796,13 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
             updatedDict[@"packs"] = filteredPacks;
             dict = updatedDict;
             
-            [self storePacksDictionary:dict];
+            [self schedulePacksPersist:dict];
         }
     }
     
     NSArray *storedPacks = dict[@"packs"];
     if (needsLazyArchivesRewrite && storedPacks.count != 0)
-        [self storePacksDictionary:dict];
+        [self schedulePacksPersist:dict];
 
     OSSpinLockLock(&cachedPacksLock);
     cachedPacks = dict;
@@ -835,13 +823,13 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         cachedPacks = newDict;
         OSSpinLockUnlock(&cachedPacksLock);
         
-        [self storePacksDictionary:newDict];
+        [self schedulePacksPersist:newDict];
     }
 }
 
 + (NSDictionary *)replaceCachedStickerPacks:(NSArray *)stickerPacks cacheUpdateDate:(int32_t)cacheUpdateDate
 {
-    stickerPacks = TGIOS6StaticStickerPacks(stickerPacks);
+    stickerPacks = OGCompatValidPacks(stickerPacks);
     NSDictionary *currentDict = [self cachedStickerPacks];
     NSDictionary *newDict = nil;
     if (currentDict.count == 0)
@@ -886,7 +874,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     cachedPacks = newDict;
     OSSpinLockUnlock(&cachedPacksLock);
     
-    [self storePacksDictionary:newDict];
+    [self schedulePacksPersist:newDict];
     
     return newDict;
 }
@@ -903,7 +891,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         cachedPacks = newDict;
         OSSpinLockUnlock(&cachedPacksLock);
         
-        [self storePacksDictionary:newDict];
+        [self schedulePacksPersist:newDict];
     }
 }
 
@@ -919,7 +907,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         cachedPacks = newDict;
         OSSpinLockUnlock(&cachedPacksLock);
         
-        [self storePacksDictionary:newDict];
+        [self schedulePacksPersist:newDict];
     }
 }
 
@@ -940,7 +928,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
             cachedPacks = newDict;
             OSSpinLockUnlock(&cachedPacksLock);
             
-            [self storePacksDictionary:newDict];
+            [self schedulePacksPersist:newDict];
             
             return newDict;
         }
@@ -950,7 +938,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (NSDictionary *)replaceCachedFeaturedPacks:(NSArray *)stickerPacks unreadPackIds:(NSArray *)unreadPackIds cacheUpdateDate:(int32_t)cacheUpdateDate
 {
-    stickerPacks = TGIOS6StaticStickerPacks(stickerPacks);
+    stickerPacks = OGCompatValidPacks(stickerPacks);
     NSDictionary *currentDict = [self cachedStickerPacks];
     NSDictionary *newDict = nil;
     if (currentDict.count == 0)
@@ -975,7 +963,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     cachedPacks = newDict;
     OSSpinLockUnlock(&cachedPacksLock);
     
-    [self storePacksDictionary:newDict];
+    [self schedulePacksPersist:newDict];
     
     return newDict;
 }
@@ -1024,7 +1012,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         cachedPacks = updatedDict;
         OSSpinLockUnlock(&cachedPacksLock);
         
-        [self storePacksDictionary:updatedDict];
+        [self schedulePacksPersist:updatedDict];
     }
 }
 
@@ -1040,7 +1028,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         {
             TLmessages_AllStickers$messages_allStickers *allStickers = (TLmessages_AllStickers$messages_allStickers *)result;
             
-            NSArray *currentStickerPacks = [self cachedStickerPacks][@"packs"];
+            NSArray *currentStickerPacks = [[self cachedStickerPacks] objectForKey:@"packs"];
             
             NSMutableArray *resultingPackReferences = [[NSMutableArray alloc] init];
             NSMutableArray *missingPackSignals = [[NSMutableArray alloc] init];
@@ -1061,21 +1049,13 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 
                 if (currentPack == nil || currentPack.packHash != resultPack.n_hash || currentPack.installedDate == 0)
                 {
-                    SSignal *packInfoSignal = [[[self stickerPackInfo:resultPackReference packHash:resultPack.n_hash]
-                        timeout:12.0
-                        onQueue:[SQueue concurrentDefaultQueue]
-                        orSignal:[SSignal single:[NSNull null]]]
-                        catch:^SSignal *(__unused id error)
-                    {
-                        return [SSignal single:[NSNull null]];
-                    }];
-                    [missingPackSignals addObject:packInfoSignal];
+                    [missingPackSignals addObject:TGStickersNullOnFailure([self stickerPackInfo:resultPackReference packHash:resultPack.n_hash], 12.0)];
                 }
                 
                 [resultingPackReferences addObject:resultPackReference];
             }
             
-            return [TGIOS6CombineStickerPackInfoSignals(missingPackSignals) map:^id (NSArray *additionalPacks)
+            return [OGCompatCombinePackInfoSignals(missingPackSignals) map:^id (NSArray *additionalPacks)
             {
                 NSMutableArray *finalStickerPacks = [[NSMutableArray alloc] init];
                 
@@ -1083,10 +1063,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 {
                     TGStickerPack *foundPack = nil;
                     
-                    for (TGStickerPack *pack in additionalPacks)
+                    for (TGStickerPack *pack in OGCompatValidPacks(additionalPacks))
                     {
-                        if (![pack isKindOfClass:[TGStickerPack class]])
-                            continue;
                         if ([pack.packReference isEqual:reference])
                         {
                             foundPack = pack;
@@ -1111,10 +1089,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 }
 
 
-                bool hadFailedPack = [additionalPacks containsObject:[NSNull null]];
-                int32_t cacheUpdateDate = hadFailedPack ? 0 : (int32_t)[[NSDate date] timeIntervalSince1970];
-                NSDictionary *result = [self replaceCachedStickerPacks:finalStickerPacks cacheUpdateDate:cacheUpdateDate];
-                return result;
+                int32_t refreshedAt = [additionalPacks containsObject:[NSNull null]] ? 0 : (int32_t)[[NSDate date] timeIntervalSince1970];
+                return [self replaceCachedStickerPacks:finalStickerPacks cacheUpdateDate:refreshedAt];
             }];
         }
         
@@ -1127,7 +1103,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     getArchivedStickers.offset_id = 0;
     getArchivedStickers.limit = 1;
     
-    SSignal *archivedStickers = [[[[TGTelegramNetworking instance] requestSignal:getArchivedStickers] mapToSignal:^SSignal *(TLmessages_ArchivedStickers *result) {
+    SSignal *archivedStickers = [[[TGTelegramNetworking instance] requestSignal:getArchivedStickers] mapToSignal:^SSignal *(TLmessages_ArchivedStickers *result) {
         TGArchivedStickerPacksSummary *summary = [[TGArchivedStickerPacksSummary alloc] initWithCount:result.count];
         NSDictionary *dict = [self replaceArchivedStickerPacksSummary:summary];
         
@@ -1136,17 +1112,11 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         }
         
         return [SSignal single:[NSNull null]];
-    }] timeout:8.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal single:[NSNull null]]];
-    archivedStickers = [archivedStickers catch:^SSignal *(__unused id error)
-    {
-        return [SSignal single:[NSNull null]];
     }];
     
-    return [[SSignal mergeSignals:@[allStickers, archivedStickers]] mapToSignal:^SSignal *(id value)
+    return [[SSignal mergeSignals:@[allStickers, TGStickersNullOnFailure(archivedStickers, 8.0)]] filter:^bool(id value)
     {
-        if ([value isEqual:[NSNull null]])
-            return [SSignal complete];
-        return [SSignal single:value];
+        return ![value isEqual:[NSNull null]];
     }];
 }
 
@@ -1166,7 +1136,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         {
             TLmessages_FeaturedStickers$messages_featuredStickers *allStickers = (TLmessages_FeaturedStickers$messages_featuredStickers *)result;
             
-            NSArray *currentStickerPacks = [self cachedStickerPacks][@"featuredPacks"];
+            NSArray *currentStickerPacks = [[self cachedStickerPacks] objectForKey:@"featuredPacks"];
             
             NSMutableArray *resultingPackReferences = [[NSMutableArray alloc] init];
             NSMutableArray *missingPackSignals = [[NSMutableArray alloc] init];
@@ -1186,7 +1156,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                     }
                 }
                 
-                if ((currentPack == nil || currentPack.packHash != resultPack.n_hash) && missingPackSignals.count < TGIOS6StickerPackInfoRefreshLimit)
+                if ((currentPack == nil || currentPack.packHash != resultPack.n_hash) && missingPackSignals.count < OGCompatPackInfoBatchSize)
                     [missingPackSignals addObject:[self stickerPackInfo:resultPackReference packHash:resultPack.n_hash featured:true]];
                 
                 [resultingPackReferences addObject:resultPackReference];
@@ -1200,10 +1170,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 {
                     TGStickerPack *foundPack = nil;
                     
-                    for (TGStickerPack *pack in additionalPacks)
+                    for (TGStickerPack *pack in OGCompatValidPacks(additionalPacks))
                     {
-                        if (![pack isKindOfClass:[TGStickerPack class]])
-                            continue;
                         if ([pack.packReference isEqual:reference])
                         {
                             foundPack = pack;
@@ -1232,8 +1200,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                     [unreadPackIds addObject:nPackId];
                 }
                 
-                NSDictionary *result = [self replaceCachedFeaturedPacks:finalStickerPacks unreadPackIds:unreadPackIds cacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
-                return result;
+                return [self replaceCachedFeaturedPacks:finalStickerPacks unreadPackIds:unreadPackIds cacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
             }];
         }
         
@@ -1287,8 +1254,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                     if (document.documentId != 0)
                         [documents addObject:document];
                 }
-                documents = [[NSMutableArray alloc] initWithArray:TGIOS6StaticStickerDocuments(documents)];
-                
                 [TGDatabaseInstance() storeRemoteStickers:documents forEmoticon:emoticon hash:concreteResult.n_hash];
                 
                 return [SSignal single:documents];
@@ -1300,11 +1265,9 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     };
     
     return [cachedSignal mapToSignal:^SSignal *(TGCachedStickers *cachedStickers) {
-        if (cachedStickers.documents.count > 0) {
-            return [[SSignal single:cachedStickers.documents] then:remoteSignal(cachedStickers.stickersHash)];
-        } else {
-            return [[SSignal single:[NSNull null]] then:remoteSignal(0)];
-        }
+        bool hasCached = cachedStickers.documents.count > 0;
+        id initialValue = hasCached ? (id)cachedStickers.documents : (id)[NSNull null];
+        return [[SSignal single:initialValue] then:remoteSignal(hasCached ? cachedStickers.stickersHash : 0)];
     }];
 }
 
@@ -1321,18 +1284,18 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 + (SSignal *)stickerPackInfo:(id<TGStickerPackReference>)packReference packHash:(int32_t)packHash featured:(bool)featured
 {
     
-    NSString *multicastKey = TGIOS6StickerPackReferenceKey(packReference, packHash, featured);
-    TGStickerPack *cachedPackInfo = TGIOS6CachedStickerPackInfo(multicastKey);
-    if (cachedPackInfo != nil)
-        return [SSignal single:cachedPackInfo];
+    NSString *multicastKey = OGCompatPackInfoKey(packReference, packHash, featured);
+    TGStickerPack *knownPackInfo = OGCompatPackInfoCacheLookup(multicastKey);
+    if (knownPackInfo != nil)
+        return [SSignal single:knownPackInfo];
     
-    return [TGIOS6StickerPackInfoSignalManager() multicastedSignalForKey:multicastKey producer:^SSignal *
+    return [OGCompatPackInfoManager() multicastedSignalForKey:multicastKey producer:^SSignal *
     {
         TLRPCmessages_getStickerSet$messages_getStickerSet *getStickerSet = [[TLRPCmessages_getStickerSet$messages_getStickerSet alloc] init];
         getStickerSet.stickerset = [self _inputStickerSetFromPackReference:packReference];
         return [[[TGTelegramNetworking instance] requestSignal:getStickerSet] map:^id (TLmessages_StickerSet *result)
         {
-            if (result.set == nil)
+            if (!result.set)
                 return [NSNull null];
             TGStickerPackIdReference *resultPackReference = [[TGStickerPackIdReference alloc] initWithPackId:result.set.n_id packAccessHash:result.set.access_hash shortName:result.set.short_name];
             
@@ -1356,10 +1319,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 if (document.documentId != 0)
                     [documents addObject:document];
             }
-            documents = [[NSMutableArray alloc] initWithArray:TGIOS6StaticStickerDocuments(documents)];
-            
             TGStickerPack *pack = [[TGStickerPack alloc] initWithPackReference:resultPackReference title:result.set.title stickerAssociations:stickerAssociations documents:documents packHash:packHash hidden:(result.set.flags & (1 << 1)) isMask:(result.set.flags & (1 << 3)) isFeatured:featured installedDate:result.set.installed_date];
-            TGIOS6StoreCachedStickerPackInfo(multicastKey, pack);
+            OGCompatPackInfoCacheInsert(multicastKey, pack);
             return pack;
         }];
     }];
@@ -1408,7 +1369,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
             
             [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:updatedDict toMulticastedPipeForKey:@"stickerPacks"];
             
-            [self storePacksDictionary:updatedDict];
+            [self schedulePacksPersist:updatedDict];
             
             if ([result isKindOfClass:[TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive class]]) {
                 TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive *concreteResult = (TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive *)result;
@@ -1419,7 +1380,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 for (TLStickerSet *resultPack in concreteResult.sets)
                 {
                     TGStickerPackIdReference *resultPackReference = [[TGStickerPackIdReference alloc] initWithPackId:resultPack.n_id packAccessHash:resultPack.access_hash shortName:resultPack.short_name];
-                    if (missingPackSignals.count < TGIOS6StickerPackInfoRefreshLimit)
+                    if (missingPackSignals.count < OGCompatPackInfoBatchSize)
                         [missingPackSignals addObject:[self stickerPackInfo:resultPackReference packHash:resultPack.n_hash]];
                     
                     [resultingPackReferences addObject:resultPackReference];
@@ -1484,7 +1445,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         
         [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:updatedDict toMulticastedPipeForKey:@"stickerPacks"];
         
-        [self storePacksDictionary:updatedDict];
+        [self schedulePacksPersist:updatedDict];
         
         return [SSignal complete];
     }];
@@ -1531,7 +1492,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         
         [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:updatedDict toMulticastedPipeForKey:@"stickerPacks"];
         
-        [self storePacksDictionary:updatedDict];
+        [self schedulePacksPersist:updatedDict];
     }];
 }
 
@@ -1572,7 +1533,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         cachedPacks = updatedDict;
         OSSpinLockUnlock(&cachedPacksLock);
         
-        [self storePacksDictionary:updatedDict];
+        [self schedulePacksPersist:updatedDict];
         
         [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:updatedDict toMulticastedPipeForKey:@"stickerPacks"];
     }];
@@ -1636,7 +1597,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 {
     NSArray *documents = dictionary[@"documents"];
 
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
     {
         SSignal *signal = [SSignal complete];
         
@@ -1687,7 +1648,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 + (SSignal *)updatedFeaturedStickerPacks {
     return [[[TGTelegramNetworking instance] genericTasksSignalManager] multicastedSignalForKey:@"updateFeaturedStickers" producer:^SSignal *{
         return [[self updateFeaturedStickerPacks] onNext:^(NSDictionary *dict) {
-            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeStickerPacks(dict) toMulticastedPipeForKey:@"stickerPacks"];
+            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedPackDictionary(dict) toMulticastedPipeForKey:@"stickerPacks"];
         }];
     }];
 }
@@ -1759,7 +1720,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         for (TLStickerSetCovered *resultPackCovered in result.sets)
         {
             TGStickerPackIdReference *resultPackReference = [[TGStickerPackIdReference alloc] initWithPackId:resultPackCovered.set.n_id packAccessHash:resultPackCovered.set.access_hash shortName:resultPackCovered.set.short_name];
-            if (missingPackSignals.count < TGIOS6StickerPackInfoRefreshLimit)
+            if (missingPackSignals.count < OGCompatPackInfoBatchSize)
                 [missingPackSignals addObject:[self stickerPackInfo:resultPackReference packHash:resultPackCovered.set.n_hash]];
             
             [resultingPackReferences addObject:resultPackReference];
@@ -1802,13 +1763,11 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
             int32_t expirationTimestamp = cachedStickerPack.date + 60 * 60;
             if (CFAbsoluteTimeGetCurrent() < expirationTimestamp)
             {
-                TGStickerPack *filteredPack = TGIOS6StaticStickerPack(cachedStickerPack.stickerPack);
-                if (filteredPack == nil && cachedStickerPack.stickerPack != nil)
-                {
-                    TGStickerPack *pack = cachedStickerPack.stickerPack;
-                    filteredPack = [[TGStickerPack alloc] initWithPackReference:pack.packReference title:pack.title stickerAssociations:pack.stickerAssociations documents:@[] packHash:pack.packHash hidden:pack.hidden isMask:pack.isMask isFeatured:pack.isFeatured installedDate:pack.installedDate];
-                }
-                return [SSignal single:filteredPack == nil ? (id)[NSNull null] : filteredPack];
+                TGStickerPack *storedPack = cachedStickerPack.stickerPack;
+                TGStickerPack *usablePack = OGCompatValidPack(storedPack);
+                if (usablePack == nil && storedPack != nil)
+                    usablePack = [[TGStickerPack alloc] initWithPackReference:storedPack.packReference title:storedPack.title stickerAssociations:storedPack.stickerAssociations documents:@[] packHash:storedPack.packHash hidden:storedPack.hidden isMask:storedPack.isMask isFeatured:storedPack.isFeatured installedDate:storedPack.installedDate];
+                return [SSignal single:usablePack != nil ? usablePack : (id)[NSNull null]];
             }
         }
         
@@ -1852,16 +1811,16 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     cachedPacks = dict;
     OSSpinLockUnlock(&cachedPacksLock);
     
-    [self storePacksDictionary:dict];
+    [self schedulePacksPersist:dict];
 }
 
-+ (NSMutableDictionary *)stickerPackNameParts {
-    static NSMutableDictionary *dictionary;
++ (NSMutableDictionary *)packTitleTokenCache {
+    static NSMutableDictionary *sharedTokenCache;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^ {
-        dictionary = [[NSMutableDictionary alloc] init];
+        sharedTokenCache = [[NSMutableDictionary alloc] init];
     });
-    return dictionary;
+    return sharedTokenCache;
 }
 
 static NSArray *breakStringIntoParts(NSString *string)
@@ -1881,13 +1840,13 @@ static NSArray *breakStringIntoParts(NSString *string)
     if ([stickerPack.title isEqualToString:query])
         return true;
     
-    NSArray *packNameParts = [self stickerPackNameParts][stickerPack.title];
+    NSArray *packNameParts = [self packTitleTokenCache][stickerPack.title];
     if (packNameParts == nil)
     {
         packNameParts = breakStringIntoParts(stickerPack.title);
         if ([stickerPack.packReference isKindOfClass:[TGStickerPackIdReference class]])
             packNameParts = [packNameParts arrayByAddingObjectsFromArray:breakStringIntoParts(((TGStickerPackIdReference *)stickerPack.packReference).shortName)];
-        [self stickerPackNameParts][stickerPack.title] = packNameParts;
+        [self packTitleTokenCache][stickerPack.title] = packNameParts;
     }
     
     bool failed = true;
@@ -1970,7 +1929,7 @@ static NSArray *breakStringIntoParts(NSString *string)
                     if (currentPack == nil)
                         currentPack = [TGDatabaseInstance() stickerPackForReference:resultPackReference].stickerPack;
                     
-                    if ((currentPack == nil || currentPack.packHash != resultPack.n_hash) && missingPackSignals.count < TGIOS6StickerPackInfoRefreshLimit)
+                    if ((currentPack == nil || currentPack.packHash != resultPack.n_hash) && missingPackSignals.count < OGCompatPackInfoBatchSize)
                         [missingPackSignals addObject:[self stickerPackInfo:resultPackReference packHash:resultPack.n_hash featured:true]];
                     
                     [resultingPackReferences addObject:resultPackReference];
@@ -2042,40 +2001,27 @@ static NSArray *breakStringIntoParts(NSString *string)
         NSArray *favoriteStickers = results[1];
         NSDictionary *recentDict = results[2];
     
-        NSMutableDictionary *addedDocumentIds = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            addedDocumentIds[emoji] = [[NSMutableSet alloc] init];
-        }
-        NSMutableDictionary *matchedRecentDocumentIds = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedRecentDocumentIds[emoji] = [[NSMutableSet alloc] init];
-        }
-        NSMutableDictionary *matchedRecentDocumentIdsSorted = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedRecentDocumentIdsSorted[emoji] = [[NSMutableArray alloc] init];
-        }
+        NSMutableDictionary *(^bucketsPerEmoji)(Class) = ^NSMutableDictionary *(Class containerClass)
+        {
+            NSMutableDictionary *buckets = [[NSMutableDictionary alloc] initWithCapacity:emojis.count];
+            for (NSString *emoji in emojis)
+                buckets[emoji] = [[containerClass alloc] init];
+            return buckets;
+        };
+        
+        NSMutableDictionary *addedDocumentIds = bucketsPerEmoji([NSMutableSet class]);
+        NSMutableDictionary *matchedRecentDocumentIds = bucketsPerEmoji([NSMutableSet class]);
+        NSMutableDictionary *matchedRecentDocumentIdsSorted = bucketsPerEmoji([NSMutableArray class]);
         
         NSMutableDictionary *maybeMatchedRecentDocuments = [[NSMutableDictionary alloc] init];
         
-        NSMutableDictionary *matchedRecentDocuments = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedRecentDocuments[emoji] = [[NSMutableArray alloc] init];
-        }
+        NSMutableDictionary *matchedRecentDocuments = bucketsPerEmoji([NSMutableArray class]);
         
-        NSMutableDictionary *matchedFavoriteDocuments = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedFavoriteDocuments[emoji] = [[NSMutableArray alloc] init];
-        }
+        NSMutableDictionary *matchedFavoriteDocuments = bucketsPerEmoji([NSMutableArray class]);
         
-        NSMutableDictionary *matchedAddedDocuments = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedAddedDocuments[emoji] = [[NSMutableArray alloc] init];
-        }
+        NSMutableDictionary *matchedAddedDocuments = bucketsPerEmoji([NSMutableArray class]);
         
-        NSMutableDictionary *matchedOursDocuments = [[NSMutableDictionary alloc] init];
-        for (NSString *emoji in emojis) {
-            matchedOursDocuments[emoji] = [[NSMutableArray alloc] init];
-        }
+        NSMutableDictionary *matchedOursDocuments = bucketsPerEmoji([NSMutableArray class]);
         
         NSMutableDictionary *associations = [[NSMutableDictionary alloc] init];
         NSMutableDictionary *stickerPacks = [[NSMutableDictionary alloc] init];
@@ -2105,17 +2051,13 @@ static NSArray *breakStringIntoParts(NSString *string)
         for (NSString *emoji in emojis)
         {
             NSMutableArray *sorted = [[NSMutableArray alloc] initWithArray:[matchedRecentDocumentIds[emoji] allObjects]];
-            [sorted sortUsingComparator:^NSComparisonResult(NSNumber *obj1, NSNumber *obj2)
+            [sorted sortUsingComparator:^NSComparisonResult(NSNumber *first, NSNumber *second)
             {
-                int32_t date1 = [stickerSortDates[obj1] intValue];
-                int32_t date2 = [stickerSortDates[obj2] intValue];
-                
-                if (date1 > date2)
-                    return NSOrderedAscending;
-                else if (date1 < date2)
-                    return NSOrderedDescending;
-                else
-                    return obj1.longLongValue > obj2.longLongValue ? NSOrderedAscending : NSOrderedDescending;
+                int32_t firstDate = [stickerSortDates[first] intValue];
+                int32_t secondDate = [stickerSortDates[second] intValue];
+                if (firstDate != secondDate)
+                    return firstDate > secondDate ? NSOrderedAscending : NSOrderedDescending;
+                return first.longLongValue > second.longLongValue ? NSOrderedAscending : NSOrderedDescending;
             }];
             
             sorted = [[sorted subarrayWithRange:NSMakeRange(0, MIN(5, (int)sorted.count))] mutableCopy];
@@ -2205,10 +2147,7 @@ static NSArray *breakStringIntoParts(NSString *string)
                 
                 bool isUnknownStickerPack = [stickerPack.packReference isKindOfClass:[TGStickerPackIdReference class]] && [unknownStickerPackIds containsObject:@(((TGStickerPackIdReference *)stickerPack.packReference).packId)];
                 
-                NSMutableDictionary *documentIds = [[NSMutableDictionary alloc] init];
-                for (NSString *emoji in emojis) {
-                    documentIds[emoji] = [[NSMutableArray alloc] init];
-                }
+                NSMutableDictionary *documentIds = bucketsPerEmoji([NSMutableArray class]);
                 
                 for (TGStickerAssociation *association in stickerPack.stickerAssociations)
                 {
@@ -2258,22 +2197,18 @@ static NSArray *breakStringIntoParts(NSString *string)
                 }
             }
 
+            int32_t (^sortDateOfDocument)(TGDocumentMediaAttachment *) = ^int32_t(TGDocumentMediaAttachment *document)
+            {
+                int32_t date = [stickerSortDates[@(document.documentId)] intValue];
+                if (date == 0 && [document.stickerPackReference isKindOfClass:[TGStickerPackIdReference class]])
+                    date = [stickerPackSortDates[@(((TGStickerPackIdReference *)document.stickerPackReference).packId)] intValue];
+                return date;
+            };
+            
             NSComparisonResult (^dateComparator)(TGDocumentMediaAttachment *, TGDocumentMediaAttachment *) = ^NSComparisonResult(TGDocumentMediaAttachment *obj1, TGDocumentMediaAttachment *obj2)
             {
-                int32_t date1 = [stickerSortDates[@(obj1.documentId)] intValue];
-                if (date1 == 0) {
-                    if ([obj1.stickerPackReference isKindOfClass:[TGStickerPackIdReference class]]) {
-                        NSNumber *packId = @(((TGStickerPackIdReference *)obj1.stickerPackReference).packId);
-                        date1 = [stickerPackSortDates[packId] intValue];
-                    }
-                }
-                int32_t date2 = [stickerSortDates[@(obj2.documentId)] intValue];
-                if (date2 == 0) {
-                    if ([obj2.stickerPackReference isKindOfClass:[TGStickerPackIdReference class]]) {
-                        NSNumber *packId = @(((TGStickerPackIdReference *)obj2.stickerPackReference).packId);
-                        date2 = [stickerPackSortDates[packId] intValue];
-                    }
-                }
+                int32_t date1 = sortDateOfDocument(obj1);
+                int32_t date2 = sortDateOfDocument(obj2);
                 
                 if (date1 > date2)
                     return NSOrderedAscending;
@@ -2299,7 +2234,6 @@ static NSArray *breakStringIntoParts(NSString *string)
                 [finalDocuments addObjectsFromArray:matchedRecentDocuments[emoji]];
                 [finalDocuments addObjectsFromArray:matchedFavoriteDocuments[emoji]];
                 [finalDocuments addObjectsFromArray:matchedAddedDocuments[emoji]];
-                finalDocuments = [[NSMutableArray alloc] initWithArray:TGIOS6StaticStickerDocuments(finalDocuments)];
                 
                 [finalEmoji addObject:@{ @"emoji": emoji, @"documents": finalDocuments }];
             }
@@ -2332,7 +2266,7 @@ static NSArray *breakStringIntoParts(NSString *string)
                         NSArray *additionalStickers = results[i];
                         i++;
                         
-                        for (TGDocumentMediaAttachment *document in TGIOS6StaticStickerDocuments(additionalStickers)) {
+                        for (TGDocumentMediaAttachment *document in OGCompatArrayOrEmpty(additionalStickers)) {
                             if (stickerSortDates[@(document.documentId)] == nil)
                                 stickerSortDates[@(document.documentId)] = @(arc4random_uniform(10000));
                             
@@ -2345,7 +2279,7 @@ static NSArray *breakStringIntoParts(NSString *string)
                         
                          [matchedOursDocuments[emoji] sortUsingComparator:dateComparator];
                         
-                        NSArray *updatedDocuments = TGIOS6StaticStickerDocuments([set[@"documents"] arrayByAddingObjectsFromArray:matchedOursDocuments[emoji]]);
+                        NSArray *updatedDocuments = OGCompatArrayOrEmpty([set[@"documents"] arrayByAddingObjectsFromArray:matchedOursDocuments[emoji]]);
                         [updatedEmoji addObject:@{ @"emoji": emoji, @"documents": updatedDocuments }];
                     }
                     

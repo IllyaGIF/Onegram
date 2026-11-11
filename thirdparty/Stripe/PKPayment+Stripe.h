@@ -5,7 +5,8 @@
 //  Created by Ben Guo on 7/2/15.
 //
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import "OGStripeCompat.h"
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 #import <PassKit/PassKit.h>
 @interface PKPayment (Stripe)
 

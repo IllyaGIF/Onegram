@@ -1,6 +1,7 @@
 #import "TGOnegramSettings.h"
+#import "TGMessageContextMenu.h"
 #import "TGContentBubbleViewModel.h"
-#import "IOS6FeatureProbe.h"
+#import "OGFeatureProbe.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -163,19 +164,17 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         {
             NSString *title = @"";
             if ([authorPeer isKindOfClass:[TGUser class]]) {
-                if (_savedMessage && ((TGUser *)authorPeer).uid == TGTelegraphInstance.clientUserId)
-                    title = TGLocalized(@"DialogList.You");
-                else
-                    title = ((TGUser *)authorPeer).displayName;
-                
-                if (title.length == 0 && ((TGUser *)authorPeer).userName.length != 0)
-                    title = ((TGUser *)authorPeer).userName;
+                TGUser *userAuthor = (TGUser *)authorPeer;
+                title = (_savedMessage && userAuthor.uid == TGTelegraphInstance.clientUserId) ? TGLocalized(@"DialogList.You") : userAuthor.displayName;
+                if (title.length == 0 && userAuthor.userName.length != 0)
+                    title = userAuthor.userName;
                 if (title.length == 0)
-                    title = [NSString stringWithFormat:@"%lld", ((TGUser *)authorPeer).uid];
+                    title = [NSString stringWithFormat:@"%lld", userAuthor.uid];
             } else if ([authorPeer isKindOfClass:[TGConversation class]]) {
-                title = ((TGConversation *)authorPeer).chatTitle;
+                TGConversation *chatAuthor = (TGConversation *)authorPeer;
+                title = chatAuthor.chatTitle;
                 if (title.length == 0)
-                    title = [NSString stringWithFormat:@"%lld", ((TGConversation *)authorPeer).conversationId];
+                    title = [NSString stringWithFormat:@"%lld", chatAuthor.conversationId];
             }
             
             _authorNameModel = [[TGModernTextViewModel alloc] initWithText:title font:[assetsSource messageAuthorNameFont]];
@@ -196,8 +195,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
             dispatch_once(&onceToken, ^
             {
                 if (iosMajorVersion() >= 7) {
-                    dateFont = TGIos6CreateCTFontFromUIFont(TGItalicSystemFontOfSize(12.0f));
-                    adminFont = TGIos6CreateCTFontFromUIFont(TGSystemFontOfSize(12.0f));
+                    dateFont = OGCompatCreateCTFont(TGItalicSystemFontOfSize(12.0f));
+                    adminFont = OGCompatCreateCTFont(TGSystemFontOfSize(12.0f));
                 } else {
                     UIFont *font = TGItalicSystemFontOfSize(12.0f);
                     dateFont = CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, nil);
@@ -292,10 +291,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         {            
             if (!_inhibitChecks)
             {
-                UIImage *deliveredIcon = _context.presentation.images.chatDeliveredIcon;
-                UIImage *readIcon = _context.presentation.images.chatReadIcon;
-                _checkFirstModel = [[TGModernImageViewModel alloc] initWithImage:deliveredIcon];
-                _checkSecondModel = [[TGModernImageViewModel alloc] initWithImage:readIcon];
+                _checkFirstModel = [[TGModernImageViewModel alloc] initWithImage:_context.presentation.images.chatDeliveredIcon];
+                _checkSecondModel = [[TGModernImageViewModel alloc] initWithImage:_context.presentation.images.chatReadIcon];
             }
             
             if (_deliveryState == TGMessageDeliveryStatePending && !_inhibitChecks)
@@ -846,7 +843,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         {
             CTFontRef adminFont = NULL;
             if (iosMajorVersion() >= 7) {
-                adminFont = TGIos6CreateCTFontFromUIFont(TGSystemFontOfSize(12.0f));
+                adminFont = OGCompatCreateCTFont(TGSystemFontOfSize(12.0f));
             } else {
                 UIFont *font = TGSystemFontOfSize(12.0f);
                 adminFont = CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, nil);
@@ -1369,7 +1366,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
 
 - (void)doubleTapGestureRecognizerSingleTapped:(TGDoubleTapGestureRecognizer *)__unused recognizer
 {
-    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] && [TGMessageContextMenu currentStyle] == TGMessageContextMenuStyleAndroid)
         [_context.companionHandle requestAction:@"messageSingleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
 }
 
@@ -1421,7 +1418,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     }
     
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
     bool inlineMessageLayout = [self usesInlineMessageLayout];
     bool hasReactions = [self reactionsShareTimeRow];
     OGConversationAppearance *brandedAppearance = brandedIOS6Style ? [TGPresentation brandedIOS6ConversationAppearance] : nil;
@@ -1686,7 +1683,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     CGFloat reactionsBlockHeight = reactionsLayout != nil ? (TGMessageReactionsCurrentMetrics().topSpacing + reactionsLayout.size.height) : 0.0f;
     CGFloat backgroundVerticalPadding = inlineMessageLayout ? (layoutConstants->textBubblePaddingTop + layoutConstants->textBubblePaddingBottom) : (brandedIOS6Style ? (brandedBubbleInsets.top + brandedBubblePadding.top + brandedBubblePadding.bottom + brandedBubbleInsets.bottom) : TGMessageFontMetric(12.0f));
     CGRect backgroundFrame = CGRectMake(_incomingAppearance ? (avatarOffset + layoutConstants->leftInset) : (containerSize.width - backgroundWidth - layoutConstants->rightInset - unsentOffset), topSpacing, backgroundWidth, MAX(((_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 44.0f : (webpageOnly ? 0.0 : ((brandedIOS6Style || inlineMessageLayout) ? 30.0f : 35.0f))), headerSize.height + contentSize.height + backgroundVerticalPadding));
-    if (classicIOS6Style && !brandedIOS6Style)
+    if (classicThemeStyle && !brandedIOS6Style)
     {
         backgroundFrame.size.height += 7.0f;
     }

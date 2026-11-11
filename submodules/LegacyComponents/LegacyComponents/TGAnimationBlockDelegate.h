@@ -2,10 +2,12 @@
 #import <QuartzCore/QuartzCore.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-@interface TGAnimationBlockDelegate : NSObject <CAAnimationDelegate>
+#define OG_COMPAT_ANIMATION_DELEGATE_PROTOCOLS <CAAnimationDelegate>
 #else
-@interface TGAnimationBlockDelegate : NSObject
+#define OG_COMPAT_ANIMATION_DELEGATE_PROTOCOLS
 #endif
+
+@interface TGAnimationBlockDelegate : NSObject OG_COMPAT_ANIMATION_DELEGATE_PROTOCOLS
 
 @property (nonatomic) bool removeLayerOnCompletion;
 @property (nonatomic) NSNumber *opacityOnCompletion;

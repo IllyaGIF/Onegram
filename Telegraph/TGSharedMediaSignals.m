@@ -67,51 +67,40 @@
 
 + (TLInputFileLocation *)inputFileLocationForImageUrl:(NSString *)imageUrl datacenterId:(NSInteger *)outDatacenterId originInfo:(TGMediaOriginInfo *)originInfo
 {
-    if ([imageUrl hasPrefix:@"photo:"])
+    bool isPhoto = [imageUrl hasPrefix:@"photo:"];
+    bool isDocumentThumb = !isPhoto && [imageUrl hasPrefix:@"documentthumb:"];
+    NSArray *parts = (isPhoto || isDocumentThumb) ? [imageUrl componentsSeparatedByString:@":"] : nil;
+    if (parts.count >= 7)
     {
-        NSArray *components = [imageUrl componentsSeparatedByString:@":"];
-        if (components.count >= 7)
+        int64_t fileId = [parts[2] longLongValue];
+        int64_t accessHash = [parts[3] longLongValue];
+        NSString *thumbSize = parts[5] ?: @"";
+        NSData *originReference = originInfo.fileReference;
+        NSData *reference = originReference.length != 0 ? originReference : ([NSData dataWithHexString:parts[6]] ?: [NSData data]);
+
+        TLInputFileLocation *result = nil;
+        if (isPhoto)
         {
-            int32_t datacenterId = [[components objectAtIndex:1] intValue];
-            int64_t fileId = [[components objectAtIndex:2] longLongValue];
-            int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-            NSString *thumbSize = [components objectAtIndex:5];
-            NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-
-            TLInputFileLocation$inputPhotoFileLocation *location = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
-            location.n_id = fileId;
-            location.access_hash = accessHash;
-            NSData *originFileReference = originInfo.fileReference;
-            location.file_reference = originFileReference.length != 0 ? originFileReference : (fileReference ?: [NSData data]);
-            location.thumb_size = thumbSize ?: @"";
-
-            if (outDatacenterId != NULL)
-                *outDatacenterId = datacenterId;
-            return location;
+            TLInputFileLocation$inputPhotoFileLocation *photo = [[TLInputFileLocation$inputPhotoFileLocation alloc] init];
+            photo.n_id = fileId;
+            photo.access_hash = accessHash;
+            photo.file_reference = reference;
+            photo.thumb_size = thumbSize;
+            result = photo;
         }
-    }
-    else if ([imageUrl hasPrefix:@"documentthumb:"])
-    {
-        NSArray *components = [imageUrl componentsSeparatedByString:@":"];
-        if (components.count >= 7)
+        else
         {
-            int32_t datacenterId = [[components objectAtIndex:1] intValue];
-            int64_t fileId = [[components objectAtIndex:2] longLongValue];
-            int64_t accessHash = [[components objectAtIndex:3] longLongValue];
-            NSString *thumbSize = [components objectAtIndex:5];
-            NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-
-            TLInputFileLocation$inputDocumentFileLocation *location = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
-            location.n_id = fileId;
-            location.access_hash = accessHash;
-            NSData *originFileReference = originInfo.fileReference;
-            location.file_reference = originFileReference.length != 0 ? originFileReference : (fileReference ?: [NSData data]);
-            location.thumb_size = thumbSize ?: @"";
-
-            if (outDatacenterId != NULL)
-                *outDatacenterId = datacenterId;
-            return location;
+            TLInputFileLocation$inputDocumentFileLocation *document = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
+            document.n_id = fileId;
+            document.access_hash = accessHash;
+            document.file_reference = reference;
+            document.thumb_size = thumbSize;
+            result = document;
         }
+
+        if (outDatacenterId != NULL)
+            *outDatacenterId = [parts[1] intValue];
+        return result;
     }
 
     int32_t datacenterId = 0;
@@ -151,29 +140,19 @@
 
 - (NSString *)keyForLocation:(id)location
 {
-    if ([location isKindOfClass:[TLInputFileLocation$inputPhotoFileLocation class]])
-    {
-        TLInputFileLocation$inputPhotoFileLocation *photoLocation = location;
-        return [[NSString alloc] initWithFormat:@"photo-%" PRId64 "-%@", photoLocation.n_id, photoLocation.thumb_size ?: @""];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputDocumentFileLocation class]])
-    {
-        TLInputFileLocation$inputDocumentFileLocation *documentLocation = location;
-        return [[NSString alloc] initWithFormat:@"document-%" PRId64 "-%@", documentLocation.n_id, documentLocation.thumb_size ?: @""];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputEncryptedFileLocation class]])
-    {
-        return [[NSString alloc] initWithFormat:@"encrypted-%" PRId64 "", ((TLInputFileLocation$inputEncryptedFileLocation *)location).n_id];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputFileLocation class]])
-    {
-        return [[NSString alloc] initWithFormat:@"image-%" PRId64 "_%" PRId32, ((TLInputFileLocation$inputFileLocation *)location).volume_id, ((TLInputFileLocation$inputFileLocation *)location).local_id];
-    }
-    else if ([location isKindOfClass:[TLInputWebFileLocation$inputWebFileLocation class]])
-    {
+    if ([location isKindOfClass:[TLInputWebFileLocation$inputWebFileLocation class]])
         return [[NSString alloc] initWithFormat:@"web-%d", murMurHash32(((TLInputWebFileLocation$inputWebFileLocation *)location).url)];
+    if ([location isKindOfClass:[TLInputFileLocation$inputEncryptedFileLocation class]])
+        return [[NSString alloc] initWithFormat:@"encrypted-%" PRId64 "", ((TLInputFileLocation$inputEncryptedFileLocation *)location).n_id];
+    if ([location isKindOfClass:[TLInputFileLocation$inputFileLocation class]])
+    {
+        TLInputFileLocation$inputFileLocation *plain = location;
+        return [[NSString alloc] initWithFormat:@"image-%" PRId64 "_%" PRId32, plain.volume_id, plain.local_id];
     }
-    
+    if ([location isKindOfClass:[TLInputFileLocation$inputPhotoFileLocation class]])
+        return [[NSString alloc] initWithFormat:@"photo-%" PRId64 "-%@", ((TLInputFileLocation$inputPhotoFileLocation *)location).n_id, ((TLInputFileLocation$inputPhotoFileLocation *)location).thumb_size ?: @""];
+    if ([location isKindOfClass:[TLInputFileLocation$inputDocumentFileLocation class]])
+        return [[NSString alloc] initWithFormat:@"document-%" PRId64 "-%@", ((TLInputFileLocation$inputDocumentFileLocation *)location).n_id, ((TLInputFileLocation$inputDocumentFileLocation *)location).thumb_size ?: @""];
     return nil;
 }
 

@@ -357,8 +357,8 @@ static CGRect validatedRect(CGRect value) {
     CGPoint _manualScrollerPanStartOffset;
     NSArray *_leftButtonTypes;
     NSArray *_rightButtonTypes;
-    NSMutableArray *_leftButtons;
-    NSMutableArray *_rightButtons;
+    NSMutableArray *_leftButtonViews;
+    NSMutableArray *_rightButtonViews;
     bool _labelOnly;
     bool _smallLabels;
     bool _offsetLabels;
@@ -402,8 +402,8 @@ static CGRect validatedRect(CGRect value) {
             [_scroller addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(scrollerTapGesture:)]];
         [self addSubview:_scroller];
         
-        _leftButtons = [[NSMutableArray alloc] init];
-        _rightButtons = [[NSMutableArray alloc] init];
+        _leftButtonViews = [[NSMutableArray alloc] init];
+        _rightButtonViews = [[NSMutableArray alloc] init];
         
         _leftReadyToPlay = true;
         _rightReadyToPlay = true;
@@ -424,7 +424,7 @@ static CGRect validatedRect(CGRect value) {
                 TGLocalized(@"Conversation.Mute"),
                 TGLocalized(@"Conversation.Unmute"),
                 @"Archive",
-                @"Chats",
+                @"Chats"
             ];
             buttonFont = TGSystemFontOfSize(14.0f);
             CGFloat buttonInset = 10.0f;
@@ -524,13 +524,13 @@ static CGRect validatedRect(CGRect value) {
         } completion:^(__unused BOOL finished) {
             [self updateButtonFrames:true];
             if (!expanded) {
-                for (TGDialogListCellEditingButton *button in _leftButtons) {
+                for (TGDialogListCellEditingButton *button in _leftButtonViews) {
                     if (button.hidden)
                         continue;
                     
                     [button resetAnimation];
                 }
-                for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+                for (TGDialogListCellEditingButton *button in _rightButtonViews.reverseObjectEnumerator) {
                     if (button.hidden)
                         continue;
                     
@@ -547,7 +547,7 @@ static CGRect validatedRect(CGRect value) {
         }];
     } else {
         if (expanded) {
-            for (TGDialogListCellEditingButton *button in toLeft ? _leftButtons : _rightButtons) {
+            for (TGDialogListCellEditingButton *button in toLeft ? _leftButtonViews : _rightButtonViews) {
                 if (button.hidden)
                     continue;
                 
@@ -565,13 +565,13 @@ static CGRect validatedRect(CGRect value) {
         [_scroller setContentOffset:offset animated:false];
         [self updateButtonFrames:true];
         if (!expanded) {
-            for (TGDialogListCellEditingButton *button in _leftButtons) {
+            for (TGDialogListCellEditingButton *button in _leftButtonViews) {
                 if (button.hidden)
                     continue;
                 
                 [button resetAnimation];
             }
-            for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+            for (TGDialogListCellEditingButton *button in _rightButtonViews.reverseObjectEnumerator) {
                 if (button.hidden)
                     continue;
                 
@@ -645,10 +645,10 @@ static CGRect validatedRect(CGRect value) {
 
     if (!_isExpanded && ABS(_scroller.bounds.origin.x) < FLT_EPSILON) {
         _buttonsDirty = true;
-        for (UIButton *button in _leftButtons)
-            button.hidden = true;
-        for (UIButton *button in _rightButtons)
-            button.hidden = true;
+        for (NSArray *group in @[_leftButtonViews, _rightButtonViews]) {
+            for (UIButton *button in group)
+                button.hidden = true;
+        }
         [self updateFrames];
         return;
     }
@@ -698,15 +698,13 @@ static CGRect validatedRect(CGRect value) {
                 [button setBackgroundColor:buttonColorForType(buttonType, self.presentation) force:true];
             index++;
         }
-        while (index < buttons.count) {
-            UIButton *button = buttons[index];
-            button.hidden = true;
-            index++;
+        for (; index < buttons.count; index++) {
+            ((UIButton *)buttons[index]).hidden = true;
         }
     };
 
-    processButtons(_leftButtonTypes, _leftButtons, @selector(leftButtonPressed:), false);
-    processButtons(_rightButtonTypes, _rightButtons, @selector(rightButtonPressed:), true);
+    processButtons(_leftButtonTypes, _leftButtonViews, @selector(leftButtonPressed:), false);
+    processButtons(_rightButtonTypes, _rightButtonViews, @selector(rightButtonPressed:), true);
 }
 
 - (void)setFrame:(CGRect)frame {
@@ -739,14 +737,14 @@ static CGRect validatedRect(CGRect value) {
         
         if (unconstrainedLeftOffsetFactor > 2.0f)
         {
-            for (TGDialogListCellEditingButton *button in _leftButtons) {
+            for (TGDialogListCellEditingButton *button in _leftButtonViews) {
                 if (button.triggered) {
                     self.userInteractionEnabled = false;
                     _ignoringScroll = true;
                     _animatingCollapse = true;
                     _scroller.contentInset = UIEdgeInsetsMake(0.0f, leftContentWidth, 0.0f, 0.0f);
                     
-                    for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+                    for (TGDialogListCellEditingButton *button in _rightButtonViews.reverseObjectEnumerator) {
                         if (!button.hidden)
                             button.alpha = 0.0f;
                     }
@@ -763,7 +761,7 @@ static CGRect validatedRect(CGRect value) {
                         _scroller.contentOffset = CGPointZero;
                         [self updateButtonFrames:true];
                         
-                        for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+                        for (TGDialogListCellEditingButton *button in _rightButtonViews.reverseObjectEnumerator) {
                             if (!button.hidden)
                                 button.alpha = 1.0f;
                         }
@@ -778,8 +776,8 @@ static CGRect validatedRect(CGRect value) {
                     
                     TGDialogListCellEditingControlButton action = TGDialogListCellEditingControlsUnmute;
                     for (NSUInteger index = 0; index < _leftButtonTypes.count; index++) {
-                        if (index < _leftButtons.count) {
-                            if (_leftButtons[index] == button) {
+                        if (index < _leftButtonViews.count) {
+                            if (_leftButtonViews[index] == button) {
                                 action = (TGDialogListCellEditingControlButton)[_leftButtonTypes[index] intValue];
                             }
                         }
@@ -900,7 +898,7 @@ static CGRect validatedRect(CGRect value) {
         if (unconstrainedLeftOffsetFactor > 1.8f && unconstrainedLeftOffsetFactor < 2.2f)
             [_feedbackGenerator prepare];
         
-        for (TGDialogListCellEditingButton *button in _leftButtons) {
+        for (TGDialogListCellEditingButton *button in _leftButtonViews) {
             if (button.hidden) {
                 continue;
             }
@@ -956,7 +954,7 @@ static CGRect validatedRect(CGRect value) {
         CGFloat rightOffsetFactor = MIN(1.0f, MAX(0.0f, offset / rightContentWidth));
         CGFloat hiddenOverflow = MAX(0.0f, rightButtonsWidth - rightContentWidth);
         CGFloat nextButtonEndOffset = bounds.size.width - buttonWidth + hiddenOverflow;
-        for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+        for (TGDialogListCellEditingButton *button in _rightButtonViews.reverseObjectEnumerator) {
             if (button.hidden) {
                 continue;
             }
@@ -994,12 +992,18 @@ static CGRect validatedRect(CGRect value) {
 }
 
 - (void)leftButtonPressed:(UIButton *)button {
-    [self buttonPressed:button buttonTypes:_leftButtonTypes buttons:_leftButtons];
+    [self buttonPressed:button buttonTypes:_leftButtonTypes buttons:_leftButtonViews];
     [self setExpanded:false animated:true];
 }
 
 - (void)rightButtonPressed:(UIButton *)button {
-    [self buttonPressed:button buttonTypes:_rightButtonTypes buttons:_rightButtons];
+    [self buttonPressed:button buttonTypes:_rightButtonTypes buttons:_rightButtonViews];
+}
+
+- (void)og_toggleArchivedTo:(bool)archived {
+    void (^handler)(bool) = _toggleArchived;
+    if (handler != nil)
+        handler(archived);
 }
 
 - (void)buttonPressed:(UIButton *)button buttonTypes:(NSArray *)buttonTypes buttons:(NSMutableArray *)buttons {
@@ -1073,14 +1077,10 @@ static CGRect validatedRect(CGRect value) {
             }
             break;
         case TGDialogListCellEditingControlsArchive:
-            if (_toggleArchived) {
-                _toggleArchived(true);
-            }
+            [self og_toggleArchivedTo:true];
             break;
         case TGDialogListCellEditingControlsUnarchive:
-            if (_toggleArchived) {
-                _toggleArchived(false);
-            }
+            [self og_toggleArchivedTo:false];
             break;
         case TGDialogListCellEditingControlsCommunity:
             if (_openCommunity) {

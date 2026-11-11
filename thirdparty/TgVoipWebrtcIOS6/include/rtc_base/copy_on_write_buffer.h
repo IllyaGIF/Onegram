@@ -1,5 +1,5 @@
-#ifndef TGIOS6_RTC_BASE_COPY_ON_WRITE_BUFFER_H
-#define TGIOS6_RTC_BASE_COPY_ON_WRITE_BUFFER_H
+#ifndef OG_COMPAT_RTC_BASE_COPY_ON_WRITE_BUFFER_H
+#define OG_COMPAT_RTC_BASE_COPY_ON_WRITE_BUFFER_H
 
 #include <stdint.h>
 #include <string>
@@ -8,58 +8,75 @@
 namespace rtc {
 
 class CopyOnWriteBuffer {
+	std::vector<uint8_t> _bytes;
+
+	uint8_t *first() {
+		return _bytes.empty() ? nullptr : &_bytes[0];
+	}
+
+	const uint8_t *first() const {
+		return _bytes.empty() ? nullptr : &_bytes[0];
+	}
+
 public:
-	CopyOnWriteBuffer() {
+	CopyOnWriteBuffer() = default;
+
+	explicit CopyOnWriteBuffer(size_t count) : _bytes(count) {
 	}
 
-	CopyOnWriteBuffer(const uint8_t *data, size_t size) : _data(data, data + size) {
-	}
-
-	explicit CopyOnWriteBuffer(size_t size) : _data(size) {
-	}
-
-	const uint8_t *data() const {
-		return _data.empty() ? nullptr : &_data[0];
-	}
-
-	uint8_t *data() {
-		return _data.empty() ? nullptr : &_data[0];
-	}
-
-	const uint8_t *cdata() const {
-		return data();
-	}
-
-	void *MutableData() {
-		return _data.empty() ? nullptr : &_data[0];
+	CopyOnWriteBuffer(const uint8_t *source, size_t count) : _bytes(source, source + count) {
 	}
 
 	size_t size() const {
-		return _data.size();
+		return _bytes.size();
 	}
 
-	void SetSize(size_t size) {
-		_data.resize(size);
+	void SetSize(size_t count) {
+		_bytes.resize(count);
 	}
 
-	void AppendData(const uint8_t *data, size_t size) {
-		if (data != nullptr && size != 0) {
-			_data.insert(_data.end(), data, data + size);
+	uint8_t *data() {
+		return first();
+	}
+
+	const uint8_t *data() const {
+		return first();
+	}
+
+	const uint8_t *cdata() const {
+		return first();
+	}
+
+	void *MutableData() {
+		return first();
+	}
+
+	void AppendData(const uint8_t *source, size_t count) {
+		if (source == nullptr || count == 0) {
+			return;
 		}
+		_bytes.insert(_bytes.end(), source, source + count);
 	}
 
-	void AppendData(const char *data, size_t size) {
-		AppendData(reinterpret_cast<const uint8_t *>(data), size);
+	void AppendData(const char *source, size_t count) {
+		AppendData(reinterpret_cast<const uint8_t *>(source), count);
 	}
 
-	void AppendData(const CopyOnWriteBuffer &buffer) {
-		AppendData(buffer.data(), buffer.size());
+	void AppendData(const CopyOnWriteBuffer &other) {
+		AppendData(other.first(), other.size());
+	}
+};
+
+class Buffer : public CopyOnWriteBuffer {
+public:
+	Buffer() = default;
+
+	explicit Buffer(size_t count) : CopyOnWriteBuffer(count) {
 	}
 
-private:
-	std::vector<uint8_t> _data;
-
-	};
+	Buffer(const uint8_t *source, size_t count) : CopyOnWriteBuffer(source, count) {
+	}
+};
 
 struct PacketOptions {
 	int packet_id = 0;
@@ -83,32 +100,18 @@ inline int64_t TimeMillis() {
 
 class PacketTransportInternal {
 public:
-	virtual ~PacketTransportInternal() {
-	}
-
-	virtual const std::string &transport_name() const {
-		static std::string empty;
-		return empty;
-	}
+	virtual ~PacketTransportInternal() = default;
 
 	virtual bool writable() const { return false; }
 	virtual bool receiving() const { return false; }
-	virtual int SendPacket(const char *, size_t, const PacketOptions &, int = 0) { return -1; }
+	virtual int GetError() { return 0; }
 	virtual int SetOption(Socket::Option, int) { return 0; }
 	virtual bool GetOption(Socket::Option, int *) { return false; }
-	virtual int GetError() { return 0; }
+	virtual int SendPacket(const char *, size_t, const PacketOptions &, int = 0) { return -1; }
 
-};
-
-class Buffer : public CopyOnWriteBuffer {
-public:
-	Buffer() {
-	}
-
-	explicit Buffer(size_t size) : CopyOnWriteBuffer(size) {
-	}
-
-	Buffer(const uint8_t *data, size_t size) : CopyOnWriteBuffer(data, size) {
+	virtual const std::string &transport_name() const {
+		static const std::string unnamed;
+		return unnamed;
 	}
 };
 

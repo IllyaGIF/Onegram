@@ -12,7 +12,7 @@
 
 @implementation STPPostalCodeValidator
 
-+ (BOOL)stringIsValidPostalCode:(NSString *)string
++ (BOOL)stringIsValidPostalCode:(NSString *_Nullable)string
                            type:(STPPostalCodeType)postalCodeType {
     switch (postalCodeType) {
         case STPCountryPostalCodeTypeNumericOnly:
@@ -24,8 +24,8 @@
     }
 }
 
-+ (BOOL)stringIsValidPostalCode:(NSString *)string
-                    countryCode:(NSString *)countryCode {
++ (BOOL)stringIsValidPostalCode:(NSString *_Nullable)string
+                    countryCode:(NSString *_Nullable)countryCode {
     return [self stringIsValidPostalCode:string
                                     type:[self postalCodeTypeForCountryCode:countryCode]];
 }

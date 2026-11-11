@@ -7,6 +7,7 @@
 //
 
 #import "Stripe.h"
+#import "OGStripeCompat.h"
 #import "STPPromise.h"
 #import "STPPaymentMethodTuple.h"
 
@@ -14,7 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface STPPaymentContext (Private)<STPPaymentMethodsViewControllerDelegate>
 
-@property(nonatomic, readonly)STPPromise *currentValuePromise;
+@property(nonatomic, readonly)OG_COMPAT_GENERIC(STPPromise, STPPaymentMethodTuple *) *currentValuePromise;
 
 @end
 

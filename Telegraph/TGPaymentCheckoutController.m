@@ -76,6 +76,11 @@ static NSArray *nativeApplePayProviders() {
     ];
 }
 
+static id OGCompatPaymentSummaryItem(NSString *label, int64_t cents)
+{
+    return [(id)NSClassFromString(@"PKPaymentSummaryItem") summaryItemWithLabel:label amount:[[NSDecimalNumber alloc] initWithDouble:cents * 0.01]];
+}
+
 static bool isNativeApplePayProvider(NSString *provider) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
     if (provider == nil) {
@@ -637,19 +642,16 @@ static bool isNativeApplePayProvider(NSString *provider) {
                 
                 NSMutableArray *items = [[NSMutableArray alloc] init];
                 
-                int64_t totalAmount = 0;
-                for (TGInvoicePrice *price in _paymentForm.invoice.prices) {
-                    totalAmount += price.amount;
-                    [items addObject:[(id)NSClassFromString(@"PKPaymentSummaryItem") summaryItemWithLabel:price.label amount:[[NSDecimalNumber alloc] initWithDouble:price.amount * 0.01]]];
-                }
-                if (_currentShippingOption != nil) {
-                    for (TGInvoicePrice *price in _currentShippingOption.prices) {
-                        totalAmount += price.amount;
-                        [items addObject:[(id)NSClassFromString(@"PKPaymentSummaryItem") summaryItemWithLabel:price.label amount:[[NSDecimalNumber alloc] initWithDouble:price.amount * 0.01]]];
-                    }
-                }
+                NSMutableArray *priceLines = [[NSMutableArray alloc] initWithArray:_paymentForm.invoice.prices ?: @[]];
+                if (_currentShippingOption != nil)
+                    [priceLines addObjectsFromArray:_currentShippingOption.prices ?: @[]];
                 
-                [items addObject:[(id)NSClassFromString(@"PKPaymentSummaryItem") summaryItemWithLabel:_bot.displayName amount:[[NSDecimalNumber alloc] initWithDouble:totalAmount * 0.01]]];
+                int64_t totalAmount = 0;
+                for (TGInvoicePrice *price in priceLines) {
+                    totalAmount += price.amount;
+                    [items addObject:OGCompatPaymentSummaryItem(price.label, price.amount)];
+                }
+                [items addObject:OGCompatPaymentSummaryItem(_bot.displayName, totalAmount)];
                 
                 request.paymentSummaryItems = items;
                 

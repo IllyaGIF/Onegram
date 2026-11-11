@@ -112,7 +112,7 @@ private:
     bool _localNetworkIsLowCost = false;
     bool _remoteNetworkIsLowCost = false;
     bool _remoteIsLowDataRequested = false;
-    bool _sentIos6V2Bootstrap = false;
+    bool _bootstrapSent = false;
     std::shared_ptr<MediaTransport> _mediaTransport;
     std::unique_ptr<MediaNegotiator> _negotiator;
     signaling::MediaStateMessage _localMediaState;

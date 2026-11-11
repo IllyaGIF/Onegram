@@ -119,10 +119,10 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     TGSearchBar *_searchBar;
     TGSearchDisplayMixin *_searchMixin;
     
-    NSArray *_users;
-    NSDictionary *_memberDatas;
-    NSArray *_searchResultUsers;
-    NSDictionary *_searchResultsMemberDatas;
+    NSArray *_roster;
+    NSDictionary *_rosterDatas;
+    NSArray *_foundUserSections;
+    NSDictionary *_foundMemberDatas;
     
     NSString *_searchString;
     
@@ -223,9 +223,9 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     TGUser *user = nil;
     if (tableView == _tableView) {
-        user = _users[indexPath.row];
+        user = _roster[indexPath.row];
     } else {
-        user = _searchResultUsers[indexPath.section][indexPath.row];
+        user = _foundUserSections[indexPath.section][indexPath.row];
     }
     
     static NSString *contactCellIdentifier = @"ContactCell";
@@ -249,15 +249,15 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     if (_tableView == tableView) {
         return 1;
     } else {
-        return _searchResultUsers.count;
+        return _foundUserSections.count;
     }
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (_tableView == tableView) {
-        return _users.count;
+        return _roster.count;
     } else {
-        return [(NSArray *)_searchResultUsers[section] count];
+        return [(NSArray *)_foundUserSections[section] count];
     }
 }
 
@@ -299,8 +299,8 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     _searchString = searchQuery;
     if (_searchString.length == 0) {
         [_searchBar setShowActivity:false];
-        _searchResultUsers = @[];
-        _searchResultsMemberDatas = @{};
+        _foundUserSections = @[];
+        _foundMemberDatas = @{};
         [_searchDisposable setDisposable:nil];
         [searchMixin reloadSearchResults];
         [searchMixin setSearchResultsTableViewHidden:true];
@@ -349,8 +349,8 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
                     }
                 }
                 
-                strongSelf->_searchResultUsers = @[members, contacts, global];
-                strongSelf->_searchResultsMemberDatas = memberData[@"memberDatas"];
+                strongSelf->_foundUserSections = @[members, contacts, global];
+                strongSelf->_foundMemberDatas = memberData[@"memberDatas"];
                 [searchMixin reloadSearchResults];
                 [searchMixin setSearchResultsTableViewHidden:false];
                 [strongSelf->_searchBar setShowActivity:false];
@@ -367,9 +367,9 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
         }
     }
     TGDispatchOnMainThread(^{
-        if (!TGObjectCompare(_users, filteredUsers)) {
-            _users = filteredUsers;
-            _memberDatas = memberDatas;
+        if (!TGObjectCompare(_roster, filteredUsers)) {
+            _roster = filteredUsers;
+            _rosterDatas = memberDatas;
             [_tableView reloadData];
         }
     });
@@ -380,13 +380,13 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     
     TGUser *user = nil;
     if (tableView == _tableView) {
-        user = _users[indexPath.row];
+        user = _roster[indexPath.row];
     } else {
-        user = _searchResultUsers[indexPath.section][indexPath.row];
+        user = _foundUserSections[indexPath.section][indexPath.row];
     }
     
     if (_completion) {
-        _completion(user, _memberDatas[@(user.uid)] ?: _searchResultsMemberDatas[@(user.uid)]);
+        _completion(user, _rosterDatas[@(user.uid)] ?: _foundMemberDatas[@(user.uid)]);
     }
 }
 
@@ -394,11 +394,11 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     if (tableView == _tableView) {
         return nil;
     } else if (section == 0) {
-        return [(NSArray *)_searchResultUsers[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.MemberSearchSectionTitleGroup") first:false wide:true];
+        return [(NSArray *)_foundUserSections[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.MemberSearchSectionTitleGroup") first:false wide:true];
     } else if (section == 1) {
-        return [(NSArray *)_searchResultUsers[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.Title") first:false wide:true];
+        return [(NSArray *)_foundUserSections[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.Title") first:false wide:true];
     } else if (section == 2) {
-        return [(NSArray *)_searchResultUsers[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.GlobalSearch") first:false wide:true];
+        return [(NSArray *)_foundUserSections[section] count] == 0 ? nil : [self generateSectionHeader:TGLocalized(@"Contacts.GlobalSearch") first:false wide:true];
     }
     
     return nil;
@@ -463,8 +463,8 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
 {
     if (tableView == _tableView) {
             return 0.0f;
-    } else if (section < (NSInteger)_searchResultUsers.count) {
-        return [(NSArray *)_searchResultUsers[section] count] == 0 ? 0.0f : 28.0f;
+    } else if (section < (NSInteger)_foundUserSections.count) {
+        return [(NSArray *)_foundUserSections[section] count] == 0 ? 0.0f : 28.0f;
     }
     
     return 0.0f;

@@ -8,6 +8,7 @@
 
 #import "STPImageLibrary.h"
 #import "STPImageLibrary+Private.h"
+#import "OGStripeCompat.h"
 #import "STPBundleLocator.h"
 
 #define FAUXPAS_IGNORED_IN_METHOD(...)
@@ -102,7 +103,7 @@
         templateIfAvailable:(BOOL)templateIfAvailable {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability);
     UIImage *image = nil;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
     if ([UIImage respondsToSelector:@selector(imageNamed:inBundle:compatibleWithTraitCollection:)]) {
         image = [UIImage imageNamed:imageName inBundle:[STPBundleLocator stripeResourcesBundle] compatibleWithTraitCollection:nil];
     }
@@ -110,13 +111,9 @@
     if (image == nil) {
         image = [UIImage imageNamed:imageName];
     }
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     if (templateIfAvailable) {
-        image = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        image = OGCompatTemplateImage(image);
     }
-#else
-    (void)templateIfAvailable;
-#endif
     return image;
 }
 
@@ -158,15 +155,15 @@
                        forImage:(UIImage *)image {
     UIImage *newImage;
     UIGraphicsBeginImageContextWithOptions(image.size, NO, image.scale);
-    CGRect imageRect = CGRectMake(0, 0, image.size.width, image.size.height);
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    CGRect imageRect = {CGPointZero, image.size};
     [color set];
-    UIImage *templateImage = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    [templateImage drawInRect:imageRect];
-#else
-    [image drawInRect:imageRect];
-    [color setFill];
-    UIRectFillUsingBlendMode(imageRect, kCGBlendModeSourceAtop);
+    [OGCompatTemplateImage(image) drawInRect:imageRect];
+#if !OG_COMPAT_STRIPE_HAS_TEXT_KIT
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(context);
+    CGContextSetBlendMode(context, kCGBlendModeSourceAtop);
+    CGContextFillRect(context, imageRect);
+    CGContextRestoreGState(context);
 #endif
     newImage = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -182,7 +179,7 @@
     [image drawAtPoint:origin];
     UIImage *imageWithInsets = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#if OG_COMPAT_STRIPE_HAS_TEXT_KIT
     imageWithInsets = [imageWithInsets imageWithRenderingMode:image.renderingMode];
 #endif
     return imageWithInsets;

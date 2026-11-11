@@ -7,8 +7,8 @@
 @class TGSuggestionContext;
 @class TGViewController;
 @class TGAttachmentCameraView;
-#ifndef TGModernGalleryTransitionHostScrollViewProtocol_h
-#define TGModernGalleryTransitionHostScrollViewProtocol_h
+#ifndef OG_COMPAT_GALLERY_HOST_SCROLL_PROTOCOL
+#define OG_COMPAT_GALLERY_HOST_SCROLL_PROTOCOL
 @protocol TGModernGalleryTransitionHostScrollView <NSObject>
 
 - (bool)disableGalleryTransitionOffsetFix;

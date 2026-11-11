@@ -8,6 +8,16 @@ const CGFloat TGPhotoEditorSliderViewLineSize = 3.0f;
 const CGFloat TGPhotoEditorSliderViewMargin = 15.0f;
 const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
 
+static void OGCompatHapticTick(id generator, bool changed)
+{
+    SEL actions[2] = { @selector(selectionChanged), @selector(prepare) };
+    for (int i = changed ? 0 : 1; i < 2; i++)
+    {
+        if ([generator respondsToSelector:actions[i]])
+            [generator performSelector:actions[i]];
+    }
+}
+
 @interface TGPhotoEditorSliderView () <UIGestureRecognizerDelegate>
 {
     CGFloat _knobTouchStart;
@@ -24,7 +34,7 @@ const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
     
     bool _startHidden;
     
-    id _feedbackGenerator;
+    id _hapticSelector;
 }
 @end
 
@@ -78,7 +88,7 @@ const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
         [self addGestureRecognizer:_doubleTapGestureRecognizer];
         
         if (iosMajorVersion() >= 10)
-            _feedbackGenerator = [[NSClassFromString(@"UISelectionFeedbackGenerator") alloc] init];
+            _hapticSelector = [[NSClassFromString(@"UISelectionFeedbackGenerator") alloc] init];
     }
     return self;
 }
@@ -453,10 +463,7 @@ const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
         if (self.interactionEnded != nil)
             self.interactionEnded();
         
-        if ([_feedbackGenerator respondsToSelector:@selector(selectionChanged)])
-            [_feedbackGenerator performSelector:@selector(selectionChanged)];
-        if ([_feedbackGenerator respondsToSelector:@selector(prepare)])
-            [_feedbackGenerator performSelector:@selector(prepare)];
+        OGCompatHapticTick(_hapticSelector, true);
     }
 }
 
@@ -507,8 +514,7 @@ const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
     
     _knobStartedDragging = false;
     
-    if ([_feedbackGenerator respondsToSelector:@selector(prepare)])
-            [_feedbackGenerator performSelector:@selector(prepare)];
+    OGCompatHapticTick(_hapticSelector, false);
     
     [self maybeCancelParentViewScrolling:self.superview depth:0];
 }
@@ -559,10 +565,7 @@ const CGFloat TGPhotoEditorSliderViewInternalMargin = 7.0f;
     [self setValue:[self valueForCenterPosition:_knobDragCenter totalLength:totalLength knobSize:_knobView.image.size.width vertical:vertical]];
     if (previousValue != self.value && (self.positionsCount > 1 || self.value == self.minimumValue || self.value == self.maximumValue || (self.minimumValue != self.startValue && self.value == self.startValue)))
     {
-        if ([_feedbackGenerator respondsToSelector:@selector(selectionChanged)])
-            [_feedbackGenerator performSelector:@selector(selectionChanged)];
-        if ([_feedbackGenerator respondsToSelector:@selector(prepare)])
-            [_feedbackGenerator performSelector:@selector(prepare)];
+        OGCompatHapticTick(_hapticSelector, true);
     }
     
     [self setNeedsLayout];

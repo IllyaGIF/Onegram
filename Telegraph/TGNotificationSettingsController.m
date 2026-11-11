@@ -44,7 +44,7 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
 
 @interface TGNotificationSettingsController () <TGAlertSoundControllerDelegate>
 {
-    TGSwitchCollectionItem *_backgroundNotifications;
+    TGSwitchCollectionItem *_pushWhileClosedItem;
 
     TGSwitchCollectionItem *_privateAlert;
     TGSwitchCollectionItem *_privatePreview;
@@ -98,18 +98,19 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
         [self setTitleText:TGLocalized(@"Notifications.Title")];
         self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Back") style:UIBarButtonItemStylePlain target:self action:@selector(backPressed)];
 
-        _backgroundNotifications = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Notifications.BackgroundNotifications") isOn:TGIOS6BackgroundNotificationsEnabled()];
-        _backgroundNotifications.interfaceHandle = _actionHandle;
+        _pushWhileClosedItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Notifications.BackgroundNotifications") isOn:OGBackgroundNotificationsEnabled()];
+        _pushWhileClosedItem.interfaceHandle = _actionHandle;
 
-        TGCollectionMenuSection *backgroundNotificationsSection = [[TGCollectionMenuSection alloc] initWithItems:@[
+        NSArray *pushItems = @[
             [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Notifications.BackgroundNotificationsHeader")],
-            _backgroundNotifications,
+            _pushWhileClosedItem,
             [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"Notifications.BackgroundNotificationsHelp")]
-        ]];
-        UIEdgeInsets backgroundSectionInsets = backgroundNotificationsSection.insets;
-        backgroundSectionInsets.top = 32.0f;
-        backgroundNotificationsSection.insets = backgroundSectionInsets;
-        [self.menuSections addSection:backgroundNotificationsSection];
+        ];
+        TGCollectionMenuSection *pushSection = [[TGCollectionMenuSection alloc] initWithItems:pushItems];
+        UIEdgeInsets pushInsets = pushSection.insets;
+        pushInsets.top = 32.0f;
+        pushSection.insets = pushInsets;
+        [self.menuSections addSection:pushSection];
         
         _privateAlert = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Notifications.MessageNotificationsAlert") isOn:true];
         _privateAlert.interfaceHandle = _actionHandle;
@@ -502,7 +503,7 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
 
 - (void)_updateItems:(bool)animated
 {
-    [_backgroundNotifications setIsOn:TGIOS6BackgroundNotificationsEnabled() animated:animated];
+    [_pushWhileClosedItem setIsOn:OGBackgroundNotificationsEnabled() animated:animated];
     [_privateAlert setIsOn:[[_privateNotificationSettings objectForKey:@"muteUntil"] intValue] == 0 animated:animated];
     [_privatePreview setIsOn:[[_privateNotificationSettings objectForKey:@"previewText"] boolValue] animated:animated];
     
@@ -536,9 +537,9 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
     {
         TGSwitchCollectionItem *switchItem = options[@"item"];
         
-        if (switchItem == _backgroundNotifications)
+        if (switchItem == _pushWhileClosedItem)
         {
-            [TGAppDelegateInstance applyIOS6BackgroundNotificationsEnabled:switchItem.isOn];
+            [TGAppDelegateInstance applyBackgroundNotificationsEnabled:switchItem.isOn];
         }
         else if (switchItem == _privateAlert)
         {

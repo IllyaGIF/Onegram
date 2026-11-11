@@ -14,6 +14,7 @@
 #import "OGContactListAppearance.h"
 #import "OGMusicPlayerAppearance.h"
 #import "OGCommunitySheetAppearance.h"
+#import "OGMenuSheetAppearance.h"
 #import "OGSurfaceRenderer.h"
 #import "../../OnegramPlatform/OGPlatformVersion.h"
 
@@ -116,6 +117,7 @@ static BOOL OGBrandedThemeDark = NO;
         theme.musicPlayerAppearance = [OGMusicPlayerAppearance brandedAppearanceDark:dark];
         theme.musicPlayerScreenAppearance = [OGMusicPlayerScreenAppearance brandedAppearance];
         theme.communitySheetAppearance = [OGCommunitySheetAppearance brandedAppearanceDark:dark navigationAppearance:theme.navigationAppearance];
+        theme.menuSheetAppearance = [OGMenuSheetAppearance brandedAppearanceDark:dark];
     }
     else if (kind == OGThemeKindClassic)
     {

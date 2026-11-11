@@ -427,6 +427,13 @@ static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensio
     return true;
 }
 
+- (void)refreshDeferredScreenEdges
+{
+    SEL refreshSelector = NSSelectorFromString(@"setNeedsUpdateOfScreenEdgesDeferringSystemGestures");
+    if ([self respondsToSelector:refreshSelector])
+        ((void (*)(id, SEL))[self methodForSelector:refreshSelector])(self, refreshSelector);
+}
+
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures
 {
     return [_currentTabController preferredScreenEdgesDeferringSystemGestures];
@@ -573,12 +580,7 @@ static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensio
         }
     }
     
-    SEL updateScreenEdgesSelector = NSSelectorFromString(@"setNeedsUpdateOfScreenEdgesDeferringSystemGestures");
-    if ([self respondsToSelector:updateScreenEdgesSelector])
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [self performSelector:updateScreenEdgesSelector];
-#pragma clang diagnostic pop
+    [self refreshDeferredScreenEdges];
     
     [super viewWillDisappear:animated];
 }
@@ -1321,12 +1323,7 @@ static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensio
     
     [self updateEditorButtons];
     
-    SEL updateScreenEdgesSelector = NSSelectorFromString(@"setNeedsUpdateOfScreenEdgesDeferringSystemGestures");
-    if ([self respondsToSelector:updateScreenEdgesSelector])
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [self performSelector:updateScreenEdgesSelector];
-#pragma clang diagnostic pop
+    [self refreshDeferredScreenEdges];
 }
 
 - (void)updatePreviewView

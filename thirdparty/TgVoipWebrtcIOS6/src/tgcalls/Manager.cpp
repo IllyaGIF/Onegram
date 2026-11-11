@@ -79,49 +79,126 @@ void dumpStatsLog(const FilePath &path, const CallStats &stats) {
 	file.close();
 }
 
+std::string formatFingerprint(const uint8_t *bytes, size_t count) {
+	static const char kDigits[] = "0123456789ABCDEF";
+	std::string text;
+	for (size_t i = 0; i < count; i++) {
+		if (i != 0) {
+			text.push_back(':');
+		}
+		text.push_back(kDigits[bytes[i] >> 4]);
+		text.push_back(kDigits[bytes[i] & 0x0F]);
+	}
+	return text;
+}
+
 std::string fingerprintFromKey(const EncryptionKey &key) {
 	if (!key.value) {
-		return "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF";
+		uint8_t placeholder[32];
+		for (size_t i = 0; i < sizeof(placeholder); i++) {
+			placeholder[i] = uint8_t((i % 16) * 0x11);
+		}
+		return formatFingerprint(placeholder, sizeof(placeholder));
 	}
 	const auto digest = ConcatSHA256(MemorySpan{ key.value->data(), EncryptionKey::kSize });
-	std::ostringstream result;
-	result << std::uppercase << std::hex << std::setfill('0');
-	for (size_t i = 0; i < digest.size(); i++) {
-		if (i != 0) {
-			result << ":";
-		}
-		result << std::setw(2) << (unsigned int)digest[i];
-	}
-	return result.str();
+	return formatFingerprint(digest.data(), digest.size());
+}
+
+template <typename Payload>
+Message wrapInMessage(Payload payload) {
+	Message wrapped;
+	wrapped.data = std::move(payload);
+	return wrapped;
 }
 
 Message makeRemoteNetworkStatusMessage(bool isLowCost, bool isLowDataRequested) {
-	RemoteNetworkStatusMessage payload;
-	payload.isLowCost = isLowCost;
-	payload.isLowDataRequested = isLowDataRequested;
-	Message message;
-	message.data = payload;
-	return message;
+	RemoteNetworkStatusMessage status;
+	status.isLowCost = isLowCost;
+	status.isLowDataRequested = isLowDataRequested;
+	return wrapInMessage(status);
 }
 
-std::string ios6JsonEscape(const std::string &value) {
-	std::string result;
-	result.reserve(value.size() + 8);
-	for (char c : value) {
-		if (c == '\\' || c == '"') {
-			result.push_back('\\');
-			result.push_back(c);
-		} else if (c == '\n') {
-			result += "\\n";
-		} else if (c == '\r') {
-			result += "\\r";
-		} else if (c == '\t') {
-			result += "\\t";
-		} else {
-			result.push_back(c);
+const char *signalingDropReason(const Message &message) {
+	if (absl::get_if<RemoteNetworkStatusMessage>(&message.data)) {
+		return "dropRemoteNetworkStatus";
+	}
+	if (absl::get_if<RemoteMediaStateMessage>(&message.data)) {
+		return "dropRemoteMediaState";
+	}
+	if (absl::get_if<VideoFormatsMessage>(&message.data)) {
+		return "dropVideoFormats";
+	}
+	return "dropOther";
+}
+
+std::string OGCompatEscapeJson(const std::string &value) {
+	std::string escaped;
+	escaped.reserve(value.size() + 8);
+	for (const char symbol : value) {
+		switch (symbol) {
+		case '\\':
+		case '"':
+			escaped.push_back('\\');
+			escaped.push_back(symbol);
+			break;
+		case '\n':
+			escaped += "\\n";
+			break;
+		case '\r':
+			escaped += "\\r";
+			break;
+		case '\t':
+			escaped += "\\t";
+			break;
+		default:
+			escaped.push_back(symbol);
+			break;
 		}
 	}
-	return result;
+	return escaped;
+}
+
+std::string OGCompatInitialSetupJson(const PeerIceParameters &ice, const std::string &fingerprint) {
+	std::string json = "{\"@type\":\"InitialSetup\",\"ufrag\":\"";
+	json += OGCompatEscapeJson(ice.ufrag);
+	json += "\",\"pwd\":\"";
+	json += OGCompatEscapeJson(ice.pwd);
+	json += "\",\"renomination\":true,\"fingerprints\":[{\"hash\":\"sha-256\",\"setup\":\"actpass\",\"fingerprint\":\"";
+	json += fingerprint;
+	json += "\"}]}";
+	return json;
+}
+
+std::string OGCompatCandidatesJson(const CandidatesListMessage &list) {
+	std::string json = "{\"@type\":\"Candidates\",\"candidates\":[";
+	for (size_t i = 0; i < list.candidates.size(); i++) {
+		if (i != 0) {
+			json += ',';
+		}
+		json += "{\"sdpString\":\"" + OGCompatEscapeJson(list.candidates[i].ToString()) + "\"}";
+	}
+	json += "]}";
+	return json;
+}
+
+template <typename Slot, typename Payload>
+void forwardToManagerThread(rtc::Thread *thread, std::weak_ptr<Manager> weak, Slot slot, Payload payload) {
+	auto shared = std::make_shared<Payload>(std::move(payload));
+	thread->PostTask([weak, slot, shared]() {
+		const auto strong = weak.lock();
+		if (!strong) {
+			return;
+		}
+		((*strong).*slot)(std::move(*shared));
+	});
+}
+
+template <typename Owner, typename Method, typename Payload>
+void performWithPayload(ThreadLocalObject<Owner> &owner, Method method, Payload payload) {
+	auto shared = std::make_shared<Payload>(std::move(payload));
+	owner.perform([method, shared](Owner *target) {
+		(target->*method)(std::move(*shared));
+	});
 }
 
 
@@ -195,13 +272,7 @@ _enableHighBitrateVideo(descriptor.config.enableHighBitrateVideo),
 _dataSaving(descriptor.config.dataSaving),
 _outgoingVideoSource(descriptor.outgoingVideoSource),
 _incomingVideoSink(descriptor.incomingVideoSink) {
-	fprintf(stderr, "IOS6WEBRTC cxx.manager.init.enter servers=%lu enableP2P=%d enableTCP=%d protocol=%d\n",
-		(unsigned long)_rtcServers.size(),
-		_enableP2P ? 1 : 0,
-		_enableTCP ? 1 : 0,
-		(int)_protocolVersion);
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.init.enter servers=%lu enableP2P=%d enableTCP=%d protocol=%d",
+	OG_COMPAT_TRACE("cxx.manager.init.enter servers=%lu enableP2P=%d enableTCP=%d protocol=%d",
 		(unsigned long)_rtcServers.size(),
 		_enableP2P ? 1 : 0,
 		_enableTCP ? 1 : 0,
@@ -214,52 +285,30 @@ _incomingVideoSink(descriptor.incomingVideoSink) {
 	_negotiator.reset(new MediaNegotiator(_encryptionKey.isOutgoing, localMediaCapabilities()));
 
 	_sendSignalingMessage = [=](const Message &message) {
-		fprintf(stderr, "IOS6WEBRTC cxx.manager.signaling.prepare.enter\n");
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.signaling.prepare.enter");
+		OG_COMPAT_TRACE("cxx.manager.signaling.prepare.enter");
 		if (const auto candidates = absl::get_if<CandidatesListMessage>(&message.data)) {
-			fprintf(stderr, "IOS6WEBRTC cxx.manager.signaling.candidates count=%lu ufrag=%lu pwd=%lu\n",
-				(unsigned long)candidates->candidates.size(),
-				(unsigned long)candidates->iceParameters.ufrag.size(),
-				(unsigned long)candidates->iceParameters.pwd.size());
-			fflush(stderr);
-			syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.signaling.candidates count=%lu ufrag=%lu pwd=%lu",
+			OG_COMPAT_TRACE("cxx.manager.signaling.candidates count=%lu ufrag=%lu pwd=%lu",
 				(unsigned long)candidates->candidates.size(),
 				(unsigned long)candidates->iceParameters.ufrag.size(),
 				(unsigned long)candidates->iceParameters.pwd.size());
 			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling.candidates count=" << candidates->candidates.size()
 				<< " ufragLen=" << candidates->iceParameters.ufrag.size()
 				<< " pwdLen=" << candidates->iceParameters.pwd.size();
-				if (!_sentIos6V2Bootstrap) {
-					return sendIos6Bootstrap(*candidates);
-				}
-			} else if (absl::get_if<RemoteNetworkStatusMessage>(&message.data)) {
-			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling.dropRemoteNetworkStatus";
-			return uint32_t(0);
-		} else if (absl::get_if<RemoteMediaStateMessage>(&message.data)) {
-			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling.dropRemoteMediaState";
-			return uint32_t(0);
-		} else if (absl::get_if<VideoFormatsMessage>(&message.data)) {
-			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling.dropVideoFormats";
-			return uint32_t(0);
+			if (!_bootstrapSent) {
+				return sendIos6Bootstrap(*candidates);
+			}
 		} else {
-			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling.dropOther";
+			RTC_LOG(LS_INFO) << "IOS6WEBRTC manager.signaling." << signalingDropReason(message);
 			return uint32_t(0);
 		}
 		if (const auto prepared = _signaling.prepareForSending(message)) {
-			fprintf(stderr, "IOS6WEBRTC cxx.manager.signaling.emit bytes=%lu counter=%u\n",
-				(unsigned long)prepared->bytes.size(),
-				prepared->counter);
-			fflush(stderr);
-			syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.signaling.emit bytes=%lu counter=%u",
+			OG_COMPAT_TRACE("cxx.manager.signaling.emit bytes=%lu counter=%u",
 				(unsigned long)prepared->bytes.size(),
 				prepared->counter);
 			_signalingDataEmitted(prepared->bytes);
 			return prepared->counter;
 		}
-		fprintf(stderr, "IOS6WEBRTC cxx.manager.signaling.prepare.nil\n");
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.signaling.prepare.nil");
+		OG_COMPAT_TRACE("cxx.manager.signaling.prepare.nil");
 		return uint32_t(0);
 	};
 	_sendTransportMessage = [=](Message message) {
@@ -284,19 +333,19 @@ _incomingVideoSink(descriptor.incomingVideoSink) {
             );
         }
 
-		std::shared_ptr<Message> messagePtr(new Message(message));
+		auto sharedMessage = std::make_shared<Message>(message);
 
-		_networkManager->perform([messagePtr](NetworkManager *networkManager) {
+		_networkManager->perform([sharedMessage](NetworkManager *target) {
             const char *queuedType =
-                absl::get_if<AudioDataMessage>(&messagePtr->data)
+                absl::get_if<AudioDataMessage>(&sharedMessage->data)
                     ? "audio"
-                : absl::get_if<RemoteMediaStateMessage>(&messagePtr->data)
+                : absl::get_if<RemoteMediaStateMessage>(&sharedMessage->data)
                     ? "mediaState"
-                : absl::get_if<RemoteNetworkStatusMessage>(&messagePtr->data)
+                : absl::get_if<RemoteNetworkStatusMessage>(&sharedMessage->data)
                     ? "networkStatus"
-                : absl::get_if<RemoteBatteryLevelIsLowMessage>(&messagePtr->data)
+                : absl::get_if<RemoteBatteryLevelIsLowMessage>(&sharedMessage->data)
                     ? "battery"
-                : absl::get_if<UnstructuredDataMessage>(&messagePtr->data)
+                : absl::get_if<UnstructuredDataMessage>(&sharedMessage->data)
                     ? "unstructured"
                     : "other";
 
@@ -308,7 +357,7 @@ _incomingVideoSink(descriptor.incomingVideoSink) {
                 );
             }
 
-			networkManager->sendMessage(*messagePtr);
+			target->sendMessage(*sharedMessage);
 		});
 	};
 }
@@ -364,7 +413,7 @@ void Manager::sendSignalingAsync(int delayMs, int cause) {
 		cause
 	);
 
-	std::weak_ptr<Manager> weak(shared_from_this());
+	auto weak = std::weak_ptr<Manager>(shared_from_this());
 	rtc::Thread *thread = _thread;
 
 	auto task = [weak, cause] {
@@ -510,28 +559,19 @@ void Manager::sendSignalingAsync(int delayMs, int cause) {
 }
 
 void Manager::start() {
-	fprintf(stderr, "IOS6WEBRTC cxx.manager.start.enter servers=%lu\n", (unsigned long)_rtcServers.size());
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.start.enter servers=%lu", (unsigned long)_rtcServers.size());
+	OG_COMPAT_TRACE("cxx.manager.start.enter servers=%lu", (unsigned long)_rtcServers.size());
 	const auto weak = std::weak_ptr<Manager>(shared_from_this());
 	const auto thread = _thread;
 	const auto sendSignalingMessage = [=](Message message) {
-		std::shared_ptr<Message> messagePtr(new Message(message));
-		thread->PostTask([=]() mutable {
-			const auto strong = weak.lock();
-			if (!strong) {
-				return;
-			}
-			strong->_sendSignalingMessage(std::move(*messagePtr));
-		});
+		forwardToManagerThread(thread, weak, &Manager::_sendSignalingMessage, std::move(message));
 	};
-	EncryptionKey encryptionKey = _encryptionKey;
+	auto encryptionKey = _encryptionKey;
 	bool isOutgoing = _encryptionKey.isOutgoing;
-	bool enableP2P = _enableP2P;
-	bool enableTCP = _enableTCP;
-	bool enableStunMarking = _enableStunMarking;
-	std::vector<RtcServer> rtcServers = _rtcServers;
-	std::shared_ptr<std::unique_ptr<Proxy>> proxyPtr(new std::unique_ptr<Proxy>(std::move(_proxy)));
+	auto enableP2P = _enableP2P;
+	auto enableTCP = _enableTCP;
+	auto enableStunMarking = _enableStunMarking;
+	auto rtcServers = _rtcServers;
+	auto proxyPtr = std::make_shared<std::unique_ptr<Proxy>>(std::move(_proxy));
 	_mediaTransport.reset(new MediaTransport());
 	std::shared_ptr<MediaTransport> mediaTransport = _mediaTransport;
 	syslog(LOG_NOTICE, "IOS6MEDIA video.hubs source=%d sink=%d", _outgoingVideoSource ? 1 : 0, _incomingVideoSink ? 1 : 0);
@@ -543,13 +583,9 @@ void Manager::start() {
 	}
 	std::shared_ptr<VideoSourceHub> outgoingVideoSource = _outgoingVideoSource;
 	std::shared_ptr<VideoSinkHub> incomingVideoSink = _incomingVideoSink;
-	fprintf(stderr, "IOS6WEBRTC cxx.manager.network.before\n");
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.network.before");
+	OG_COMPAT_TRACE("cxx.manager.network.before");
 	_networkManager.reset(new ThreadLocalObject<NetworkManager>(StaticThreads::getNetworkThread(), [weak, thread, sendSignalingMessage, encryptionKey, isOutgoing, enableP2P, enableTCP, enableStunMarking, rtcServers, proxyPtr, mediaTransport] () mutable {
-		fprintf(stderr, "IOS6WEBRTC cxx.manager.network.construct.lambda servers=%lu\n", (unsigned long)rtcServers.size());
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.manager.network.construct.lambda servers=%lu", (unsigned long)rtcServers.size());
+		OG_COMPAT_TRACE("cxx.manager.network.construct.lambda servers=%lu", (unsigned long)rtcServers.size());
 		return std::make_shared<NetworkManager>(
             StaticThreads::getNetworkThread(),
 			encryptionKey,
@@ -633,12 +669,7 @@ void Manager::start() {
 				});
 			},
 			[=](DecryptedMessage message) {
-				std::shared_ptr<DecryptedMessage> messagePtr(new DecryptedMessage(message));
-				thread->PostTask([=]() mutable {
-					if (const auto strong = weak.lock()) {
-						strong->receiveMessage(std::move(*messagePtr));
-					}
-				});
+				forwardToManagerThread(thread, weak, &Manager::receiveMessage, std::move(message));
 			},
 			sendSignalingMessage,
 			[=](int delayMs, int cause) {
@@ -656,14 +687,14 @@ void Manager::start() {
 				}
 			});
 	}));
-	ProtocolVersion protocolVersion = _protocolVersion;
-	std::shared_ptr<VideoCaptureInterface> videoCapture = _videoCapture;
-	MediaDevicesConfig mediaDevicesConfig = _mediaDevicesConfig;
-	bool enableHighBitrateVideo = _enableHighBitrateVideo;
-	std::function<void(int)> signalBarsUpdated = _signalBarsUpdated;
-	std::function<void(float)> audioLevelUpdated = _audioLevelUpdated;
-	std::vector<std::string> preferredCodecs = _preferredCodecs;
-	std::function<webrtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)> createAudioDeviceModule = _createAudioDeviceModule;
+	auto protocolVersion = _protocolVersion;
+	auto videoCapture = _videoCapture;
+	auto mediaDevicesConfig = _mediaDevicesConfig;
+	auto enableHighBitrateVideo = _enableHighBitrateVideo;
+	auto signalBarsUpdated = _signalBarsUpdated;
+	auto audioLevelUpdated = _audioLevelUpdated;
+	auto preferredCodecs = _preferredCodecs;
+	auto createAudioDeviceModule = _createAudioDeviceModule;
 	_mediaManager.reset(new ThreadLocalObject<MediaManager>(StaticThreads::getMediaThread(), [weak, isOutgoing, protocolVersion, thread, sendSignalingMessage, videoCapture, mediaDevicesConfig, enableHighBitrateVideo, signalBarsUpdated, audioLevelUpdated, preferredCodecs, createAudioDeviceModule, mediaTransport, outgoingVideoSource, incomingVideoSink]() {
 		return std::make_shared<MediaManager>(
             StaticThreads::getMediaThread(),
@@ -673,14 +704,7 @@ void Manager::start() {
 			videoCapture,
 			sendSignalingMessage,
 			[=](Message message) {
-				std::shared_ptr<Message> messagePtr(new Message(message));
-				thread->PostTask([=]() mutable {
-					const auto strong = weak.lock();
-					if (!strong) {
-						return;
-					}
-					strong->_sendTransportMessage(std::move(*messagePtr));
-				});
+				forwardToManagerThread(thread, weak, &Manager::_sendTransportMessage, std::move(message));
 			},
             signalBarsUpdated,
             audioLevelUpdated,
@@ -947,15 +971,9 @@ void Manager::receiveSignalingData(const std::vector<uint8_t> &data) {
 void Manager::receiveMessage(DecryptedMessage &&message) {
 	const auto data = &message.message.data;
 	if (const auto candidatesList = absl::get_if<CandidatesListMessage>(data)) {
-		std::shared_ptr<DecryptedMessage> messagePtr(new DecryptedMessage(message));
-		_networkManager->perform([messagePtr](NetworkManager *networkManager) mutable {
-			networkManager->receiveSignalingMessage(std::move(*messagePtr));
-		});
+		performWithPayload(*_networkManager, &NetworkManager::receiveSignalingMessage, DecryptedMessage(message));
 	} else if (const auto videoFormats = absl::get_if<VideoFormatsMessage>(data)) {
-		std::shared_ptr<DecryptedMessage> messagePtr(new DecryptedMessage(message));
-		_mediaManager->perform([messagePtr](MediaManager *mediaManager) mutable {
-			mediaManager->receiveMessage(std::move(*messagePtr));
-		});
+		performWithPayload(*_mediaManager, &MediaManager::receiveMessage, DecryptedMessage(message));
     } else if (const auto remoteMediaState = absl::get_if<RemoteMediaStateMessage>(data)) {
 		if (_remoteMediaStateUpdated) {
 			_remoteMediaStateUpdated(
@@ -981,10 +999,7 @@ void Manager::receiveMessage(DecryptedMessage &&message) {
 				_remotePrefferedAspectRatioUpdated(value);
 			}
         }
-		std::shared_ptr<DecryptedMessage> messagePtr(new DecryptedMessage(message));
-		_mediaManager->perform([=](MediaManager *mediaManager) mutable {
-			mediaManager->receiveMessage(std::move(*messagePtr));
-		});
+		performWithPayload(*_mediaManager, &MediaManager::receiveMessage, DecryptedMessage(message));
 	}
 }
 
@@ -1048,16 +1063,16 @@ void Manager::setIsLocalNetworkLowCost(bool isLocalNetworkLowCost) {
 
 void Manager::getNetworkStats(std::function<void (TrafficStats, CallStats)> completion) {
 	rtc::Thread *thread = _thread;
-	std::weak_ptr<Manager> weak(shared_from_this());
-	std::shared_ptr<std::function<void (TrafficStats, CallStats)>> completionPtr(new std::function<void (TrafficStats, CallStats)>(std::move(completion)));
-	FilePath statsLogPath = _statsLogPath;
+	auto weak = std::weak_ptr<Manager>(shared_from_this());
+	auto completionPtr = std::make_shared<std::function<void (TrafficStats, CallStats)>>(std::move(completion));
+	auto statsLogPath = _statsLogPath;
     _networkManager->perform([thread, weak, completionPtr, statsLogPath](NetworkManager *networkManager) {
         auto networkStats = networkManager->getNetworkStats();
 
         CallStats callStats;
         networkManager->fillCallStats(callStats);
 
-		std::shared_ptr<CallStats> callStatsPtr(new CallStats(std::move(callStats)));
+		auto callStatsPtr = std::make_shared<CallStats>(std::move(callStats));
         thread->PostTask([weak, networkStats, completionPtr, callStatsPtr, statsLogPath] {
             const auto strong = weak.lock();
             if (!strong) {
@@ -1065,10 +1080,10 @@ void Manager::getNetworkStats(std::function<void (TrafficStats, CallStats)> comp
             }
 
             strong->_mediaManager->perform([networkStats, completionPtr, callStatsPtr, statsLogPath](MediaManager *mediaManager) {
-                CallStats callStats = std::move(*callStatsPtr);
-                mediaManager->fillCallStats(callStats);
-                dumpStatsLog(statsLogPath, callStats);
-                (*completionPtr)(networkStats, callStats);
+                CallStats finalStats(std::move(*callStatsPtr));
+                mediaManager->fillCallStats(finalStats);
+                dumpStatsLog(statsLogPath, finalStats);
+                (*completionPtr)(networkStats, finalStats);
             });
         });
     });
@@ -1181,22 +1196,10 @@ uint32_t Manager::sendIos6Bootstrap(const CandidatesListMessage &candidates) {
 		syslog(LOG_ERR, "IOS6WEBRTC dtls.certificate.generate.failed");
 		return 0;
 	}
-	_sentIos6V2Bootstrap = true;
+	_bootstrapSent = true;
 	const std::string fingerprint = _ios6DtlsCertificate.fingerprint();
-	const std::string initialJson = std::string("{\"@type\":\"InitialSetup\",\"ufrag\":\"") + ios6JsonEscape(candidates.iceParameters.ufrag)
-		+ "\",\"pwd\":\"" + ios6JsonEscape(candidates.iceParameters.pwd)
-		+ "\",\"renomination\":true,\"fingerprints\":[{\"hash\":\"sha-256\",\"setup\":\"actpass\",\"fingerprint\":\""
-		+ fingerprint + "\"}]}";
-	std::ostringstream candidatesJson;
-	candidatesJson << "{\"@type\":\"Candidates\",\"candidates\":[";
-	for (size_t i = 0; i < candidates.candidates.size(); i++) {
-		if (i != 0) {
-			candidatesJson << ",";
-		}
-		candidatesJson << "{\"sdpString\":\"" << ios6JsonEscape(candidates.candidates[i].ToString()) << "\"}";
-	}
-	candidatesJson << "]}";
-	const std::string candidatesJsonString = candidatesJson.str();
+	const std::string initialJson = OGCompatInitialSetupJson(candidates.iceParameters, fingerprint);
+	const std::string candidatesJsonString = OGCompatCandidatesJson(candidates);
 
 	uint32_t counter = emitRawSignaling(std::vector<uint8_t>(initialJson.begin(), initialJson.end()), true);
 	if (_encryptionKey.isOutgoing) {
@@ -1328,10 +1331,7 @@ void Manager::setOutputVolume(float level) {
 }
 
 void Manager::addExternalAudioSamples(std::vector<uint8_t> &&samples) {
-	std::shared_ptr<std::vector<uint8_t>> samplesPtr(new std::vector<uint8_t>(std::move(samples)));
-    _mediaManager->perform([samplesPtr](MediaManager *mediaManager) mutable {
-        mediaManager->addExternalAudioSamples(std::move(*samplesPtr));
-    });
+	performWithPayload(*_mediaManager, &MediaManager::addExternalAudioSamples, std::move(samples));
 }
 
 }

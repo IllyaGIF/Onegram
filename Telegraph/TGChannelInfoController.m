@@ -90,6 +90,8 @@
 #import "../OnegramRuntime/OGRemoteClock.h"
 #import "TGPluginHost.h"
 #import "TGPluginMenuSection.h"
+#import "TGPaidMessagesSignals.h"
+#import "TGPaidMessagesSettingsController.h"
 
 @interface TGChannelInfoController () <TGGroupInfoSelectContactControllerDelegate, TGAlertSoundControllerDelegate, ASWatcher
 #if OG_PLUGINS_AVAILABLE
@@ -136,6 +138,8 @@
     TGVariantCollectionItem *_channelLinkItem;
     
     TGCollectionMenuSection *_editingSignMessagesSection;
+    TGCollectionMenuSection *_editingDirectMessagesSection;
+    TGVariantCollectionItem *_editingDirectMessagesItem;
     TGSwitchCollectionItem *_signMessagesItem;
     
     TGCollectionMenuSection *_deleteChannelSection;
@@ -302,6 +306,9 @@
             }
         };
         _editingSignMessagesSection = [[TGCollectionMenuSection alloc] initWithItems:@[_signMessagesItem, [[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"Channel.SignMessages.Help")]]];
+        
+        _editingDirectMessagesItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"PaidMessages.Settings.DirectTitle") action:@selector(directMessagesSettingsPressed)];
+        _editingDirectMessagesSection = [[TGCollectionMenuSection alloc] initWithItems:@[_editingDirectMessagesItem, [[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"PaidMessages.Settings.DirectInfo")]]];
         
         _notificationsItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.Notifications") variant:nil action:@selector(notificationsPressed)];
         _notificationsItem.deselectAutomatically = true;
@@ -529,6 +536,8 @@
         
         if (_conversation.channelRole == TGChannelRoleCreator || _conversation.channelAdminRights.canChangeInfo) {
             [self.menuSections addSection:_editingSignMessagesSection];
+            [self updateDirectMessagesSettingsVariant];
+            [self.menuSections addSection:_editingDirectMessagesSection];
         }
         
         while (_notificationsAndMediaSection.items.count != 0) {
@@ -1200,6 +1209,7 @@
         if (_signMessagesItem.isOn != _conversation.signaturesEnabled) {
             _signMessagesItem.isOn = _conversation.signaturesEnabled;
         }
+        [self updateDirectMessagesSettingsVariant];
         
         [self _updateConversationWithLoadedUsers:nil forceReload:forceReload];
         
@@ -1652,6 +1662,35 @@
     } target:self] showInView:self.view];
 }
 
+- (void)updateDirectMessagesSettingsVariant {
+    if (!_conversation.directMessagesEnabled) {
+        _editingDirectMessagesItem.variant = TGLocalized(@"PaidMessages.Settings.Off");
+    } else if (_conversation.sendPaidMessagesStars > 0) {
+        _editingDirectMessagesItem.variant = [TGPaidMessagesSignals starsString:_conversation.sendPaidMessagesStars];
+    } else {
+        _editingDirectMessagesItem.variant = TGLocalized(@"PaidMessages.Settings.Free");
+    }
+}
+
+- (void)directMessagesSettingsPressed {
+    if (_conversation.channelRole != TGChannelRoleCreator && !_conversation.channelAdminRights.canChangeInfo) {
+        return;
+    }
+    TGPaidMessagesSettingsController *controller = [[TGPaidMessagesSettingsController alloc] initWithChannelId:_conversation.conversationId broadcast:true enabled:_conversation.directMessagesEnabled stars:_conversation.sendPaidMessagesStars];
+    __weak TGChannelInfoController *weakSelf = self;
+    controller.settingsChanged = ^(bool enabled, int64_t stars) {
+        __strong TGChannelInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil) {
+            TGConversation *conversation = [strongSelf->_conversation copy];
+            conversation.directMessagesEnabled = enabled;
+            conversation.sendPaidMessagesStars = stars;
+            strongSelf->_conversation = conversation;
+            [strongSelf updateDirectMessagesSettingsVariant];
+        }
+    };
+    [self.navigationController pushViewController:controller animated:true];
+}
+
 - (void)updateSignMessages:(bool)value {
     TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
     [progressWindow showWithDelay:0.2];
@@ -1702,7 +1741,7 @@
     _checked3dTouch = true;
     if (iosMajorVersion() >= 9)
     {
-        if (iosMajorVersion() >= 9 && self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
+        if (self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
         {
             [self registerForPreviewingWithDelegate:(id)self sourceView:_groupInfoItem.avatarView];
         }
@@ -1839,7 +1878,8 @@
             }
             else if ([action isEqualToString:@"addToReadingList"])
             {
-                [[(id)NSClassFromString(@"SSReadingList") defaultReadingList] addReadingListItemWithURL:[NSURL URLWithString:url] title:@"" previewText:nil error:NULL];
+                id readingList = [(id)NSClassFromString(@"SSReadingList") defaultReadingList];
+                [readingList addReadingListItemWithURL:[NSURL URLWithString:url] title:@"" previewText:nil error:NULL];
             }
         } target:self];
         [actionSheet showInView:self.view];

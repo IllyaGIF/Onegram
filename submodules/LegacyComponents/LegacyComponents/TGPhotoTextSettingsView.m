@@ -124,22 +124,22 @@ const CGFloat TGPhotoTextSettingsItemHeight = 44.0f;
 {
     self.alpha = 0.0f;
     
-    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, TGScreenScaling());
+    OGCompatLayerSetShouldRasterize(self.layer, true);
     
     [UIView animateWithDuration:0.2 animations:^
     {
         self.alpha = 1.0f;
     } completion:^(__unused BOOL finished)
     {
-        TGSetLayerShouldRasterize(self.layer, false);
+        OGCompatLayerSetShouldRasterize(self.layer, false);
     }];
 }
 
 - (void)dismissWithCompletion:(void (^)(void))completion
 {
-    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
-    TGSetLayerShouldRasterize(self.layer, true);
+    OGCompatLayerSetRasterizationScale(self.layer, TGScreenScaling());
+    OGCompatLayerSetShouldRasterize(self.layer, true);
     
     [UIView animateWithDuration:0.15 animations:^
     {

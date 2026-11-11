@@ -40,22 +40,13 @@ int Meta::MaxLayer() {
 std::unique_ptr<Instance> Meta::Create(
 		const std::string &version,
 		Descriptor &&descriptor) {
-	fprintf(stderr, "IOS6WEBRTC cxx.meta.create.enter version=%s servers=%lu keyOutgoing=%d\n",
+	OG_COMPAT_TRACE("cxx.meta.create.enter version=%s servers=%lu keyOutgoing=%d",
 		version.c_str(),
 		(unsigned long)descriptor.rtcServers.size(),
 		descriptor.encryptionKey.isOutgoing ? 1 : 0);
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.create.enter version=%s servers=%lu keyOutgoing=%d",
-		version.c_str(),
-		(unsigned long)descriptor.rtcServers.size(),
-		descriptor.encryptionKey.isOutgoing ? 1 : 0);
-	const auto i = MetaMap().find(version);
-	fprintf(stderr, "IOS6WEBRTC cxx.meta.create.lookup found=%d mapSize=%lu\n",
-		i != MetaMap().end() ? 1 : 0,
-		(unsigned long)MetaMap().size());
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.create.lookup found=%d mapSize=%lu",
-		i != MetaMap().end() ? 1 : 0,
+	const auto found = MetaMap().find(version);
+	OG_COMPAT_TRACE("cxx.meta.create.lookup found=%d mapSize=%lu",
+		found != MetaMap().end() ? 1 : 0,
 		(unsigned long)MetaMap().size());
 
 	// Enforce correct protocol version.
@@ -65,29 +56,21 @@ std::unique_ptr<Instance> Meta::Create(
 		descriptor.config.protocolVersion = ProtocolVersion::V1;
 	}
 
-	if (i == MetaMap().end()) {
-		fprintf(stderr, "IOS6WEBRTC cxx.meta.create.missing version=%s\n", version.c_str());
-		fflush(stderr);
-		syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.create.missing version=%s", version.c_str());
+	if (found == MetaMap().end()) {
+		OG_COMPAT_TRACE("cxx.meta.create.missing version=%s", version.c_str());
 		return nullptr;
 	}
-	fprintf(stderr, "IOS6WEBRTC cxx.meta.create.construct.before version=%s\n", version.c_str());
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.create.construct.before version=%s", version.c_str());
-	std::unique_ptr<Instance> result = i->second->construct(std::move(descriptor));
-	fprintf(stderr, "IOS6WEBRTC cxx.meta.create.construct.after instance=%p\n", result.get());
-	fflush(stderr);
-	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.create.construct.after instance=%p", result.get());
-	return result;
+	OG_COMPAT_TRACE("cxx.meta.create.construct.before version=%s", version.c_str());
+	auto instance = found->second->construct(std::move(descriptor));
+	OG_COMPAT_TRACE("cxx.meta.create.construct.after instance=%p", instance.get());
+	return instance;
 }
 
 void Meta::RegisterOne(std::shared_ptr<Meta> meta) {
 	if (meta) {
 		const auto versions = meta->versions();
         for (auto &it : versions) {
-			fprintf(stderr, "IOS6WEBRTC cxx.meta.register version=%s\n", it.c_str());
-			fflush(stderr);
-			syslog(LOG_NOTICE, "IOS6WEBRTC cxx.meta.register version=%s", it.c_str());
+			OG_COMPAT_TRACE("cxx.meta.register version=%s", it.c_str());
             MetaMap().insert(std::make_pair(it, meta));
         }
 	}

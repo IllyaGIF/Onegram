@@ -364,7 +364,7 @@ static const CFTimeInterval TGActivityIndicatorRevolutionDuration = 0.8;
     [CATransaction begin];
     [CATransaction setDisableActions:true];
     _spokesLayer.contents = (__bridge id)image.CGImage;
-    TGSetLayerContentsScale(_spokesLayer, image.scale);
+    OGCompatLayerSetContentsScale(_spokesLayer, image.scale);
     [CATransaction commit];
 }
 

@@ -10,6 +10,7 @@
 static NSString *const TGOnegramUpdateDismissedVersionKey = @"TGOnegramUpdateDismissedVersion";
 static const NSUInteger TGOnegramUpdateNotesLimit = 1500;
 static bool TGOnegramUpdateLaunchPromptArmed = false;
+static NSString *TGOnegramUpdatePromptedVersion = nil;
 
 static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
 {
@@ -63,15 +64,23 @@ static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
     return [TGOnegramUpdater currentVersion];
 }
 
-+ (void)startLaunchCheck
++ (void)startAutomaticCheck
 {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(launchUpdaterStateChanged:) name:TGOnegramUpdaterStateChangedNotification object:nil];
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        [center addObserver:self selector:@selector(launchUpdaterStateChanged:) name:TGOnegramUpdaterStateChangedNotification object:nil];
+        [center addObserver:self selector:@selector(launchUpdaterStateChanged:) name:UIApplicationDidBecomeActiveNotification object:nil];
     });
     TGOnegramUpdateLaunchPromptArmed = true;
-    [[TGOnegramUpdater sharedUpdater] checkForUpdatesIfNeeded];
+    TGOnegramUpdater *updater = [TGOnegramUpdater sharedUpdater];
+    if (updater.state == TGOnegramUpdaterStateIdle)
+        [updater checkForUpdates];
+    else if (updater.state == TGOnegramUpdaterStateAvailable)
+        [self launchUpdaterStateChanged:nil];
+    else
+        [updater checkForUpdatesIfNeeded];
 }
 
 + (void)launchUpdaterStateChanged:(NSNotification *)__unused notification
@@ -79,15 +88,17 @@ static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
     TGOnegramUpdater *updater = [TGOnegramUpdater sharedUpdater];
     if (!TGOnegramUpdateLaunchPromptArmed || updater.state == TGOnegramUpdaterStateChecking)
         return;
+    bool available = updater.state == TGOnegramUpdaterStateAvailable && [updater hasNewerRelease];
+    if (available && [UIApplication sharedApplication].applicationState != UIApplicationStateActive)
+        return;
     TGOnegramUpdateLaunchPromptArmed = false;
 
-    if (updater.state != TGOnegramUpdaterStateAvailable || ![updater hasNewerRelease])
+    if (!available)
         return;
     NSString *version = updater.latestRelease.version;
-    if ([[[NSUserDefaults standardUserDefaults] objectForKey:TGOnegramUpdateDismissedVersionKey] isEqual:version])
+    if ([TGOnegramUpdatePromptedVersion isEqualToString:version] || [[[NSUserDefaults standardUserDefaults] objectForKey:TGOnegramUpdateDismissedVersionKey] isEqual:version])
         return;
-    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive)
-        return;
+    TGOnegramUpdatePromptedVersion = version;
 
     [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"OnegramUpdate.AlertTitle") message:[NSString stringWithFormat:TGLocalized(@"OnegramUpdate.AlertText"), version] cancelButtonTitle:TGLocalized(@"OnegramUpdate.Later") okButtonTitle:TGLocalized(@"OnegramUpdate.Update") completionBlock:^(bool okButtonPressed)
     {
@@ -97,6 +108,9 @@ static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
             return;
         }
         [TGAppDelegateInstance.rootController pushContentController:[[TGOnegramUpdateController alloc] init]];
+        TGOnegramUpdater *currentUpdater = [TGOnegramUpdater sharedUpdater];
+        if ([currentUpdater canInstall])
+            [currentUpdater installLatestRelease];
     }];
 }
 
@@ -166,8 +180,10 @@ static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
         case TGOnegramUpdaterStateInstalled:
             return TGLocalized(@"OnegramUpdate.RestartInfo");
         case TGOnegramUpdaterStateAvailable:
-            if (![updater canInstallInPlace])
+            if (![updater canInstall])
                 return TGLocalized(@"OnegramUpdate.InPlaceUnavailable");
+            if ([updater usesSystemInstaller])
+                return TGLocalized(@"OnegramUpdate.SystemInstallInfo");
             break;
         default:
             break;
@@ -226,14 +242,14 @@ static NSString *TGOnegramUpdateErrorText(TGOnegramUpdaterError error)
     {
         if ([updater hasNewerRelease])
         {
-            if ([updater canInstallInPlace])
+            if ([updater canInstall])
             {
                 [actions addObject:[self actionWithTitle:[NSString stringWithFormat:TGLocalized(@"OnegramUpdate.Install"), release.version] variant:nil pressed:^
                 {
                     [[TGOnegramUpdater sharedUpdater] installLatestRelease];
                 }]];
             }
-            else
+            if (![updater canInstall] || (state == TGOnegramUpdaterStateFailed && updater.error == TGOnegramUpdaterErrorInstall))
             {
                 NSURL *pageURL = release.pageURL;
                 [actions addObject:[self actionWithTitle:TGLocalized(@"OnegramUpdate.OpenRelease") variant:nil pressed:^

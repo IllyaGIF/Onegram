@@ -26,44 +26,33 @@ static bool alreadyReloadedFeaturedPacksFromRemote = false;
 static NSDictionary *cachedPacks = nil;
 static OSSpinLock cachedPacksLock = 0;
 
-static NSDictionary *TGIOS6EmptyMaskStickerPacks(void)
+static NSDictionary *OGCompatEmptyMaskPackDictionary(void)
 {
-    return @{
-        @"packs": @[],
-        @"featuredPacks": @[],
-        @"featuredPacksUnreadIds": @[],
-        @"archivedPacksSummary": [[TGArchivedStickerPacksSummary alloc] initWithCount:0],
-        @"cacheUpdateDate": @0,
-        @"featuredCacheUpdateDate": @0,
-        @"documentIdsUseCount": @{},
-        @"maxDocumentIdsUseCount_v2": @0
-    };
+    NSArray *keys = @[@"packs", @"featuredPacks", @"featuredPacksUnreadIds", @"documentIdsUseCount", @"archivedPacksSummary", @"cacheUpdateDate", @"featuredCacheUpdateDate", @"maxDocumentIdsUseCount_v2"];
+    NSArray *values = @[@[], @[], @[], @{}, [[TGArchivedStickerPacksSummary alloc] initWithCount:0], @0, @0, @0];
+    return [NSDictionary dictionaryWithObjects:values forKeys:keys];
 }
 
-static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
+static NSDictionary *OGCompatSanitizedMaskPackDictionary(id candidate)
 {
-    if (![dict isKindOfClass:[NSDictionary class]])
-    {
-        return TGIOS6EmptyMaskStickerPacks();
-    }
+    NSDictionary *fallbacks = OGCompatEmptyMaskPackDictionary();
+    if (![candidate isKindOfClass:[NSDictionary class]])
+        return fallbacks;
     
-    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithDictionary:(NSDictionary *)dict];
-    if (![result[@"packs"] isKindOfClass:[NSArray class]])
-        result[@"packs"] = @[];
-    if (![result[@"featuredPacks"] isKindOfClass:[NSArray class]])
-        result[@"featuredPacks"] = @[];
-    if (![result[@"featuredPacksUnreadIds"] isKindOfClass:[NSArray class]])
-        result[@"featuredPacksUnreadIds"] = @[];
-    if (result[@"archivedPacksSummary"] == nil)
-        result[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
-    if (result[@"cacheUpdateDate"] == nil)
-        result[@"cacheUpdateDate"] = @0;
-    if (result[@"featuredCacheUpdateDate"] == nil)
-        result[@"featuredCacheUpdateDate"] = @0;
-    if (![result[@"documentIdsUseCount"] isKindOfClass:[NSDictionary class]])
-        result[@"documentIdsUseCount"] = @{};
-    if (result[@"maxDocumentIdsUseCount_v2"] == nil)
-        result[@"maxDocumentIdsUseCount_v2"] = @0;
+    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithDictionary:(NSDictionary *)candidate];
+    for (NSString *key in @[@"packs", @"featuredPacks", @"featuredPacksUnreadIds"])
+    {
+        if (![result[key] isKindOfClass:[NSArray class]])
+            result[key] = fallbacks[key];
+    }
+    id useCounts = [result objectForKey:@"documentIdsUseCount"];
+    if ([useCounts isKindOfClass:[NSDictionary class]] == false)
+        result[@"documentIdsUseCount"] = fallbacks[@"documentIdsUseCount"];
+    for (NSString *key in @[@"archivedPacksSummary", @"cacheUpdateDate", @"featuredCacheUpdateDate", @"maxDocumentIdsUseCount_v2"])
+    {
+        if (result[key] == nil)
+            result[key] = fallbacks[key];
+    }
     return result;
 }
 
@@ -82,7 +71,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)updateStickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
             {
                 SSignal *signal = [SSignal complete];
                 
@@ -103,7 +92,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                 }
                 alreadyReloadedStickerPacksFromRemote = true;
                 
-                SSignal *periodicFetchSignal = [[[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+                SSignal *periodicFetchSignal = [[SSignal defer:^SSignal *
                                                  {
                                                      NSDictionary *cachedPacks = [self cachedStickerPacks];
                                                      return [self remoteStickerPacksWithCacheHash:[self hashForStickerPacks:cachedPacks[@"packs"]]];
@@ -119,7 +108,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)updateFeaturedStickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
             {
                 SSignal *signal = [SSignal complete];
                 
@@ -140,7 +129,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                 }
                 alreadyReloadedFeaturedPacksFromRemote = true;
                 
-                SSignal *periodicFetchSignal = [[[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+                SSignal *periodicFetchSignal = [[SSignal defer:^SSignal *
                                                  {
                                                      NSDictionary *cachedPacks = [self cachedStickerPacks];
                                                      return [self remoteFeaturedPacksWithCacheHash:[self hashForStickerPacks:cachedPacks[@"featuredPacks"]]];
@@ -244,31 +233,31 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 + (void)forceUpdateStickers {
     [[[TGTelegramNetworking instance] genericTasksSignalManager] startStandaloneSignalIfNotRunningForKey:@"forceUpdateMaskStickers" producer:^SSignal *{
         return [[self remoteStickerPacksWithCacheHash:0] onNext:^(NSDictionary *dict) {
-            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeMaskStickerPacks(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
+            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedMaskPackDictionary(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
         }];
     }];
 }
 
 + (void)dispatchStickers {
-    [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeMaskStickerPacks([self cachedStickerPacks]) toMulticastedPipeForKey:@"maskStickerPacks"];
+    [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedMaskPackDictionary([self cachedStickerPacks]) toMulticastedPipeForKey:@"maskStickerPacks"];
 }
 
 + (SSignal *)stickerPacks
 {
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id defer)
+    return [SSignal defer:^SSignal *
             {
                 [[[TGTelegramNetworking instance] genericTasksSignalManager] startStandaloneSignalIfNotRunningForKey:@"updateMaskStickers" producer:^SSignal *
                  {
                      return [[self updateStickerPacks] onNext:^(NSDictionary *dict)
                              {
-                                 dict = TGIOS6SafeMaskStickerPacks(dict);
+                                 dict = OGCompatSanitizedMaskPackDictionary(dict);
                                  [self updateShowStickerButtonModeForStickerPacks:dict[@"packs"]];
                                  
                                  [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:dict toMulticastedPipeForKey:@"maskStickerPacks"];
                              }];
                  }];
                 
-                SSignal *signal = [SSignal single:TGIOS6EmptyMaskStickerPacks()];
+                SSignal *signal = [SSignal single:OGCompatEmptyMaskPackDictionary()];
                 
                 NSDictionary *cachedPacks = [self cachedStickerPacks];
                 if (cachedPacks.count != 0)
@@ -288,23 +277,23 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
     NSData *data = [NSData dataWithContentsOfFile:[self filePath]];
     if (data == nil)
     {
-        NSDictionary *emptyPacks = TGIOS6EmptyMaskStickerPacks();
-        data = [NSKeyedArchiver archivedDataWithRootObject:emptyPacks];
-        NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
-        if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true])
+        data = [NSKeyedArchiver archivedDataWithRootObject:OGCompatEmptyMaskPackDictionary()];
+        NSString *packsPath = [self filePath];
+        [[NSFileManager defaultManager] createDirectoryAtPath:[packsPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
+        bool written = data.length != 0 && [data writeToFile:packsPath atomically:true];
+        if (!written)
             TGLog(@"***** TGMaskStickersSignalsClass loadPacksData couldn't write to file");
     }
     return data;
 }
 
 + (void)storePacksData:(NSData *)data {
-    NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
+    NSString *packsPath = [self filePath];
+    [[NSFileManager defaultManager] createDirectoryAtPath:[packsPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
     
-    if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
+    bool stored = data.length != 0 && [data writeToFile:packsPath atomically:true];
+    if (!stored)
         TGLog(@"***** TGMaskStickersSignalsClass storePacksData couldn't write to file");
-    }
 }
 
 + (void)clearCache
@@ -336,7 +325,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
     
     NSData *cachedStickerPacksData = [self loadPacksData];
     if (cachedStickerPacksData == nil)
-        return TGIOS6EmptyMaskStickerPacks();
+        return OGCompatEmptyMaskPackDictionary();
     
     NSDictionary *dict = nil;
     @try {
@@ -345,29 +334,13 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
         
     }
     
-    if (dict == nil || ![dict isKindOfClass:[NSDictionary class]])
-    {
-        dict = TGIOS6EmptyMaskStickerPacks();
-    }
+    if (![dict isKindOfClass:[NSDictionary class]])
+        dict = OGCompatEmptyMaskPackDictionary();
     
-    NSMutableDictionary *normalizedDict = [[NSMutableDictionary alloc] initWithDictionary:dict];
-    if (![normalizedDict[@"packs"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"packs"] = @[];
-    if (![normalizedDict[@"featuredPacks"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"featuredPacks"] = @[];
-    if (![normalizedDict[@"featuredPacksUnreadIds"] isKindOfClass:[NSArray class]])
-        normalizedDict[@"featuredPacksUnreadIds"] = @[];
-    if (![normalizedDict[@"documentIdsUseCount"] isKindOfClass:[NSDictionary class]])
-        normalizedDict[@"documentIdsUseCount"] = @{};
-    if (normalizedDict[@"cacheUpdateDate"] == nil)
-        normalizedDict[@"cacheUpdateDate"] = @0;
-    if (normalizedDict[@"featuredCacheUpdateDate"] == nil)
-        normalizedDict[@"featuredCacheUpdateDate"] = @0;
-    if (normalizedDict[@"maxDocumentIdsUseCount_v2"] == nil)
-        normalizedDict[@"maxDocumentIdsUseCount_v2"] = @0;
-    if (![normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]])
+    NSMutableDictionary *normalizedDict = [NSMutableDictionary dictionaryWithDictionary:dict];
+    if ([normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]] == false)
         normalizedDict[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
-    dict = normalizedDict;
+    dict = OGCompatSanitizedMaskPackDictionary(normalizedDict);
     
     if ([dict[@"packs"] isKindOfClass:[NSArray class]])
     {
@@ -612,8 +585,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)remoteStickerPacksWithCacheHash:(int32_t)cacheHash
 {
-    NSDictionary *cached = [self cachedStickerPacks];
-    return [SSignal single:TGIOS6SafeMaskStickerPacks(cached)];
+    return [SSignal single:OGCompatSanitizedMaskPackDictionary([self cachedStickerPacks])];
     
     TLRPCmessages_getMaskStickers$messages_getMaskStickers *getAllStickers = [[TLRPCmessages_getMaskStickers$messages_getMaskStickers alloc] init];
     getAllStickers.n_hash = cacheHash;
@@ -711,8 +683,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)remoteFeaturedPacksWithCacheHash:(int32_t)cacheHash
 {
-    NSDictionary *cached = [self cachedStickerPacks];
-    return [SSignal single:TGIOS6SafeMaskStickerPacks(cached)];
+    return [SSignal single:OGCompatSanitizedMaskPackDictionary([self cachedStickerPacks])];
     
 #ifdef DEBUG
     cacheHash = 0;
@@ -1056,7 +1027,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 {
     NSArray *documents = dictionary[@"documents"];
     
-    return [[SSignal single:[NSNull null]] mapToSignal:^SSignal *(__unused id next)
+    return [SSignal defer:^SSignal *
             {
                 SSignal *signal = [SSignal complete];
                 
@@ -1108,7 +1079,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 + (SSignal *)updatedFeaturedStickerPacks {
     return [[[TGTelegramNetworking instance] genericTasksSignalManager] multicastedSignalForKey:@"updateFeaturedMaskStickers" producer:^SSignal *{
         return [[self updateFeaturedStickerPacks] onNext:^(NSDictionary *dict) {
-            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeMaskStickerPacks(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
+            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedMaskPackDictionary(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
         }];
     }];
 }
@@ -1145,7 +1116,7 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
         NSDictionary *dict = [self replaceArchivedStickerPacksSummary:[[TGArchivedStickerPacksSummary alloc] initWithCount:result.count]];
         
         if (dict != nil) {
-            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:TGIOS6SafeMaskStickerPacks(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
+            [[[TGTelegramNetworking instance] genericTasksSignalManager] putNext:OGCompatSanitizedMaskPackDictionary(dict) toMulticastedPipeForKey:@"maskStickerPacks"];
         }
         
         NSMutableArray *resultingPackReferences = [[NSMutableArray alloc] init];

@@ -66,8 +66,9 @@
     [((TGSwitchCollectionItemView *)view) setTitle:_title];
     [((TGSwitchCollectionItemView *)view) setDescriptionText:_descriptionText];
     [((TGSwitchCollectionItemView *)view) setIsOn:_isOn animated:false];
-    [((TGSwitchCollectionItemView *)view) setIsEnabled:_isEnabled];
-    [((TGSwitchCollectionItemView *)view) setIsLocked:_isLocked];
+    TGSwitchCollectionItemView *switchView = (TGSwitchCollectionItemView *)view;
+    [switchView setIsEnabled:_isEnabled];
+    [switchView setIsLocked:_isLocked];
     [((TGSwitchCollectionItemView *)view) setIconName:_iconName brandedUserInfoStyle:_brandedUserInfoStyle];
     ((TGSwitchCollectionItemView *)view).delegate = self;
 }
@@ -129,13 +130,13 @@
 
 - (void)setIsLocked:(bool)isLocked
 {
-    if (_isLocked != isLocked)
-    {
-        _isLocked = isLocked;
+    if (_isLocked == isLocked)
+        return;
+    _isLocked = isLocked;
 
-        if ([self boundView] != nil)
-            [((TGSwitchCollectionItemView *)[self boundView]) setIsLocked:_isLocked];
-    }
+    TGSwitchCollectionItemView *boundSwitchView = (TGSwitchCollectionItemView *)[self boundView];
+    if (boundSwitchView != nil)
+        [boundSwitchView setIsLocked:_isLocked];
 }
 
 - (void)switchCollectionItemViewChangedValue:(TGSwitchCollectionItemView *)switchItemView isOn:(bool)isOn
@@ -145,8 +146,9 @@
         if (_isLocked)
         {
             [switchItemView setIsOn:_isOn animated:true];
-            if (_lockedPressed)
-                _lockedPressed(self);
+            void (^pressedHandler)(TGSwitchCollectionItem *) = _lockedPressed;
+            if (pressedHandler != nil)
+                pressedHandler(self);
             return;
         }
 

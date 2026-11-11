@@ -230,9 +230,9 @@
         _gA = gA;
         _keyFingerprint = keyFingerprint;
         _defaultConnection = defaultConnection;
-        _alternativeConnections = alternativeConnections ?: @[];
-        _webrtcConnections = webrtcConnections ?: @[];
-        _customParameters = customParameters ?: @"";
+        _customParameters = customParameters != nil ? customParameters : @"";
+        _alternativeConnections = alternativeConnections != nil ? alternativeConnections : @[];
+        _webrtcConnections = webrtcConnections != nil ? webrtcConnections : @[];
         _minLayer = minLayer;
         _maxLayer = maxLayer;
         _libraryVersions = libraryVersions ?: @[];
@@ -324,9 +324,9 @@
         _key = key;
         _keyFingerprint = keyFingerprint;
         _defaultConnection = defaultConnection;
-        _alternativeConnections = alternativeConnections ?: @[];
-        _webrtcConnections = webrtcConnections ?: @[];
-        _customParameters = customParameters ?: @"";
+        _customParameters = customParameters != nil ? customParameters : @"";
+        _alternativeConnections = alternativeConnections != nil ? alternativeConnections : @[];
+        _webrtcConnections = webrtcConnections != nil ? webrtcConnections : @[];
         _minLayer = minLayer;
         _maxLayer = maxLayer;
         _libraryVersions = libraryVersions ?: @[];

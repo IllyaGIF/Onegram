@@ -23,9 +23,6 @@ const CGSize TGEmbedPIPButtonSize = { 42.0f, 42.0f };
         self.clipsToBounds = true;
         self.exclusiveTouch = true;
         
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-        id blurEffect = nil;
-#endif
         _backView = [[UIView alloc] initWithFrame:CGRectZero];
         _backView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _backView.frame = self.bounds;

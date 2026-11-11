@@ -104,7 +104,7 @@ static const CGFloat TGVLESSEntryPlainInset = 15.0f;
 {
     [super layoutSubviews];
 
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     CGFloat editingInset = self.enableEditing && self.showsDeleteIndicator ? 38.0f : 0.0f;
     CGFloat leftInset = (_checkable ? TGVLESSEntryCheckInset : TGVLESSEntryPlainInset) + classicInset + editingInset + self.safeAreaInset.left;
     CGFloat width = MAX(0.0f, self.editingContentView.frame.size.width - leftInset - TGVLESSEntryPlainInset - classicInset - self.safeAreaInset.right);

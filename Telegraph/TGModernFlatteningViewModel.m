@@ -92,8 +92,8 @@ enum {
     TGModernDrawingRecording *_recording;
     CGSize _contentSize;
 
-    CGRect _lastVisibleRect;
-    bool _hasLastVisibleRect;
+    CGRect _lastViewportRect;
+    bool _hasLastViewportRect;
 
     CGFloat _visiblePriority;
     NSUInteger _cachedBytes;
@@ -919,8 +919,8 @@ static void TGModernFlatteningCacheListEnsure(void)
     else
     {
         view.layer.contents = nil;
-        if (_hasLastVisibleRect)
-            [self _layoutTilesForVisibleRect:_lastVisibleRect];
+        if (_hasLastViewportRect)
+            [self _layoutTilesForVisibleRect:_lastViewportRect];
     }
 }
 
@@ -998,8 +998,8 @@ static void TGModernFlatteningCacheListEnsure(void)
             view.layer.contents = targetTile->_image;
         else if (targetTile->_view != nil)
             targetTile->_view.layer.contents = targetTile->_image;
-        else if (_hasLastVisibleRect)
-            [self _layoutTilesForVisibleRect:_lastVisibleRect];
+        else if (_hasLastViewportRect)
+            [self _layoutTilesForVisibleRect:_lastViewportRect];
     }];
 }
 
@@ -1080,7 +1080,7 @@ static void TGModernFlatteningCacheListEnsure(void)
 
     [super unbindView:viewStorage];
 
-    _hasLastVisibleRect = false;
+    _hasLastViewportRect = false;
     _needsContentUpdate = false;
 
     if (_recording == nil)
@@ -1162,8 +1162,8 @@ static void TGModernFlatteningCacheListEnsure(void)
     if (!_tiledMode)
         return;
 
-    _lastVisibleRect = rect;
-    _hasLastVisibleRect = true;
+    _lastViewportRect = rect;
+    _hasLastViewportRect = true;
 
     if ([self boundView] == nil || ![self _contentUpdatesAllowed])
         return;

@@ -15,12 +15,15 @@
 {
     [self setPopoverContentSize:contentSize animated:false];
     
+    UIViewController *hosted = self.contentViewController;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    if ([self.contentViewController respondsToSelector:@selector(setPreferredContentSize:)])
-        [self.contentViewController setPreferredContentSize:contentSize];
-    else
+    if ([hosted respondsToSelector:@selector(setPreferredContentSize:)])
+    {
+        [hosted setPreferredContentSize:contentSize];
+        return;
+    }
 #endif
-        self.contentViewController.contentSizeForViewInPopover = contentSize;
+    hosted.contentSizeForViewInPopover = contentSize;
 }
 
 @end

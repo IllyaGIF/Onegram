@@ -189,7 +189,7 @@ static NSCache *TGPluginBubbleCache(void)
     
     if (_pluginBubbleStyle == nil || newImage == nil)
         return newImage;
-    NSString *key = [NSString stringWithFormat:@"%p:%d:%@", newImage.CGImage, [TGPresentation classicIOS6Style], _pluginBubbleStyle];
+    NSString *key = [NSString stringWithFormat:@"%p:%d:%@", newImage.CGImage, [TGPresentation classicThemeStyle], _pluginBubbleStyle];
     UIImage *cached = [TGPluginBubbleCache() objectForKey:key];
     if (cached != nil)
         return cached;
@@ -198,7 +198,7 @@ static NSCache *TGPluginBubbleCache(void)
         _pluginBubblePendingKey = key;
         NSUInteger generation = _pluginBubbleGeneration;
         NSDictionary *style = _pluginBubbleStyle;
-        bool classic = [TGPresentation classicIOS6Style];
+        bool classic = [TGPresentation classicThemeStyle];
         __weak TGTextMessageBackgroundViewModel *weakSelf = self;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
         {

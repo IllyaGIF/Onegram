@@ -31,6 +31,8 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
 
 - (void)cancel;
 - (void)dispose;
+- (void)og_compat_finishWithResult:(bool)succeed;
+- (void)og_compat_discardMetadataQuery;
 
 + (TGICloudFileDownloadRequest *)downloadFileAtUrl:(NSURL *)url path:(NSURL *)path progressBlock:(void (^)(CGFloat progress))progressBlock completionBlock:(void (^)(bool succeed))completionBlock;
 
@@ -52,6 +54,30 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
     return request;
 }
 
+- (void)og_compat_finishWithResult:(bool)succeed
+{
+    void (^completion)(bool) = self.completionBlock;
+    if (completion != nil)
+        completion(succeed);
+}
+
+- (void)og_compat_discardMetadataQuery
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+    @synchronized (self)
+    {
+        if (_metadataQuery == nil)
+            return;
+        _discardedMetadataQuery = true;
+        if (_addedProgressObserver)
+            [_metadataQuery removeObserver:self forKeyPath:@"results"];
+        if ([_metadataQuery isStarted])
+            [_metadataQuery stopQuery];
+        _metadataQuery = nil;
+    }
+#endif
+}
+
 - (void)start
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
@@ -59,8 +85,7 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
     NSString *targetPath = self.path.path;
     if (sourcePath.length == 0 || targetPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:sourcePath])
     {
-        if (self.completionBlock != nil)
-            self.completionBlock(false);
+        [self og_compat_finishWithResult:false];
         return;
     }
     [[NSFileManager defaultManager] createDirectoryAtPath:[targetPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:nil];
@@ -77,8 +102,7 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
         if (self.progressBlock != nil)
             self.progressBlock(1.0f);
     }
-    if (self.completionBlock != nil)
-        self.completionBlock(succeed);
+    [self og_compat_finishWithResult:succeed];
     return;
 #else
     NSError *error;
@@ -117,8 +141,7 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
     if (!succeed)
     {
         TGLog(@"Cloud ERROR: failed to start accessing security scoped resource: %@", self.url);
-        if (self.completionBlock != nil)
-            self.completionBlock(false);
+        [self og_compat_finishWithResult:false];
         return;
     }
 #endif
@@ -137,8 +160,7 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
         if (![[NSFileManager defaultManager] copyItemAtPath:url.path toPath:self.path.path error:&fileCopyError])
         {
             TGLog(@"Cloud ERROR: failed to copy security scoped resource from %@ to %@ with error: %@", url, self.path, fileCopyError);
-            if (self.completionBlock != nil)
-            self.completionBlock(false);
+            [self og_compat_finishWithResult:false];
             return;
         }
         
@@ -146,8 +168,7 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
         [url stopAccessingSecurityScopedResource];
 #endif
         
-        if (self.completionBlock != nil)
-            self.completionBlock(true);
+        [self og_compat_finishWithResult:true];
     };
     
     if (!isRemoteFile || isCurrent)
@@ -165,25 +186,12 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
                                                queue:[TGICloudFileDownloadRequest
                                                       fileCoordinatorOperationQueue] byAccessor:^(NSError *error)
         {
-            __strong TGICloudFileDownloadRequest *strongSelf = weakSelf;
-            @synchronized (self)
-            {
-                if (strongSelf->_metadataQuery != nil)
-                {
-                    strongSelf->_discardedMetadataQuery = true;
-                    if (strongSelf->_addedProgressObserver)
-                        [strongSelf->_metadataQuery removeObserver:self forKeyPath:@"results"];
-                    if ([strongSelf->_metadataQuery isStarted])
-                        [strongSelf->_metadataQuery stopQuery];
-                    strongSelf->_metadataQuery = nil;
-                }
-            }
+            [weakSelf og_compat_discardMetadataQuery];
             
             if (error != nil)
             {
                 TGLog(@"Cloud ERROR: failed to download file with error: %@", error);
-                if (self.completionBlock != nil)
-                    self.completionBlock(false);
+                [self og_compat_finishWithResult:false];
                 return;
             }
             
@@ -192,27 +200,14 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
 #else
         [_fileCoordinator coordinateReadingItemAtURL:self.url options:NSFileCoordinatorReadingWithoutChanges error:&error byAccessor:^(NSURL *newURL)
         {
-            __strong TGICloudFileDownloadRequest *strongSelf = weakSelf;
-            @synchronized (self)
-            {
-                if (strongSelf->_metadataQuery != nil)
-                {
-                    strongSelf->_discardedMetadataQuery = true;
-                    if (strongSelf->_addedProgressObserver)
-                        [strongSelf->_metadataQuery removeObserver:self forKeyPath:@"results"];
-                    if ([strongSelf->_metadataQuery isStarted])
-                        [strongSelf->_metadataQuery stopQuery];
-                    strongSelf->_metadataQuery = nil;
-                }
-            }
+            [weakSelf og_compat_discardMetadataQuery];
             
             downloadCompletionBlock(newURL);
         }];
         if (error != nil)
         {
             TGLog(@"Cloud ERROR: failed to download file with error: %@", error);
-            if (self.completionBlock != nil)
-                self.completionBlock(false);
+            [self og_compat_finishWithResult:false];
             return;
         }
 #endif

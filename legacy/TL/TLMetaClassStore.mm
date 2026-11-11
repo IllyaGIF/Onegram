@@ -13,7 +13,7 @@ volatile int32_t TGTLParserVectorItemSignature = 0;
 volatile int32_t TGTLParserVectorItemIndex = -1;
 volatile int32_t TGTLParserVectorItemCount = 0;
 
-static inline void CodexCooperateWithInteraction(int32_t index)
+static inline void OGTLCoreCooperateWithInteraction(int32_t index)
 {
     if ((index & 3) != 3)
         return;
@@ -51,7 +51,8 @@ public:
 #import "TLRpcResult.h"
 #import "TLRPCphone_sendSignalingData.h"
 #import "TLRPCmessages_sendMessage_manual.h"
-#import "../../../Telegraph/IOS6FeatureProbe.h"
+#import "../../../Telegraph/OGFeatureProbe.h"
+#import "../../../Telegraph/TGTLDynamic.h"
 
 #import "TLResPQ$resPQ_manual.h"
 #import "TLMsgsAck$msgs_ack_manual.h"
@@ -299,7 +300,7 @@ static id TLMetaClassInstantiate(TLMetaClassEntry const *entries, uint32_t count
     return [[objectClass alloc] init];
 }
 
-@interface TLCodexThreadContext : NSObject
+@interface OGTLThreadContext : NSObject
 {
 @public
     int32_t currentManualSignature;
@@ -311,51 +312,52 @@ static id TLMetaClassInstantiate(TLMetaClassEntry const *entries, uint32_t count
 }
 @end
 
-@implementation TLCodexThreadContext
+@implementation OGTLThreadContext
 @end
 
-static pthread_key_t CodexThreadContextKey;
-static pthread_once_t CodexThreadContextOnce = PTHREAD_ONCE_INIT;
+static pthread_key_t OGTLCoreThreadContextKey;
+static pthread_once_t OGTLCoreThreadContextOnce = PTHREAD_ONCE_INIT;
 
-static void CodexThreadContextDestroy(void *value)
+static void OGTLCoreThreadContextDestroy(void *value)
 {
     if (value != NULL)
     {
-        TLCodexThreadContext *context = (__bridge_transfer TLCodexThreadContext *)value;
+        OGTLThreadContext *context = (__bridge_transfer OGTLThreadContext *)value;
         (void)context;
     }
 }
 
-static void CodexThreadContextInitialize(void)
+static void OGTLCoreThreadContextInitialize(void)
 {
-    pthread_key_create(&CodexThreadContextKey, CodexThreadContextDestroy);
+    pthread_key_create(&OGTLCoreThreadContextKey, OGTLCoreThreadContextDestroy);
 }
 
-static TLCodexThreadContext *CodexThreadContextGet(void)
+static OGTLThreadContext *OGTLCoreThreadContextGet(void)
 {
-    pthread_once(&CodexThreadContextOnce, CodexThreadContextInitialize);
-    TLCodexThreadContext *context = (__bridge TLCodexThreadContext *)pthread_getspecific(CodexThreadContextKey);
+    pthread_once(&OGTLCoreThreadContextOnce, OGTLCoreThreadContextInitialize);
+    OGTLThreadContext *context = (__bridge OGTLThreadContext *)pthread_getspecific(OGTLCoreThreadContextKey);
     if (context == nil)
     {
-        context = [[TLCodexThreadContext alloc] init];
-        pthread_setspecific(CodexThreadContextKey, (__bridge_retained void *)context);
+        context = [[OGTLThreadContext alloc] init];
+        pthread_setspecific(OGTLCoreThreadContextKey, (__bridge_retained void *)context);
     }
     return context;
 }
 
-#define CodexCurrentManualSignature (CodexThreadContextGet()->currentManualSignature)
-#define CodexCurrentManualParser (CodexThreadContextGet()->currentManualParser)
-#define CodexLastCompletedManualSignature (CodexThreadContextGet()->lastCompletedManualSignature)
-#define CodexLastCompletedManualParser (CodexThreadContextGet()->lastCompletedManualParser)
-#define CodexCurrentVectorRole (CodexThreadContextGet()->currentVectorRole)
-#define CodexLastReadUpdatesState (CodexThreadContextGet()->lastReadUpdatesState)
+#define OGTLCoreCurrentManualSignature (OGTLCoreThreadContextGet()->currentManualSignature)
+#define OGTLCoreCurrentManualParser (OGTLCoreThreadContextGet()->currentManualParser)
+#define OGTLCoreLastCompletedManualSignature (OGTLCoreThreadContextGet()->lastCompletedManualSignature)
+#define OGTLCoreLastCompletedManualParser (OGTLCoreThreadContextGet()->lastCompletedManualParser)
+#define OGTLCoreCurrentVectorRole (OGTLCoreThreadContextGet()->currentVectorRole)
+#define OGTLCoreLastReadUpdatesState (OGTLCoreThreadContextGet()->lastReadUpdatesState)
 
 static void addHashToString(int32_t hash, NSString *string)
 {
     std::tr1::unordered_map<int32_t, NSString *>::iterator it = hashToStringMap.find(hash);
     if (it != hashToStringMap.end() && [it->second isEqualToString:string])
         return;
-    hashToStringMap[hash] = [string copy];
+    NSString *stored = [string copy];
+    hashToStringMap[hash] = stored;
 }
 
 static NSString *stringForHash(int32_t hash)
@@ -366,158 +368,298 @@ static NSString *stringForHash(int32_t hash)
     return it->second;
 }
 
-static id<TLObject> CodexReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+#define OGTLCtor(value) ((int32_t)(value))
+
+static inline int32_t OGTLTakeInt32(NSInputStream *is)
 {
-    int32_t signature = [is readInt32];
-    return TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+    return [is readInt32];
 }
 
-static NSArray *CodexReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
-
-static int32_t CodexReadReplyHeaderCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline int64_t OGTLTakeInt64(NSInputStream *is)
 {
-    int32_t signature = [is readInt32];
-    if (signature == (int32_t)0xafbc09db || signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b)
-    {
-        int32_t flags = [is readInt32];
-        int32_t replyToMessageId = 0;
-        if (flags & (1 << 4))
-            replyToMessageId = [is readInt32];
-        if (flags & (1 << 0))
-            CodexReadObject(is, environment, error);
-        if (flags & (1 << 5))
-            CodexReadObject(is, environment, error);
-        if (flags & (1 << 8))
-            CodexReadObject(is, environment, error);
-        if (flags & (1 << 1))
-            [is readInt32];
-        if (flags & (1 << 6))
-            [is readString];
-        if (flags & (1 << 7))
-            CodexReadObjectVector(is, environment, error);
-        if (flags & (1 << 10))
-            [is readInt32];
-        if ((signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b) && (flags & (1 << 11)))
-            [is readInt32];
-        if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 12)))
-            [is readBytes];
-        return replyToMessageId;
-    }
-    if (signature > 0 && signature < 10000000)
-        return signature;
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    return 0;
+    return [is readInt64];
 }
 
-static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
-static NSArray *CodexReadObjectVectorOrSingleWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
-
-static NSArray *CodexReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline double OGTLTakeDouble(NSInputStream *is)
 {
-    int32_t vectorMarker = [is readInt32];
-    return CodexReadObjectVectorWithMarker(is, vectorMarker, environment, error);
+    return [is readDouble];
 }
 
-static NSArray *CodexReadObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static inline NSString *OGTLTakeString(NSInputStream *is)
 {
-    NSString *previousRole = CodexCurrentVectorRole;
-    CodexCurrentVectorRole = role;
-    NSArray *result = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    return [is readString];
+}
+
+static inline NSData *OGTLTakeBytes(NSInputStream *is)
+{
+    return [is readBytes];
+}
+
+#define OGTLNewObject(cls) [[cls alloc] init]
+
+static inline NSMutableArray *OGTLCoreMakeArray(int32_t count)
+{
+    return [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+}
+
+static inline id OGTLCoreBuildObject(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    return TLMetaClassStore::constructObject(is, signature, environment, NULL, error);
+}
+
+static inline bool OGTLCoreIsKind(id object, Class cls)
+{
+    return [object isKindOfClass:cls];
+}
+
+static NSError *OGTLCoreMessageError(NSString *message)
+{
+    NSMutableDictionary *info = [[NSMutableDictionary alloc] init];
+    [info setObject:message forKey:NSLocalizedDescriptionKey];
+    return [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:info];
+}
+
+static NSDictionary *OGTLChatReactionModeInfo(NSString *mode, NSArray *emojis)
+{
+    return @{ @"mode": mode, @"emojis": emojis };
+}
+
+static inline uint8_t OGTLCoreLeadByte(int32_t word)
+{
+    return (uint8_t)(word & 0xff);
+}
+
+static id<TLObject> OGTLCoreReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    return TLMetaClassStore::constructObject(is, [is readInt32], environment, nil, error);
+}
+
+static inline bool OGTLFlagSet(int32_t flags, int bit)
+{
+    return (flags & (1 << bit)) != 0;
+}
+
+static inline bool OGTLCoreFailed(NSError **error)
+{
+    return error != NULL && *error != nil;
+}
+
+static NSError *OGTLCoreVectorError(NSString *description)
+{
+    return [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+}
+
+static void OGTLCoreWrapVectorRoleError(NSString *role, __autoreleasing NSError **error)
+{
+    if (OGTLCoreFailed(error))
     {
         NSString *description = (*error).localizedDescription ?: @"TL vector parse failed";
-        *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"%@: %@", role ?: @"vector", description]}];
+        *error = OGTLCoreVectorError([NSString stringWithFormat:@"%@: %@", role ?: @"vector", description]);
     }
-    CodexCurrentVectorRole = previousRole;
+}
+
+static void OGTLCoreClearVectorTrace(void)
+{
+    TGTLParserVectorItemIndex = -1;
+    TGTLParserVectorItemCount = 0;
+    TGTLParserVectorItemSignature = 0;
+}
+
+static bool OGTLCoreVectorCountForMarker(NSInputStream *is, int32_t marker, int32_t *count)
+{
+    if (marker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+    {
+        *count = [is readInt32];
+        return true;
+    }
+    if (marker >= 0 && marker <= 10000)
+    {
+        *count = marker;
+        return true;
+    }
+    return false;
+}
+
+static inline bool OGTLCoreMarkerStartsVector(int32_t marker)
+{
+    if (marker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+        return true;
+    return marker >= 0 && marker <= 10000;
+}
+
+static NSArray *OGTLCoreReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
+static NSArray *OGTLCoreReadObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
+static NSArray *OGTLCoreReadObjectVectorOrSingleWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
+
+enum
+{
+    OGTLReplyHeaderFormatA = 1,
+    OGTLReplyHeaderFormatB = 2,
+    OGTLReplyHeaderFormatC = 4,
+    OGTLReplyHeaderFormatD = 8
+};
+
+typedef struct
+{
+    int32_t signature;
+    uint8_t format;
+} OGTLReplyHeaderSignature;
+
+typedef struct
+{
+    uint8_t bit;
+    char kind;
+    uint8_t formats;
+} OGTLReplyHeaderField;
+
+static const OGTLReplyHeaderSignature OGTLReplyHeaderSignatures[] =
+{
+    {(int32_t)0xafbc09db, OGTLReplyHeaderFormatA},
+    {(int32_t)0x1b97dd66, OGTLReplyHeaderFormatB},
+    {(int32_t)0x6917560b, OGTLReplyHeaderFormatC},
+    {(int32_t)0xddb5ab75, OGTLReplyHeaderFormatD}
+};
+
+static const OGTLReplyHeaderField OGTLReplyHeaderFields[] =
+{
+    {0, 'o', 15},
+    {5, 'o', 15},
+    {8, 'o', 15},
+    {1, 'i', 15},
+    {6, 's', 15},
+    {7, 'v', 15},
+    {10, 'i', 15},
+    {11, 'i', OGTLReplyHeaderFormatB | OGTLReplyHeaderFormatC | OGTLReplyHeaderFormatD},
+    {12, 'b', OGTLReplyHeaderFormatB | OGTLReplyHeaderFormatD},
+    {14, 'v', OGTLReplyHeaderFormatD}
+};
+
+static int32_t OGTLCoreReadReplyHeaderCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t leadSignature = [is readInt32];
+    uint8_t format = 0;
+    for (size_t i = 0; i < sizeof(OGTLReplyHeaderSignatures) / sizeof(OGTLReplyHeaderSignatures[0]); i++)
+    {
+        if (OGTLReplyHeaderSignatures[i].signature == leadSignature)
+            format = OGTLReplyHeaderSignatures[i].format;
+    }
+    if (format != 0)
+    {
+        int32_t flags = [is readInt32];
+        int32_t replyId = 0;
+        if (OGTLFlagSet(flags, 4))
+            replyId = OGTLTakeInt32(is);
+        for (size_t i = 0; i < sizeof(OGTLReplyHeaderFields) / sizeof(OGTLReplyHeaderFields[0]); i++)
+        {
+            const OGTLReplyHeaderField *field = &OGTLReplyHeaderFields[i];
+            if (!(flags & (1 << field->bit)) || !(field->formats & format))
+                continue;
+            switch (field->kind)
+            {
+                case 'o':
+                    OGTLCoreReadObject(is, environment, error);
+                    break;
+                case 'i':
+                    [is readInt32];
+                    break;
+                case 's':
+                    OGTLTakeString(is);
+                    break;
+                case 'b':
+                    OGTLTakeBytes(is);
+                    break;
+                default:
+                    OGTLCoreReadObjectVector(is, environment, error);
+                    break;
+            }
+        }
+        return replyId;
+    }
+    if (leadSignature <= 0 || leadSignature >= 10000000)
+    {
+        OGTLCoreBuildObject(is, leadSignature, environment, error);
+        return 0;
+    }
+    return leadSignature;
+}
+
+static NSArray *OGTLCoreReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    return OGTLCoreReadObjectVectorWithMarker(is, [is readInt32], environment, error);
+}
+
+static NSArray *OGTLCoreReadObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    NSString *previousRole = OGTLCoreCurrentVectorRole;
+    OGTLCoreCurrentVectorRole = role;
+    NSArray *result = OGTLCoreReadObjectVector(is, environment, error);
+    OGTLCoreWrapVectorRoleError(role, error);
+    OGTLCoreCurrentVectorRole = previousRole;
     return result;
 }
 
-static NSArray *CodexReadMaybeDoubleObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadMaybeDoubleObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-    {
-        int32_t nextMarker = [is readInt32];
-        return CodexReadObjectVectorWithMarker(is, nextMarker, environment, error);
-    }
-    return CodexReadObjectVectorWithMarker(is, vectorMarker, environment, error);
+    vectorMarker = vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR ? [is readInt32] : vectorMarker;
+    return OGTLCoreReadObjectVectorWithMarker(is, vectorMarker, environment, error);
 }
 
-static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
+    if (!OGTLCoreVectorCountForMarker(is, vectorMarker, &count))
     {
-        TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
-        if (error != NULL && *error != nil)
-        {
+        OGTLCoreBuildObject(is, vectorMarker, environment, error);
+        if (error != NULL)
             *error = nil;
-        }
         return @[];
     }
-    
-    NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+
+    NSMutableArray *array = OGTLCoreMakeArray(count);
     for (int32_t i = 0; i < count; i++)
     {
-        bool itemFailed = false;
-        int32_t objectSignature = 0;
+        bool itemFailed(false);
+        int32_t objectSignature(0);
         @autoreleasepool
         {
-            NSError *itemError = nil;
-            objectSignature = [is readInt32];
-            if (objectSignature == 0 && CodexCurrentManualSignature == (int32_t)0x8fd4c4d8)
-            {
+            NSError *itemError;
+            objectSignature = OGTLTakeInt32(is);
+            if (objectSignature == 0 && OGTLCoreCurrentManualSignature == (int32_t)0x8fd4c4d8)
                 continue;
-            }
-            id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
+            id object = OGTLCoreBuildObject(is, objectSignature, environment, &itemError);
             if (object != nil)
                 [array addObject:object];
-            if (itemError != nil)
-            {
-                itemFailed = true;
-            }
+            itemFailed = itemError != nil;
         }
-        if (itemFailed)
+        if (!itemFailed)
         {
-            if (error != NULL)
-            {
-                NSString *description = [NSString stringWithFormat:@"Vector item %d/%d with signature %08x could not be parsed", i, count, objectSignature];
-                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-            }
-            break;
+            OGTLCoreCooperateWithInteraction(i);
+            continue;
         }
-        CodexCooperateWithInteraction(i);
+        if (error != NULL)
+            *error = OGTLCoreVectorError([NSString stringWithFormat:@"Vector item %d/%d with signature %08x could not be parsed", i, count, objectSignature]);
+        break;
     }
     return array;
 }
 
-static NSArray *CodexReadStrictObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreFailStrictVector(NSError **error, NSString *description)
+{
+    if (error != NULL)
+        *error = OGTLCoreVectorError(description);
+    return nil;
+}
+
+static NSArray *OGTLCoreReadStrictObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     bool failed = false;
     int32_t vectorMarker = [is readInt32:&failed];
     if (failed || vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-    {
-        if (error != NULL)
-        {
-            NSString *description = failed ? @"Unexpected end of stream while reading vector constructor" : [NSString stringWithFormat:@"Expected vector constructor, got %08x", vectorMarker];
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-        }
-        return nil;
-    }
+        return OGTLCoreFailStrictVector(error, failed ? @"Unexpected end of stream while reading vector constructor" : [NSString stringWithFormat:@"Expected vector constructor, got %08x", vectorMarker]);
 
     int32_t count = [is readInt32:&failed];
     if (failed || count < 0 || count > 100000)
-    {
-        if (error != NULL)
-        {
-            NSString *description = failed ? @"Unexpected end of stream while reading vector count" : [NSString stringWithFormat:@"Invalid vector count %d", count];
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-        }
-        return nil;
-    }
+        return OGTLCoreFailStrictVector(error, failed ? @"Unexpected end of stream while reading vector count" : [NSString stringWithFormat:@"Invalid vector count %d", count]);
 
     NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
     TGTLParserVectorItemCount = count;
@@ -528,261 +670,310 @@ static NSArray *CodexReadStrictObjectVector(NSInputStream *is, id<TLSerializatio
         TGTLParserVectorItemSignature = objectSignature;
         if (failed)
         {
-            TGTLParserVectorItemIndex = -1;
-            TGTLParserVectorItemCount = 0;
-            TGTLParserVectorItemSignature = 0;
-            if (error != NULL)
-            {
-                NSString *description = [NSString stringWithFormat:@"Unexpected end of stream at vector item %d/%d", i, count];
-                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-            }
-            return nil;
+            OGTLCoreClearVectorTrace();
+            return OGTLCoreFailStrictVector(error, [NSString stringWithFormat:@"Unexpected end of stream at vector item %d/%d", i, count]);
         }
 
-        NSError *itemError = nil;
-        id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
+        NSError *itemError;
+        id object = OGTLCoreBuildObject(is, objectSignature, environment, &itemError);
         if (itemError != nil || object == nil)
         {
-            TGTLParserVectorItemIndex = -1;
-            TGTLParserVectorItemCount = 0;
-            TGTLParserVectorItemSignature = 0;
+            OGTLCoreClearVectorTrace();
+            if (itemError == nil)
+                return OGTLCoreFailStrictVector(error, [NSString stringWithFormat:@"Vector item %d/%d with signature %08x produced no object", i, count, objectSignature]);
             if (error != NULL)
-            {
-                if (itemError != nil)
-                    *error = itemError;
-                else
-                {
-                    NSString *description = [NSString stringWithFormat:@"Vector item %d/%d with signature %08x produced no object", i, count, objectSignature];
-                    *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-                }
-            }
+                *error = itemError;
             return nil;
         }
         [array addObject:object];
-        CodexCooperateWithInteraction(i);
+        OGTLCoreCooperateWithInteraction(i);
     }
-    TGTLParserVectorItemIndex = -1;
-    TGTLParserVectorItemCount = 0;
-    TGTLParserVectorItemSignature = 0;
+    OGTLCoreClearVectorTrace();
     return array;
 }
 
-static NSArray *CodexReadStrictObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadStrictObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    NSString *previousRole = CodexCurrentVectorRole;
-    CodexCurrentVectorRole = role;
+    NSString *previousRole = OGTLCoreCurrentVectorRole;
+    OGTLCoreCurrentVectorRole = role;
     NSArray *result = nil;
     @try
     {
-        result = CodexReadStrictObjectVector(is, environment, error);
+        result = OGTLCoreReadStrictObjectVector(is, environment, error);
     }
     @finally
     {
-        CodexCurrentVectorRole = previousRole;
+        OGTLCoreCurrentVectorRole = previousRole;
     }
-    if (error != NULL && *error != nil)
-    {
-        NSString *description = (*error).localizedDescription ?: @"TL vector parse failed";
-        *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"%@: %@", role ?: @"vector", description]}];
-    }
+    OGTLCoreWrapVectorRoleError(role, error);
     return result;
 }
 
-static NSArray *CodexReadObjectVectorOrSingle(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadObjectVectorOrSingle(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    int32_t vectorMarker = [is readInt32];
-    return CodexReadObjectVectorOrSingleWithMarker(is, vectorMarker, environment, error);
+    return OGTLCoreReadObjectVectorOrSingleWithMarker(is, [is readInt32], environment, error);
 }
 
-static NSArray *CodexReadObjectVectorOrSingleWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadObjectVectorOrSingleWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR || (vectorMarker >= 0 && vectorMarker <= 10000))
-        return CodexReadObjectVectorWithMarker(is, vectorMarker, environment, error);
+    if (OGTLCoreMarkerStartsVector(vectorMarker))
+        return OGTLCoreReadObjectVectorWithMarker(is, vectorMarker, environment, error);
 
-    id object = TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
-    if (object != nil)
-    {
-        return @[object];
-    }
-    return @[];
+    id object = OGTLCoreBuildObject(is, vectorMarker, environment, error);
+    return object != nil ? @[object] : @[];
 }
 
-static void CodexSkipStringWithFirstWord(NSInputStream *is, int32_t firstWord)
+static void OGTLCoreSkipStringWithFirstWord(NSInputStream *is, int32_t firstWord)
 {
-    uint8_t firstByte = (uint8_t)(firstWord & 0xff);
-    int32_t length = 0;
-    int32_t alreadyConsumedDataBytes = 0;
-    
-    if (firstByte == 254)
+    uint8_t firstByte = OGTLCoreLeadByte(firstWord);
+    bool extended = firstByte == 254;
+    int32_t length = extended ? (int32_t)(((uint32_t)firstWord >> 8) & 0xffffff) : firstByte;
+    int32_t remainingBytes = extended ? length : MAX(length - 3, 0);
+
+    uint8_t scratch[256];
+    while (0 < remainingBytes)
     {
-        length = ((firstWord >> 8) & 0xff) | ((firstWord >> 16) & 0xff) << 8 | ((firstWord >> 24) & 0xff) << 16;
-        alreadyConsumedDataBytes = 0;
+        int32_t step = MIN(remainingBytes, (int32_t)sizeof(scratch));
+        remainingBytes -= step;
+        [is read:scratch maxLength:(NSUInteger)step];
     }
-    else
-    {
-        length = firstByte;
-        alreadyConsumedDataBytes = MIN(length, 3);
-    }
-    
-    int32_t remainingBytes = length - alreadyConsumedDataBytes;
-    if (remainingBytes > 0)
-    {
-        uint8_t buffer[256];
-        while (remainingBytes > 0)
-        {
-            int32_t chunk = MIN(remainingBytes, (int32_t)sizeof(buffer));
-            [is read:buffer maxLength:(NSUInteger)chunk];
-            remainingBytes -= chunk;
-        }
-    }
-    
-    int32_t totalPrefixBytes = firstByte == 254 ? 4 : 1;
-    int32_t padding = (4 - ((totalPrefixBytes + length) % 4)) % 4;
-    if (padding > 0 && (firstByte == 254 || length > 3))
-    {
-        uint8_t paddingBuffer[4];
-        [is read:paddingBuffer maxLength:(NSUInteger)padding];
-    }
+
+    int32_t padding = (4 - (((extended ? 4 : 1) + length) % 4)) % 4;
+    if (padding > 0 && (extended || length > 3))
+        [is read:scratch maxLength:(NSUInteger)padding];
 }
 
-static bool CodexLooksLikeStringFirstWord(int32_t firstWord)
+static bool OGTLCoreLooksLikeStringFirstWord(int32_t firstWord)
 {
-    uint8_t firstByte = (uint8_t)(firstWord & 0xff);
-    if (firstByte == 254)
-        return true;
-    if ((((uint32_t)firstWord) & 0xffff0000U) == 0x6a4a0000U)
-        return true;
-    return firstByte >= 4 && firstByte < 128;
+    uint8_t firstByte = OGTLCoreLeadByte(firstWord);
+    return firstByte == 254 || (((uint32_t)firstWord) & 0xffff0000U) == 0x6a4a0000U || (firstByte >= 4 && firstByte < 128);
 }
 
-static bool CodexLooksLikeTinyBareDocumentTailWord(int32_t word)
+static bool OGTLCoreLooksLikeTinyBareDocumentTailWord(int32_t word)
 {
-    return word == 0 || word == 1;
+    return (uint32_t)word <= 1;
 }
 
-static bool CodexSkipBareDocumentAttributeTailWord(NSInputStream *is, int32_t signature)
+static bool OGTLCoreSkipBareDocumentAttributeTailWord(NSInputStream *is, int32_t signature)
 {
     switch (signature)
     {
-        case (int32_t)0x11b58939:
-            return true;
-        case (int32_t)0x9801d2f7:
-            return true;
-        case (int32_t)0x6c37c15c:
-        {
+        case OGTLCtor(0x6c37c15c):
             [is readInt32];
             [is readInt32];
             return true;
-        }
-        case (int32_t)0x15590068:
-            [is readString];
+        case OGTLCtor(0x15590068):
+            OGTLTakeString(is);
+            return true;
+        case OGTLCtor(0x11b58939):
+        case OGTLCtor(0x9801d2f7):
             return true;
         default:
             return false;
     }
 }
 
-static NSArray *CodexReadInt64Vector(NSInputStream *is)
+static NSArray *OGTLCoreReadNumberVector(NSInputStream *is, bool wide)
 {
-    int32_t vectorMarker = [is readInt32];
     int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
-    {
+    if (!OGTLCoreVectorCountForMarker(is, [is readInt32], &count))
         return @[];
-    }
-    
-    NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+
+    NSMutableArray *array = OGTLCoreMakeArray(count);
     for (int32_t i = 0; i < count; i++)
-        [array addObject:[[NSNumber alloc] initWithLongLong:[is readInt64]]];
+        [array addObject:wide ? [[NSNumber alloc] initWithLongLong:[is readInt64]] : [[NSNumber alloc] initWithInt:[is readInt32]]];
     return array;
 }
 
-static NSArray *CodexReadInt32Vector(NSInputStream *is)
+static NSArray *OGTLCoreReadInt64Vector(NSInputStream *is)
 {
-    int32_t vectorMarker = [is readInt32];
-    int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
-    {
-        return @[];
-    }
-    
-    NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
-    for (int32_t i = 0; i < count; i++)
-        [array addObject:[[NSNumber alloc] initWithInt:[is readInt32]]];
-    return array;
+    return OGTLCoreReadNumberVector(is, true);
 }
 
-static void CodexSkipStringVector(NSInputStream *is)
+static NSArray *OGTLCoreReadInt32Vector(NSInputStream *is)
 {
-    int32_t vectorMarker = [is readInt32];
+    return OGTLCoreReadNumberVector(is, false);
+}
+
+static void OGTLCoreSkipStringItems(NSInputStream *is, bool bytes)
+{
     int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
-    {
+    if (!OGTLCoreVectorCountForMarker(is, [is readInt32], &count))
         return;
-    }
     for (int32_t i = 0; i < count; i++)
-        [is readString];
-}
-
-static void CodexSkipBytesVector(NSInputStream *is)
-{
-    int32_t vectorMarker = [is readInt32];
-    int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
     {
-        return;
+        if (bytes)
+            OGTLTakeBytes(is);
+        else
+            OGTLTakeString(is);
     }
-    for (int32_t i = 0; i < count; i++)
-        [is readBytes];
 }
 
-@interface TLCodexModernPhotoParser : TLPhoto$photo
+static void OGTLCoreSkipStringVector(NSInputStream *is)
+{
+    OGTLCoreSkipStringItems(is, false);
+}
+
+static void OGTLCoreSkipBytesVector(NSInputStream *is)
+{
+    OGTLCoreSkipStringItems(is, true);
+}
+
+enum
+{
+    OGTLSkipResultNone,
+    OGTLSkipResultIgnored,
+    OGTLSkipResultIgnoredUnlessFailed
+};
+
+typedef struct
+{
+    int32_t signature;
+    const char *layout;
+    uint8_t result;
+} OGTLSkipLayout;
+
+static const OGTLSkipLayout *OGTLFindSkipLayout(const OGTLSkipLayout *table, size_t count, int32_t signature)
+{
+    size_t low = 0;
+    size_t high = count;
+    while (low < high)
+    {
+        size_t middle = low + (high - low) / 2;
+        if (table[middle].signature < signature)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    if (low < count && table[low].signature == signature)
+        return &table[low];
+    return NULL;
+}
+
+static void OGTLSkipFieldOfKind(NSInputStream *is, char kind, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    switch (kind)
+    {
+        case 'i':
+            [is readInt32];
+            break;
+        case 'l':
+            OGTLTakeInt64(is);
+            break;
+        case 's':
+            OGTLTakeString(is);
+            break;
+        case 'b':
+            OGTLTakeBytes(is);
+            break;
+        case 'd':
+            OGTLTakeDouble(is);
+            break;
+        case 'o':
+            OGTLCoreReadObject(is, environment, error);
+            break;
+        case 'v':
+            OGTLCoreReadObjectVector(is, environment, error);
+            break;
+        case 'n':
+            OGTLCoreReadInt32Vector(is);
+            break;
+        case 'm':
+            OGTLCoreReadInt64Vector(is);
+            break;
+        case 't':
+            OGTLCoreSkipStringVector(is);
+            break;
+        default:
+            OGTLCoreSkipBytesVector(is);
+            break;
+    }
+}
+
+static void OGTLSkipFlagged(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error, int32_t flags, int bit, char kind)
+{
+    if (OGTLFlagSet(flags, bit))
+        OGTLSkipFieldOfKind(is, kind, environment, error);
+}
+
+static void OGTLSkipFields(NSInputStream *is, const char *layout, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t flags = 0;
+    for (const char *cursor = layout; *cursor != 0; cursor++)
+    {
+        if (*cursor >= '0' && *cursor <= '9')
+        {
+            int32_t bit = 0;
+            while (*cursor >= '0' && *cursor <= '9')
+                bit = bit * 10 + (*cursor++ - '0');
+            cursor++;
+            if (!OGTLFlagSet(flags, bit))
+                continue;
+        }
+        if (*cursor == 'f')
+            flags = OGTLTakeInt32(is);
+        else
+            OGTLSkipFieldOfKind(is, *cursor, environment, error);
+    }
+}
+
+@interface OGTLManualParser : NSObject <TLObject>
 @end
 
-@implementation TLCodexModernPhotoParser
+@implementation OGTLManualParser
+
+- (int32_t)TLconstructorSignature
+{
+    return 0;
+}
+
+- (int32_t)TLconstructorName
+{
+    return 0;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
+{
+    return nil;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+@end
+
+@interface OGTLModernPhotoParser : TLPhoto$photo
+@end
+
+@implementation OGTLModernPhotoParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernPhotoParser *result = [[TLCodexModernPhotoParser alloc] init];
+    OGTLModernPhotoParser *result = [[OGTLModernPhotoParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
     result.n_id = [is readInt64];
     result.access_hash = [is readInt64];
-    result.file_reference = [is readBytes];
+    result.file_reference = OGTLTakeBytes(is);
     result.date = [is readInt32];
-    result.sizes = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.sizes = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
     {
-        CodexReadObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
-    result.dc_id = [is readInt32];
+    result.dc_id = OGTLTakeInt32(is);
 
     return result;
 }
 
 @end
 
-static NSData *CodexDecodedStrippedThumbnail(NSData *data)
+static NSData *OGTLCoreDecodedStrippedThumbnail(NSData *data)
 {
     static const uint8_t header[] =
     {
@@ -842,94 +1033,93 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     NSUInteger payloadLength = (NSUInteger)dataLength - 3;
     NSUInteger totalLength = sizeof(header) + payloadLength + sizeof(footer);
     NSMutableData *result = [[NSMutableData alloc] initWithLength:totalLength];
-    uint8_t *resultBytes = (uint8_t *)result.mutableBytes;
-    if (resultBytes == NULL)
+    uint8_t *jpegBytes = (uint8_t *)[result mutableBytes];
+    if (jpegBytes == NULL)
         return nil;
 
-    memcpy(resultBytes, header, sizeof(header));
+    memcpy(jpegBytes, header, sizeof(header));
     if (payloadLength != 0)
-        memcpy(resultBytes + sizeof(header), sourceBytes + 3, payloadLength);
-    memcpy(resultBytes + sizeof(header) + payloadLength, footer, sizeof(footer));
+        memcpy(jpegBytes + sizeof(header), sourceBytes + 3, payloadLength);
+    memcpy(jpegBytes + sizeof(header) + payloadLength, footer, sizeof(footer));
 
-    resultBytes[164] = sourceBytes[1];
-    resultBytes[166] = sourceBytes[2];
+    jpegBytes[164] = sourceBytes[1];
+    jpegBytes[166] = sourceBytes[2];
     return result;
 }
 
-@interface TLCodexModernPhotoSizeParser : TLPhotoSize$photoSizeEmpty
+@interface OGTLModernPhotoSizeParser : TLPhotoSize$photoSizeEmpty
 @end
 
-@implementation TLCodexModernPhotoSizeParser
+@implementation OGTLModernPhotoSizeParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xde33b094)
+    if (signature == OGTLCtor(0xde33b094))
     {
         int32_t flags = [is readInt32];
-        NSString *type = [is readString];
+        NSString *type = OGTLTakeString(is);
         int32_t width = [is readInt32];
         int32_t height = [is readInt32];
         int32_t size = [is readInt32];
-        if (flags & (1 << 0))
-            [is readDouble];
+        OGTLSkipFlagged(is, environment, error, flags, 0, 'd');
 
-        TLPhotoSize$photoSize *result = [[TLPhotoSize$photoSize alloc] init];
-        result.type = type;
+        TLPhotoSize$photoSize *result = OGTLNewObject(TLPhotoSize$photoSize);
+        [result setType:type];
         result.w = width;
         result.h = height;
         result.size = size;
         return result;
     }
     
-    if (signature == (int32_t)0xf85c413c)
+    if (signature == OGTLCtor(0xf85c413c))
     {
-        [is readInt64];
-        CodexReadInt32Vector(is);
-        return [[TLPhotoSize$photoSizeEmpty alloc] init];
+        OGTLTakeInt64(is);
+        OGTLCoreReadInt32Vector(is);
+        return OGTLNewObject(TLPhotoSize$photoSizeEmpty);
     }
     
-    if (signature == (int32_t)0x0da082fe)
+    if (signature == OGTLCtor(0x0da082fe))
     {
-        CodexReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        [is readInt64];
-        CodexReadInt32Vector(is);
-        return [[TLPhotoSize$photoSizeEmpty alloc] init];
+        OGTLTakeInt64(is);
+        OGTLCoreReadInt32Vector(is);
+        return OGTLNewObject(TLPhotoSize$photoSizeEmpty);
     }
     
-    NSString *type = [is readString];
+    NSString *type = OGTLTakeString(is);
     switch (signature)
     {
-        case (int32_t)0x75c78e60:
+        case OGTLCtor(0x75c78e60):
         {
-            TLPhotoSize$photoSize *result = [[TLPhotoSize$photoSize alloc] init];
-            result.type = type;
+            TLPhotoSize$photoSize *result = OGTLNewObject(TLPhotoSize$photoSize);
+            [result setType:type];
             result.w = [is readInt32];
             result.h = [is readInt32];
-            result.size = [is readInt32];
+            result.size = OGTLTakeInt32(is);
 
             return result;
         }
-        case (int32_t)0x021e1ad6:
+        case OGTLCtor(0x021e1ad6):
         {
-            TLPhotoSize$photoCachedSize *result = [[TLPhotoSize$photoCachedSize alloc] init];
-            result.type = type;
+            TLPhotoSize$photoCachedSize *result = OGTLNewObject(TLPhotoSize$photoCachedSize);
+            [result setType:type];
             result.w = [is readInt32];
             result.h = [is readInt32];
-            result.bytes = [is readBytes];
+            result.bytes = OGTLTakeBytes(is);
 
             return result;
         }
-        case (int32_t)0xe0b0bc2e:
+        case OGTLCtor(0xe0b0bc2e):
         {
             NSData *strippedData = [is readBytes];
-            NSData *decodedData = CodexDecodedStrippedThumbnail(strippedData);
+            NSData *decodedData = OGTLCoreDecodedStrippedThumbnail(strippedData);
             if (decodedData != nil)
             {
                 const uint8_t *bytes = (const uint8_t *)strippedData.bytes;
-                TLPhotoSize$photoCachedSize *result = [[TLPhotoSize$photoCachedSize alloc] init];
-                result.type = type;
+                TLPhotoSize$photoCachedSize *result = OGTLNewObject(TLPhotoSize$photoCachedSize);
+                [result setType:type];
                 result.w = MAX(1, (int)bytes[2]);
                 result.h = MAX(1, (int)bytes[1]);
                 result.bytes = decodedData;
@@ -937,48 +1127,45 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             }
             break;
         }
-        case (int32_t)0xd8214d41:
-            [is readBytes];
+        case OGTLCtor(0xd8214d41):
+            OGTLTakeBytes(is);
             break;
-        case (int32_t)0xfa3efb95:
+        case OGTLCtor(0xfa3efb95):
         {
-            TLPhotoSize$photoSize *result = [[TLPhotoSize$photoSize alloc] init];
-            result.type = type;
+            TLPhotoSize$photoSize *result = OGTLNewObject(TLPhotoSize$photoSize);
+            [result setType:type];
             result.w = [is readInt32];
             result.h = [is readInt32];
-            int32_t vectorMarker = [is readInt32];
+            int32_t vectorMarker = OGTLTakeInt32(is);
             int32_t count = 0;
-            if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-                count = [is readInt32];
-            else if (vectorMarker >= 0 && vectorMarker <= 10000)
-                count = vectorMarker;
+            OGTLCoreVectorCountForMarker(is, vectorMarker, &count);
             for (int32_t i = 0; i < count; i++)
-                result.size = [is readInt32];
+                result.size = OGTLTakeInt32(is);
 
             return result;
         }
         default:
             break;
     }
-    TLPhotoSize$photoSizeEmpty *result = [[TLPhotoSize$photoSizeEmpty alloc] init];
-    result.type = type;
+    TLPhotoSize$photoSizeEmpty *result = OGTLNewObject(TLPhotoSize$photoSizeEmpty);
+    [result setType:type];
     return result;
 }
 
 @end
 
-@interface TLCodexModernImportedContactsParser : TLcontacts_ImportedContacts$contacts_importedContacts
+@interface OGTLModernImportedContactsParser : TLcontacts_ImportedContacts$contacts_importedContacts
 @end
 
-@implementation TLCodexModernImportedContactsParser
+@implementation OGTLModernImportedContactsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernImportedContactsParser *result = [[TLCodexModernImportedContactsParser alloc] init];
-    result.imported = @[];
-    result.popular_invites = @[];
-    result.retry_contacts = @[];
-    result.users = @[];
+    OGTLModernImportedContactsParser *result = [[OGTLModernImportedContactsParser alloc] init];
+    [result setImported:@[]];
+    [result setPopular_invites:@[]];
+    [result setRetry_contacts:@[]];
+    [result setUsers:@[]];
     if (error != NULL)
         *error = nil;
     return result;
@@ -986,122 +1173,72 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexModernGeoPointSkipParser : NSObject <TLObject>
+@interface OGTLModernGeoPointSkipParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernGeoPointSkipParser
+@implementation OGTLModernGeoPointSkipParser
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xb2a2f663;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
+    return OGTLCtor(0xb2a2f663);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     int32_t flags = [is readInt32];
-    TLGeoPoint$geoPoint *result = [[TLGeoPoint$geoPoint alloc] init];
-    result.n_long = [is readDouble];
-    result.lat = [is readDouble];
+    TLGeoPoint$geoPoint *result = OGTLNewObject(TLGeoPoint$geoPoint);
+    result.n_long = OGTLTakeDouble(is);
+    result.lat = OGTLTakeDouble(is);
     result.access_hash = [is readInt64];
-    if (flags & (1 << 0))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
     return result;
 }
 
 @end
 
-@interface TLCodexRichTextSkipParser : NSObject <TLObject>
+static const OGTLSkipLayout OGTLRichTextSkipLayouts[] =
+{
+    {(int32_t)0x9bf8bb95, "o", OGTLSkipResultNone},
+    {(int32_t)0xc12622c4, "o", OGTLSkipResultNone},
+    {(int32_t)0xc7fb5e01, "o", OGTLSkipResultNone},
+    {(int32_t)0xd912a59c, "o", OGTLSkipResultNone},
+    {(int32_t)0xdc3d824f, "", OGTLSkipResultNone},
+    {(int32_t)0xde5a0dd6, "os", OGTLSkipResultNone},
+    {(int32_t)0xed6a8504, "o", OGTLSkipResultNone},
+    {(int32_t)0x034b8621, "o", OGTLSkipResultNone},
+    {(int32_t)0x081ccf4f, "lii", OGTLSkipResultNone},
+    {(int32_t)0x1ccb966a, "os", OGTLSkipResultNone},
+    {(int32_t)0x35553762, "os", OGTLSkipResultNone},
+    {(int32_t)0x3c2884c1, "osl", OGTLSkipResultNone},
+    {(int32_t)0x6724abc4, "o", OGTLSkipResultNone},
+    {(int32_t)0x6c3f19b9, "o", OGTLSkipResultNone},
+    {(int32_t)0x744694e0, "s", OGTLSkipResultNone},
+    {(int32_t)0x7e6260d7, "v", OGTLSkipResultNone}
+};
+
+@interface OGTLRichTextSkipParser : OGTLManualParser
 @end
 
-@implementation TLCodexRichTextSkipParser
-
-- (int32_t)TLconstructorSignature
-{
-    return 0;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
+@implementation OGTLRichTextSkipParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    switch (signature)
-    {
-        case (int32_t)0xdc3d824f:
-            break;
-        case (int32_t)0x744694e0:
-            [is readString];
-            break;
-        case (int32_t)0x6724abc4:
-        case (int32_t)0xd912a59c:
-        case (int32_t)0xc12622c4:
-        case (int32_t)0x9bf8bb95:
-        case (int32_t)0x6c3f19b9:
-        case (int32_t)0xed6a8504:
-        case (int32_t)0xc7fb5e01:
-        case (int32_t)0x034b8621:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x3c2884c1:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readInt64];
-            break;
-        case (int32_t)0xde5a0dd6:
-        case (int32_t)0x1ccb966a:
-        case (int32_t)0x35553762:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            break;
-        case (int32_t)0x7e6260d7:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x081ccf4f:
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            break;
-        default:
-            break;
-    }
+    const OGTLSkipLayout *skipLayout = OGTLFindSkipLayout(OGTLRichTextSkipLayouts, sizeof(OGTLRichTextSkipLayouts) / sizeof(OGTLRichTextSkipLayouts[0]), signature);
+    if (skipLayout != NULL)
+        OGTLSkipFields(is, skipLayout->layout, environment, error);
     return nil;
 }
 
 @end
 
-@interface TLCodexModernConfigParser : TLConfig$config
+@interface OGTLModernConfigParser : TLConfig$config
 @end
 
-@implementation TLCodexModernConfigParser
+@implementation OGTLModernConfigParser
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xcc1a241e;
+    return OGTLCtor(0xcc1a241e);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
@@ -1111,10 +1248,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.flags = flags;
     result.date = [is readInt32];
     result.expires = [is readInt32];
-    TLBool *testMode = (TLBool *)CodexReadObject(is, environment, error);
-    result.test_mode = [testMode respondsToSelector:@selector(boolValue)] ? [testMode boolValue] : false;
+    TLBool *testMode = (TLBool *)OGTLCoreReadObject(is, environment, error);
+    [result setTest_mode:[testMode respondsToSelector:@selector(boolValue)] ? [testMode boolValue] : false];
     result.this_dc = [is readInt32];
-    result.dc_options = CodexReadObjectVector(is, environment, error);
+    result.dc_options = OGTLCoreReadObjectVector(is, environment, error);
     result.dc_txt_domain_name = [is readString];
     result.chat_size_max = [is readInt32];
     result.megagroup_size_max = [is readInt32];
@@ -1133,68 +1270,67 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.rating_e_decay = [is readInt32];
     result.stickers_recent_limit = [is readInt32];
     result.channels_read_media_period = [is readInt32];
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
         result.tmp_sessions = [is readInt32];
     result.call_receive_timeout_ms = [is readInt32];
     result.call_ring_timeout_ms = [is readInt32];
     result.call_connect_timeout_ms = [is readInt32];
     result.call_packet_timeout_ms = [is readInt32];
     result.me_url_prefix = [is readString];
-    if (flags & (1 << 7))
+    if (OGTLFlagSet(flags, 7))
         result.autoupdate_url_prefix = [is readString];
-    if (flags & (1 << 9))
+    if (OGTLFlagSet(flags, 9))
         result.gif_search_username = [is readString];
-    if (flags & (1 << 10))
+    if (OGTLFlagSet(flags, 10))
         result.venue_search_username = [is readString];
-    if (flags & (1 << 11))
+    if (OGTLFlagSet(flags, 11))
         result.img_search_username = [is readString];
-    if (flags & (1 << 12))
+    if (OGTLFlagSet(flags, 12))
         result.static_maps_provider = [is readString];
     result.caption_length_max = [is readInt32];
     result.message_length_max = [is readInt32];
     result.webfile_dc_id = [is readInt32];
-    if (flags & (1 << 2))
+    if (OGTLFlagSet(flags, 2))
     {
         result.suggested_lang_code = [is readString];
         result.lang_pack_version = [is readInt32];
         [is readInt32];
     }
-    if (flags & (1 << 15))
+    if (OGTLFlagSet(flags, 15))
     {
-        int32_t reactionSignature = [is readInt32];
-        if (reactionSignature == (int32_t)0x1b2286b8)
+        int32_t reactionSignature = OGTLTakeInt32(is);
+        if (reactionSignature == OGTLCtor(0x1b2286b8))
             result.reactions_default = [is readString];
-        else if (reactionSignature == (int32_t)0x8935fc73)
+        else if (reactionSignature == OGTLCtor(0x8935fc73))
             result.reactions_default = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
         else
-            TLMetaClassStore::constructObject(is, reactionSignature, environment, nil, error);
+            OGTLCoreBuildObject(is, reactionSignature, environment, error);
     }
-    if (flags & (1 << 16))
-        [is readString];
-    if (error != NULL && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 16, 's');
+    if (OGTLCoreFailed(error))
         *error = nil;
     return result;
 }
 
 @end
 
-@interface TLCodexAvailableReactionParser : TLAvailableReaction_manual
+@interface OGTLAvailableReactionParser : TLAvailableReaction_manual
 @end
 
-@implementation TLCodexAvailableReactionParser
+@implementation OGTLAvailableReactionParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLAvailableReaction_manual *result = [[TLAvailableReaction_manual alloc] init];
+    TLAvailableReaction_manual *result = OGTLNewObject(TLAvailableReaction_manual);
     int32_t flags = [is readInt32];
-    result.inactive = (flags & (1 << 0)) != 0;
-    result.premium = (flags & (1 << 2)) != 0;
+    result.inactive = OGTLFlagSet(flags, 0);
+    result.premium = OGTLFlagSet(flags, 2);
     result.reaction = [is readString];
-    [is readString];
+    OGTLTakeString(is);
     for (int i = 0; i < ((flags & (1 << 1)) != 0 ? 7 : 5); i++)
     {
-        CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
     return result;
@@ -1202,15 +1338,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexAvailableReactionsParser : TLmessages_AvailableReactions_manual
+@interface OGTLAvailableReactionsParser : TLmessages_AvailableReactions_manual
 @end
 
-@implementation TLCodexAvailableReactionsParser
+@implementation OGTLAvailableReactionsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     [is readInt32];
-    int32_t marker = [is readInt32];
+    int32_t marker = OGTLTakeInt32(is);
     int32_t count = [is readInt32];
     if (marker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || count < 0 || count > 10000)
     {
@@ -1219,15 +1355,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         return nil;
     }
 
-    TLmessages_AvailableReactions_manual *result = [[TLmessages_AvailableReactions_manual alloc] init];
+    TLmessages_AvailableReactions_manual *result = OGTLNewObject(TLmessages_AvailableReactions_manual);
     NSMutableArray *reactions = [[NSMutableArray alloc] init];
     NSMutableArray *emojis = [[NSMutableArray alloc] init];
     for (int32_t i = 0; i < count; i++)
     {
-        id reaction = CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        id reaction = OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        if (![reaction isKindOfClass:[TLAvailableReaction_manual class]])
+        if (!OGTLCoreIsKind(reaction, [TLAvailableReaction_manual class]))
         {
             if (error != NULL)
                 *error = [NSError errorWithDomain:@"TLAvailableReactions" code:2 userInfo:nil];
@@ -1238,18 +1374,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         if (!availableReaction.inactive && availableReaction.reaction.length != 0 && ![emojis containsObject:availableReaction.reaction])
             [emojis addObject:availableReaction.reaction];
     }
-    result.reactions = reactions;
+    [result setReactions:reactions];
     result.activeEmojis = emojis;
     return result;
 }
 
 @end
 
-@interface TLCodexIgnoredUpdate : TLUpdate
+@interface OGTLIgnoredUpdate : TLUpdate
 @property (nonatomic) int32_t ignoredSignature;
 @end
 
-@implementation TLCodexIgnoredUpdate
+@implementation OGTLIgnoredUpdate
 
 - (int32_t)TLconstructorSignature
 {
@@ -1276,7 +1412,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 @end
 
 @implementation TGDeviceAuthorizationParser
-- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)error
 {
     bool failed = false;
     TLAuthorization *result = [[TLAuthorization$authorization alloc] init];
@@ -1307,7 +1443,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 @end
 
 @implementation TGDeviceAuthorizationsParser
-- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)error
 {
     bool failed = false;
     [stream readInt32:&failed];
@@ -1324,7 +1460,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         int32_t objectSignature = [stream readInt32:&failed];
         id object = failed ? nil : TLMetaClassStore::constructObject(stream, objectSignature, environment, nil, error);
-        if (![object isKindOfClass:[TLAuthorization class]])
+        if (!OGTLCoreIsKind(object, [TLAuthorization class]))
         {
             if (error != NULL && *error == nil)
                 *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid authorization in vector"}];
@@ -1338,10 +1474,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 }
 @end
 
-@interface TLCodexModernUpdateNewAuthorizationParser : TLUpdate$updateNewAuthorization
+@interface OGTLModernUpdateNewAuthorizationParser : TLUpdate$updateNewAuthorization
 @end
 
-@implementation TLCodexModernUpdateNewAuthorizationParser
+@implementation OGTLModernUpdateNewAuthorizationParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
@@ -1359,106 +1495,488 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexSkipObjectParser : NSObject <TLObject>
+static const OGTLSkipLayout OGTLSkipLayouts[] =
+{
+    {(int32_t)0x804361ea, "lo", OGTLSkipResultNone},
+    {(int32_t)0x80d26cc7, "slt", OGTLSkipResultNone},
+    {(int32_t)0x832175e0, "iioo", OGTLSkipResultNone},
+    {(int32_t)0x83d60fc2, "fii1?v0?l2?i3?i", OGTLSkipResultNone},
+    {(int32_t)0x84aa3a9c, "s", OGTLSkipResultNone},
+    {(int32_t)0x85dd99d1, "fv3?s", OGTLSkipResultNone},
+    {(int32_t)0x85f0a9cd, "fllssi0?o1?s2?svii3?s4?v5?o8?l8?s8?l10?o11?o12?o13?i16?i", OGTLSkipResultNone},
+    {(int32_t)0x86e18161, "lfsv4?i5?i", OGTLSkipResultNone},
+    {(int32_t)0x86f8613c, "fiv0?sv", OGTLSkipResultNone},
+    {(int32_t)0x86fccf85, "il", OGTLSkipResultNone},
+    {(int32_t)0x87e5dfe4, "s", OGTLSkipResultNone},
+    {(int32_t)0x881fb94b, "iv", OGTLSkipResultNone},
+    {(int32_t)0x889b59ef, "", OGTLSkipResultNone},
+    {(int32_t)0x8935fc73, "l", OGTLSkipResultNone},
+    {(int32_t)0x8a2932f3, "v", OGTLSkipResultNone},
+    {(int32_t)0x8a480e27, "iiii", OGTLSkipResultNone},
+    {(int32_t)0x8ae5c97a, "oi", OGTLSkipResultNone},
+    {(int32_t)0x8b725fce, "o", OGTLSkipResultNone},
+    {(int32_t)0x8b73e763, "", OGTLSkipResultNone},
+    {(int32_t)0x8c0f91fb, "", OGTLSkipResultNone},
+    {(int32_t)0x8c39793f, "fiovv1?s2?s", OGTLSkipResultNone},
+    {(int32_t)0x8c79b63c, "ioio", OGTLSkipResultNone},
+    {(int32_t)0x8c9a88ac, "ovv", OGTLSkipResultNone},
+    {(int32_t)0x8d595cd6, "fi2?i3?v4?i0?m", OGTLSkipResultNone},
+    {(int32_t)0x8f34b2f5, "fslii2?o", OGTLSkipResultNone},
+    {(int32_t)0x904dd49c, "ooi", OGTLSkipResultNone},
+    {(int32_t)0x9083670b, "io", OGTLSkipResultNone},
+    {(int32_t)0x90c467d1, "lv", OGTLSkipResultNone},
+    {(int32_t)0x90d7adfa, "fo0?o", OGTLSkipResultNone},
+    {(int32_t)0x922e55a9, "s", OGTLSkipResultNone},
+    {(int32_t)0x929b619d, "l", OGTLSkipResultNone},
+    {(int32_t)0x93037e20, "fiv0?svv", OGTLSkipResultNone},
+    {(int32_t)0x93b9fbb5, "fss1?v", OGTLSkipResultNone},
+    {(int32_t)0x93c3e27e, "fls0?ll1?l", OGTLSkipResultNone},
+    {(int32_t)0x947a12df, "fiv0?s1?v1?lv2?vv", OGTLSkipResultNone},
+    {(int32_t)0x94ce852a, "fli2?sslv", OGTLSkipResultNone},
+    {(int32_t)0x95f2bfe4, "", OGTLSkipResultNone},
+    {(int32_t)0x95f389b1, "fi1?ov0?svv", OGTLSkipResultNone},
+    {(int32_t)0x95fcd1d6, "fllssso0?ol", OGTLSkipResultNone},
+    {(int32_t)0x96d074fd, "s", OGTLSkipResultNone},
+    {(int32_t)0x972dabbf, "fiil0?i1?i1?s", OGTLSkipResultNone},
+    {(int32_t)0x9801d2f7, "", OGTLSkipResultNone},
+    {(int32_t)0x98d5ea1d, "ivv", OGTLSkipResultNone},
+    {(int32_t)0x98dd8936, "sv", OGTLSkipResultNone},
+    {(int32_t)0x99ea331d, "il", OGTLSkipResultNone},
+    {(int32_t)0x9a23af21, "fos0?vvv", OGTLSkipResultNone},
+    {(int32_t)0x9a35e999, "fo0?iv", OGTLSkipResultNone},
+    {(int32_t)0x9a8ae1e1, "v", OGTLSkipResultNone},
+    {(int32_t)0x9a9d77e0, "lliii", OGTLSkipResultNone},
+    {(int32_t)0x9ae228e2, "vvv", OGTLSkipResultNone},
+    {(int32_t)0x9bad6414, "sls", OGTLSkipResultNone},
+    {(int32_t)0x9d1dbd26, "lvvv", OGTLSkipResultNone},
+    {(int32_t)0x9d2216e0, "f1?oo", OGTLSkipResultNone},
+    {(int32_t)0x9d6b13b0, "fis0?oil", OGTLSkipResultNone},
+    {(int32_t)0x9ddb347c, "fso0?oi", OGTLSkipResultNone},
+    {(int32_t)0x9f071957, "", OGTLSkipResultNone},
+    {(int32_t)0x9f120418, "ii", OGTLSkipResultNone},
+    {(int32_t)0x9f2504e4, "siiiiio", OGTLSkipResultNone},
+    {(int32_t)0x9f27d26e, "", OGTLSkipResultNone},
+    {(int32_t)0x9f812b08, "ilo", OGTLSkipResultNone},
+    {(int32_t)0xa02a982e, "soni", OGTLSkipResultNone},
+    {(int32_t)0xa0624cf7, "i", OGTLSkipResultNone},
+    {(int32_t)0xa0ba4f17, "", OGTLSkipResultNone},
+    {(int32_t)0xa0c0505c, "ss", OGTLSkipResultNone},
+    {(int32_t)0xa26156c0, "ls", OGTLSkipResultNone},
+    {(int32_t)0xa2c0f695, "", OGTLSkipResultNone},
+    {(int32_t)0xa2fa4880, "s", OGTLSkipResultNone},
+    {(int32_t)0xa388a368, "", OGTLSkipResultNone},
+    {(int32_t)0xa3d1cb80, "f0?ioi", OGTLSkipResultNone},
+    {(int32_t)0xa44f3ef6, "oiiio", OGTLSkipResultNone},
+    {(int32_t)0xa477288f, "oiui", OGTLSkipResultNone},
+    {(int32_t)0xa4a79376, "loi", OGTLSkipResultNone},
+    {(int32_t)0xa584b019, "oo", OGTLSkipResultNone},
+    {(int32_t)0xa5d9abb8, "sssssi", OGTLSkipResultNone},
+    {(int32_t)0xa8718dc5, "f1?s2?s4?l5?i5?io", OGTLSkipResultNone},
+    {(int32_t)0xaa5f789c, "fivvv0?s", OGTLSkipResultNone},
+    {(int32_t)0xab339c00, "", OGTLSkipResultNone},
+    {(int32_t)0xac072444, "", OGTLSkipResultNone},
+    {(int32_t)0xac21d3ce, "oiiovvi", OGTLSkipResultNone},
+    {(int32_t)0xac5c1af7, "f0?os", OGTLSkipResultNone},
+    {(int32_t)0xaca1657b, "fl0?oo", OGTLSkipResultNone},
+    {(int32_t)0xad628cc8, "f0?i0?i1?o2?i", OGTLSkipResultNone},
+    {(int32_t)0xadec6ebe, "fi1?o2?o3?i4?i", OGTLSkipResultNone},
+    {(int32_t)0xaef6abbc, "vvv", OGTLSkipResultNone},
+    {(int32_t)0xafd93fbb, "s", OGTLSkipResultNone},
+    {(int32_t)0xaff56398, "iii", OGTLSkipResultNone},
+    {(int32_t)0xb05ac6b1, "", OGTLSkipResultNone},
+    {(int32_t)0xb06fdbdf, "", OGTLSkipResultNone},
+    {(int32_t)0xb0bdeac5, "fli2?o", OGTLSkipResultNone},
+    {(int32_t)0xb16a6c29, "s", OGTLSkipResultNone},
+    {(int32_t)0xb2539d54, "liii", OGTLSkipResultNone},
+    {(int32_t)0xb282217f, "ols", OGTLSkipResultNone},
+    {(int32_t)0xb2b15770, "iv", OGTLSkipResultNone},
+    {(int32_t)0xb390dc08, "fsl0?s1?s2?l3?s4?i", OGTLSkipResultNone},
+    {(int32_t)0xb4073647, "is", OGTLSkipResultNone},
+    {(int32_t)0xb457b375, "", OGTLSkipResultNone},
+    {(int32_t)0xb4ae666f, "fss0?v1?si", OGTLSkipResultNone},
+    {(int32_t)0xb4f67e93, "l", OGTLSkipResultNone},
+    {(int32_t)0xb53e8b21, "ov", OGTLSkipResultNone},
+    {(int32_t)0xb54b5acf, "f0?i1?l", OGTLSkipResultNone},
+    {(int32_t)0xb81c7034, "io", OGTLSkipResultNone},
+    {(int32_t)0xb826e150, "f0?o1?s2?i", OGTLSkipResultNone},
+    {(int32_t)0xb88cf373, "f4?m6?m", OGTLSkipResultNone},
+    {(int32_t)0xb8905fb2, "m", OGTLSkipResultNone},
+    {(int32_t)0xb89bfccf, "f1?s1?ol", OGTLSkipResultNone},
+    {(int32_t)0xb8ea86a9, "l", OGTLSkipResultNone},
+    {(int32_t)0xb92fb6cd, "o", OGTLSkipResultNone},
+    {(int32_t)0xb98cd696, "", OGTLSkipResultNone},
+    {(int32_t)0xb9c0639a, "flllin0?i1?n", OGTLSkipResultNone},
+    {(int32_t)0xbac3a61a, "", OGTLSkipResultNone},
+    {(int32_t)0xbaf39d8b, "ivvv", OGTLSkipResultNone},
+    {(int32_t)0xbb9bb9a5, "fo0?i", OGTLSkipResultNone},
+    {(int32_t)0xbbab2643, "o", OGTLSkipResultNone},
+    {(int32_t)0xbbb6b4a3, "li", OGTLSkipResultNone},
+    {(int32_t)0xbbc7515d, "is", OGTLSkipResultNone},
+    {(int32_t)0xbbf51685, "", OGTLSkipResultNone},
+    {(int32_t)0xbd74cf49, "ioo", OGTLSkipResultNone},
+    {(int32_t)0xbddb616e, "ivv", OGTLSkipResultNone},
+    {(int32_t)0xbe376999, "l", OGTLSkipResultNone},
+    {(int32_t)0xbe82db9c, "oosssss", OGTLSkipResultNone},
+    {(int32_t)0xbf4dea82, "iov", OGTLSkipResultNone},
+    {(int32_t)0xc01f6fe8, "i", OGTLSkipResultNone},
+    {(int32_t)0xc077ec01, "fssooooo1?o1?o", OGTLSkipResultNone},
+    {(int32_t)0xc1f46103, "", OGTLSkipResultNone},
+    {(int32_t)0xc32d5b12, "lnii", OGTLSkipResultNone},
+    {(int32_t)0xc387c04e, "i", OGTLSkipResultNone},
+    {(int32_t)0xc3987a3a, "lv", OGTLSkipResultNone},
+    {(int32_t)0xc3f2f501, "", OGTLSkipResultNone},
+    {(int32_t)0xc448415c, "fi0?oii1?i", OGTLSkipResultNone},
+    {(int32_t)0xc556a45d, "o", OGTLSkipResultNone},
+    {(int32_t)0xc6991068, "fl3?iiiimi1?si", OGTLSkipResultNone},
+    {(int32_t)0xc7b57ce6, "ss", OGTLSkipResultNone},
+    {(int32_t)0xc9662d05, "isioi", OGTLSkipResultNone},
+    {(int32_t)0xc9b9e2b9, "", OGTLSkipResultNone},
+    {(int32_t)0xc9f06e1b, "f3?o4?o1?o2?o", OGTLSkipResultNone},
+    {(int32_t)0xcad5452d, "foo0?o", OGTLSkipResultNone},
+    {(int32_t)0xcae68768, "ovv", OGTLSkipResultNone},
+    {(int32_t)0xcb6ff828, "fo0?si", OGTLSkipResultNone},
+    {(int32_t)0xcba9a52f, "io", OGTLSkipResultNone},
+    {(int32_t)0xcc4d9ecc, "ii", OGTLSkipResultNone},
+    {(int32_t)0xcdbbcebb, "lv", OGTLSkipResultNone},
+    {(int32_t)0xcef7e7a8, "", OGTLSkipResultNone},
+    {(int32_t)0xcf6f6db8, "o", OGTLSkipResultNone},
+    {(int32_t)0xcfb9d957, "fls1?i1?i", OGTLSkipResultNone},
+    {(int32_t)0xcfcd0f13, "oo", OGTLSkipResultNone},
+    {(int32_t)0xd02e7fd4, "fs1?sso", OGTLSkipResultNone},
+    {(int32_t)0xd072acb4, "sss", OGTLSkipResultNone},
+    {(int32_t)0xd08ce645, "", OGTLSkipResultNone},
+    {(int32_t)0xd1ed9a5b, "", OGTLSkipResultNone},
+    {(int32_t)0xd31bc45d, "ooo", OGTLSkipResultNone},
+    {(int32_t)0xd3656499, "", OGTLSkipResultNone},
+    {(int32_t)0xd597650c, "flli3?s4?i5?i7?i10?iii16?s20?l21?o", OGTLSkipResultNone},
+    {(int32_t)0xd5e58274, "o", OGTLSkipResultNone},
+    {(int32_t)0xd6b19546, "flii0?l0?i", OGTLSkipResultIgnored},
+    {(int32_t)0xd80da15d, "o", OGTLSkipResultNone},
+    {(int32_t)0xd90d8dfe, "fls3?vv", OGTLSkipResultNone},
+    {(int32_t)0xd9c6dc1a, "fiool1?iis2?v3?o4?o6?o", OGTLSkipResultNone},
+    {(int32_t)0xda2ad647, "bll", OGTLSkipResultNone},
+    {(int32_t)0xdaad85b0, "fm1?t3?siii", OGTLSkipResultNone},
+    {(int32_t)0xdb33dad0, "", OGTLSkipResultNone},
+    {(int32_t)0xdb909ec2, "s", OGTLSkipResultNone},
+    {(int32_t)0xdbce6389, "", OGTLSkipResultNone},
+    {(int32_t)0xdc58f31e, "lo", OGTLSkipResultNone},
+    {(int32_t)0xdc6cfcf0, "o", OGTLSkipResultNone},
+    {(int32_t)0xdcb118b7, "sn", OGTLSkipResultNone},
+    {(int32_t)0xdd27bee9, "fio9?ol1?iis2?v3?o4?o6?o8?o10?l11?i", OGTLSkipResultNone},
+    {(int32_t)0xde4c5d93, "fs0?s1?s2?s", OGTLSkipResultNone},
+    {(int32_t)0xde9eed1d, "vv", OGTLSkipResultNone},
+    {(int32_t)0xdef143d0, "fo0?n", OGTLSkipResultNone},
+    {(int32_t)0xdf8b3b22, "oosssss", OGTLSkipResultNone},
+    {(int32_t)0xe0bff26c, "f0?ooi1?o", OGTLSkipResultNone},
+    {(int32_t)0xe175e66f, "fi3?s4?lii2?i", OGTLSkipResultNone},
+    {(int32_t)0xe1bb0d61, "so", OGTLSkipResultNone},
+    {(int32_t)0xe2de7737, "fiv0?svv", OGTLSkipResultNone},
+    {(int32_t)0xe4621141, "m", OGTLSkipResultNone},
+    {(int32_t)0xe46bcee4, "l", OGTLSkipResultNone},
+    {(int32_t)0xe477092e, "", OGTLSkipResultNone},
+    {(int32_t)0xe4e88011, "v", OGTLSkipResultNone},
+    {(int32_t)0xe519abab, "ioi", OGTLSkipResultNone},
+    {(int32_t)0xe581e4e9, "", OGTLSkipResultNone},
+    {(int32_t)0xe7058e7f, "iiii", OGTLSkipResultNone},
+    {(int32_t)0xe7e82e12, "soos", OGTLSkipResultNone},
+    {(int32_t)0xe7ff068a, "fl0?i", OGTLSkipResultNone},
+    {(int32_t)0xe87acbc0, "oo", OGTLSkipResultNone},
+    {(int32_t)0xe8fd8014, "oi", OGTLSkipResultNone},
+    {(int32_t)0xe92fd902, "", OGTLSkipResultNone},
+    {(int32_t)0xe988037b, "so", OGTLSkipResultNone},
+    {(int32_t)0xe9baa668, "oi", OGTLSkipResultNone},
+    {(int32_t)0xea32b4b1, "", OGTLSkipResultNone},
+    {(int32_t)0xeafc32bc, "", OGTLSkipResultNone},
+    {(int32_t)0xeafdf716, "lv", OGTLSkipResultNone},
+    {(int32_t)0xeb032884, "vvv", OGTLSkipResultNone},
+    {(int32_t)0xeb983f8f, "f4?o3?i0?lii1?ivv", OGTLSkipResultNone},
+    {(int32_t)0xec43a2d1, "vvv", OGTLSkipResultNone},
+    {(int32_t)0xece9814b, "", OGTLSkipResultNone},
+    {(int32_t)0xedf3add0, "oo", OGTLSkipResultNone},
+    {(int32_t)0xee430c85, "f3?ol", OGTLSkipResultNone},
+    {(int32_t)0xee479c64, "o", OGTLSkipResultNone},
+    {(int32_t)0xee8c1e86, "", OGTLSkipResultNone},
+    {(int32_t)0xeeca5ce3, "fsss1?ssiis", OGTLSkipResultNone},
+    {(int32_t)0xef156a5c, "iioo", OGTLSkipResultNone},
+    {(int32_t)0xef1751b5, "o", OGTLSkipResultNone},
+    {(int32_t)0xefb2b617, "flli3?s4?i5?i7?i10?iii16?s20?l21?o", OGTLSkipResultNone},
+    {(int32_t)0xf08d516b, "", OGTLSkipResultNone},
+    {(int32_t)0xf101aa7f, "ol", OGTLSkipResultNone},
+    {(int32_t)0xf1d628ec, "oo", OGTLSkipResultNone},
+    {(int32_t)0xf259a80b, "sllsivo", OGTLSkipResultNone},
+    {(int32_t)0xf35aec28, "ll", OGTLSkipResultNone},
+    {(int32_t)0xf6a5f82f, "", OGTLSkipResultNone},
+    {(int32_t)0xf72e0ed9, "llo", OGTLSkipResultNone},
+    {(int32_t)0xf74e932b, "oi", OGTLSkipResultNone},
+    {(int32_t)0xf7e8d89b, "", OGTLSkipResultNone},
+    {(int32_t)0xf83ae221, "vvvv", OGTLSkipResultNone},
+    {(int32_t)0xf888fa1a, "", OGTLSkipResultNone},
+    {(int32_t)0xf93cd45c, "lls", OGTLSkipResultNone},
+    {(int32_t)0xf9677aad, "", OGTLSkipResultNone},
+    {(int32_t)0xfa0f3ca2, "f1?i0?v", OGTLSkipResultNone},
+    {(int32_t)0xfa30a8c7, "li", OGTLSkipResultNone},
+    {(int32_t)0xfb4c496c, "", OGTLSkipResultNone},
+    {(int32_t)0xfb9c547a, "o", OGTLSkipResultNone},
+    {(int32_t)0xfc796b3f, "s", OGTLSkipResultNone},
+    {(int32_t)0xfd149899, "iso", OGTLSkipResultNone},
+    {(int32_t)0xfd5e12bd, "ovv", OGTLSkipResultNone},
+    {(int32_t)0xfe198602, "fl0?n", OGTLSkipResultNone},
+    {(int32_t)0xfe333952, "", OGTLSkipResultNone},
+    {(int32_t)0xfebe5491, "fooo1?i", OGTLSkipResultNone},
+    {(int32_t)0xff16e2ca, "ob", OGTLSkipResultNone},
+    {(int32_t)0xffadc913, "iiii", OGTLSkipResultNone},
+    {(int32_t)0xfffe1bac, "", OGTLSkipResultNone},
+    {(int32_t)0x00f8ed08, "iv", OGTLSkipResultNone},
+    {(int32_t)0x0194cb3b, "ioi", OGTLSkipResultNone},
+    {(int32_t)0x01c641c2, "oi", OGTLSkipResultNone},
+    {(int32_t)0x1f2bf4a, "o", OGTLSkipResultNone},
+    {(int32_t)0x031f9590, "vo", OGTLSkipResultNone},
+    {(int32_t)0x033ed001, "floo0?s1?i2?s", OGTLSkipResultNone},
+    {(int32_t)0x5416d58, "il", OGTLSkipResultNone},
+    {(int32_t)0x07141dbf, "fl0?i", OGTLSkipResultNone},
+    {(int32_t)0x07b68920, "li", OGTLSkipResultNone},
+    {(int32_t)0x07df587c, "fso0?oi", OGTLSkipResultNone},
+    {(int32_t)0x093bcf34, "sl", OGTLSkipResultNone},
+    {(int32_t)0x09c469cd, "fss0?o", OGTLSkipResultNone},
+    {(int32_t)0x09cb7759, "oiivi", OGTLSkipResultNone},
+    {(int32_t)0x0a339f0b, "fv1?v4?v", OGTLSkipResultNone},
+    {(int32_t)0x0aa021e5, "iiii", OGTLSkipResultNone},
+    {(int32_t)0x0ab4a819, "fsli4?i1?i2?i3?i7?i8?s", OGTLSkipResultNone},
+    {(int32_t)0x0bb2d201, "im", OGTLSkipResultNone},
+    {(int32_t)0x0bd915c0, "fl0?ssl", OGTLSkipResultNone},
+    {(int32_t)0x0e8e37e5, "f3?o0?i", OGTLSkipResultNone},
+    {(int32_t)0x10b78d29, "fs0?ssi", OGTLSkipResultNone},
+    {(int32_t)0x114ff30d, "vv", OGTLSkipResultNone},
+    {(int32_t)0x11b58939, "", OGTLSkipResultNone},
+    {(int32_t)0x120b1ab9, "ii", OGTLSkipResultNone},
+    {(int32_t)0x13767230, "ss", OGTLSkipResultNone},
+    {(int32_t)0x140502d1, "f0?io", OGTLSkipResultNone},
+    {(int32_t)0x14455871, "ioo", OGTLSkipResultNone},
+    {(int32_t)0x15590068, "s", OGTLSkipResultNone},
+    {(int32_t)0x16115a96, "ov", OGTLSkipResultNone},
+    {(int32_t)0x1759c560, "flo0?s0?l", OGTLSkipResultNone},
+    {(int32_t)0x17d7f87b, "vv", OGTLSkipResultNone},
+    {(int32_t)0x1824e40b, "ioo", OGTLSkipResultNone},
+    {(int32_t)0x1839490f, "", OGTLSkipResultNone},
+    {(int32_t)0x19420af6, "v", OGTLSkipResultNone},
+    {(int32_t)0x1b0e4f07, "fill0?l", OGTLSkipResultNone},
+    {(int32_t)0x1b2286b8, "s", OGTLSkipResultNone},
+    {(int32_t)0x1bf335b9, "il", OGTLSkipResultNone},
+    {(int32_t)0x1d998733, "lo", OGTLSkipResultNone},
+    {(int32_t)0x1dab80b7, "s", OGTLSkipResultNone},
+    {(int32_t)0x1e109708, "l", OGTLSkipResultNone},
+    {(int32_t)0x1e148390, "o", OGTLSkipResultNone},
+    {(int32_t)0x1e297bfa, "foi0?i1?oo", OGTLSkipResultNone},
+    {(int32_t)0x1ea2fda7, "fllso2?ol0?b", OGTLSkipResultNone},
+    {(int32_t)0x1f01c757, "i", OGTLSkipResultNone},
+    {(int32_t)0x1f0c1ad9, "", OGTLSkipResultNone},
+    {(int32_t)0x20529438, "l", OGTLSkipResultNone},
+    {(int32_t)0x206ad49e, "", OGTLSkipResultNone},
+    {(int32_t)0x2085c238, "s", OGTLSkipResultNone},
+    {(int32_t)0x20bcbba1, "o", OGTLSkipResultIgnoredUnlessFailed},
+    {(int32_t)0x21108ff7, "f4?m", OGTLSkipResultNone},
+    {(int32_t)0x21461b5d, "", OGTLSkipResultNone},
+    {(int32_t)0x221bb5e4, "ioi", OGTLSkipResultNone},
+    {(int32_t)0x2271f2bf, "ooi", OGTLSkipResultNone},
+    {(int32_t)0x22c0f6d5, "fi0?i1?o2?s3?v4?i", OGTLSkipResultNone},
+    {(int32_t)0x250dbaf8, "", OGTLSkipResultNone},
+    {(int32_t)0x257e962b, "fii0?s1?isl", OGTLSkipResultNone},
+    {(int32_t)0x258aff05, "ss", OGTLSkipResultNone},
+    {(int32_t)0x25e073fc, "v", OGTLSkipResultNone},
+    {(int32_t)0x26219a58, "n", OGTLSkipResultNone},
+    {(int32_t)0x28373599, "lo", OGTLSkipResultNone},
+    {(int32_t)0x283bd312, "lsi", OGTLSkipResultNone},
+    {(int32_t)0x2aee9191, "fiiiii1?ss", OGTLSkipResultNone},
+    {(int32_t)0x2b96cd1b, "s", OGTLSkipResultNone},
+    {(int32_t)0x2ba1f5ce, "", OGTLSkipResultNone},
+    {(int32_t)0x2cb51097, "lvv", OGTLSkipResultNone},
+    {(int32_t)0x2dd14edc, "f0?illss4?v4?i4?i8?lii", OGTLSkipResultNone},
+    {(int32_t)0x2de11aae, "", OGTLSkipResultNone},
+    {(int32_t)0x2e94c3e7, "foi0?o", OGTLSkipResultNone},
+    {(int32_t)0x2eb1b658, "oi", OGTLSkipResultNone},
+    {(int32_t)0x2ed82995, "ivvv", OGTLSkipResultNone},
+    {(int32_t)0x2eeed1c4, "f0?l0?i0?l0?oi", OGTLSkipResultNone},
+    {(int32_t)0x2f65c8e4, "l", OGTLSkipResultNone},
+    {(int32_t)0x308660c1, "sl", OGTLSkipResultNone},
+    {(int32_t)0x30f443db, "", OGTLSkipResultNone},
+    {(int32_t)0x313a9547, "flol0?i0?il1?i1?i3?l4?l5?s6?o8?i8?i9?i11?s11?i11?i11?i11?i12?i13?o", OGTLSkipResultNone},
+    {(int32_t)0x31c24808, "i", OGTLSkipResultNone},
+    {(int32_t)0x31cad303, "v", OGTLSkipResultNone},
+    {(int32_t)0x3259950a, "vl", OGTLSkipResultNone},
+    {(int32_t)0x339bef6c, "f3?o1?o2?o", OGTLSkipResultNone},
+    {(int32_t)0x3458f9c8, "ov", OGTLSkipResultNone},
+    {(int32_t)0x35bbdb6b, "isb", OGTLSkipResultNone},
+    {(int32_t)0x36437737, "i", OGTLSkipResultNone},
+    {(int32_t)0x367617d3, "iivvvvi", OGTLSkipResultNone},
+    {(int32_t)0x37381085, "os", OGTLSkipResultNone},
+    {(int32_t)0x374fa7ad, "", OGTLSkipResultNone},
+    {(int32_t)0x394e7f21, "s", OGTLSkipResultNone},
+    {(int32_t)0x39c67432, "", OGTLSkipResultNone},
+    {(int32_t)0x39f23300, "o", OGTLSkipResultNone},
+    {(int32_t)0x3aae0528, "ii", OGTLSkipResultNone},
+    {(int32_t)0x3b6ddad2, "ibi", OGTLSkipResultNone},
+    {(int32_t)0x3bb842ac, "i", OGTLSkipResultNone},
+    {(int32_t)0x3de1dfed, "vvv", OGTLSkipResultNone},
+    {(int32_t)0x3e0b5b6a, "fii1?il", OGTLSkipResultNone},
+    {(int32_t)0x3e81e078, "f1?s2?s", OGTLSkipResultNone},
+    {(int32_t)0x3fc9053b, "s", OGTLSkipResultNone},
+    {(int32_t)0x416c56e8, "ovv", OGTLSkipResultNone},
+    {(int32_t)0x41c87565, "m", OGTLSkipResultNone},
+    {(int32_t)0x41df43fc, "f1?oio2?o3?i11?l4?l6?l7?i8?l13?i14?i15?n16?s18?l19?i20?i", OGTLSkipResultNone},
+    {(int32_t)0x4258c205, "", OGTLSkipResultNone},
+    {(int32_t)0x42b00348, "foilii1?o2?i", OGTLSkipResultNone},
+    {(int32_t)0x4345be73, "ss", OGTLSkipResultNone},
+    {(int32_t)0x4367daa0, "fi1?i2?l4?s", OGTLSkipResultNone},
+    {(int32_t)0x43b46b20, "i", OGTLSkipResultNone},
+    {(int32_t)0x44ba9dd9, "ivvvv", OGTLSkipResultNone},
+    {(int32_t)0x46c6e36f, "v", OGTLSkipResultNone},
+    {(int32_t)0x481eadfa, "", OGTLSkipResultNone},
+    {(int32_t)0x48a30254, "v", OGTLSkipResultNone},
+    {(int32_t)0x48aaae3c, "l", OGTLSkipResultNone},
+    {(int32_t)0x48e246c2, "lo", OGTLSkipResultNone},
+    {(int32_t)0x4959427a, "fiii4?i0?i1?os3?v2?n", OGTLSkipResultNone},
+    {(int32_t)0x49b92a26, "iov", OGTLSkipResultNone},
+    {(int32_t)0x4a162433, "l", OGTLSkipResultNone},
+    {(int32_t)0x4b3e14d6, "fs0?l2?iii4?s5?i6?l", OGTLSkipResultNone},
+    {(int32_t)0x4b9e22a0, "", OGTLSkipResultNone},
+    {(int32_t)0x4ba3a95a, "f3?oi", OGTLSkipResultNone},
+    {(int32_t)0x4bbb8f01, "o", OGTLSkipResultIgnoredUnlessFailed},
+    {(int32_t)0x4d4bd46a, "", OGTLSkipResultNone},
+    {(int32_t)0x4e7085ea, "soo", OGTLSkipResultNone},
+    {(int32_t)0x4e80a379, "o", OGTLSkipResultNone},
+    {(int32_t)0x4f2b9479, "fv1?v", OGTLSkipResultNone},
+    {(int32_t)0x50a04e45, "vvv", OGTLSkipResultNone},
+    {(int32_t)0x50cc03d3, "iv", OGTLSkipResultNone},
+    {(int32_t)0x50cd067c, "oo", OGTLSkipResultNone},
+    {(int32_t)0x50f41ccf, "s", OGTLSkipResultNone},
+    {(int32_t)0x512fe446, "fslill0?i0?l2?l3?l4?i5?i5?s", OGTLSkipResultNone},
+    {(int32_t)0x514519e2, "i", OGTLSkipResultNone},
+    {(int32_t)0x51e6ee4f, "i", OGTLSkipResultNone},
+    {(int32_t)0x523da4eb, "", OGTLSkipResultNone},
+    {(int32_t)0x527d22eb, "", OGTLSkipResultNone},
+    {(int32_t)0x52928bca, "i", OGTLSkipResultNone},
+    {(int32_t)0x5334759c, "svtvvv", OGTLSkipResultNone},
+    {(int32_t)0x53d7bfd8, "sioi", OGTLSkipResultNone},
+    {(int32_t)0x54236209, "iil", OGTLSkipResultNone},
+    {(int32_t)0x54b56617, "f0?v1?o", OGTLSkipResultNone},
+    {(int32_t)0x565251e2, "isoo", OGTLSkipResultNone},
+    {(int32_t)0x56dbfcf8, "on", OGTLSkipResultIgnoredUnlessFailed},
+    {(int32_t)0x5787686d, "os", OGTLSkipResultNone},
+    {(int32_t)0x58747131, "lfov4?i5?i", OGTLSkipResultNone},
+    {(int32_t)0x59d78fc5, "fiiiivvv0?s", OGTLSkipResultNone},
+    {(int32_t)0x59e65335, "", OGTLSkipResultNone},
+    {(int32_t)0x5a0a066d, "fss0?o", OGTLSkipResultNone},
+    {(int32_t)0x5b934f9d, "oil", OGTLSkipResultNone},
+    {(int32_t)0x5da674b7, "", OGTLSkipResultNone},
+    {(int32_t)0x5e0589f1, "fl0?ssl", OGTLSkipResultNone},
+    {(int32_t)0x5e068047, "so", OGTLSkipResultNone},
+    {(int32_t)0x5e1b3cb8, "foi0?io", OGTLSkipResultNone},
+    {(int32_t)0x5f3b8a00, "f0?o1?o", OGTLSkipResultNone},
+    {(int32_t)0x60682812, "", OGTLSkipResultNone},
+    {(int32_t)0x6090d6d5, "oio", OGTLSkipResultNone},
+    {(int32_t)0x628c9224, "il", OGTLSkipResultNone},
+    {(int32_t)0x63c3dd0a, "fiv0?nvv", OGTLSkipResultNone},
+    {(int32_t)0x64407ea7, "foiiiii1?o", OGTLSkipResultNone},
+    {(int32_t)0x65427b82, "", OGTLSkipResultNone},
+    {(int32_t)0x65a0fa4d, "vo", OGTLSkipResultNone},
+    {(int32_t)0x661d4037, "v", OGTLSkipResultNone},
+    {(int32_t)0x683b2c52, "ioi", OGTLSkipResultNone},
+    {(int32_t)0x68cb6283, "foi0?o", OGTLSkipResultNone},
+    {(int32_t)0x69279795, "i", OGTLSkipResultNone},
+    {(int32_t)0x695c9e7c, "lii", OGTLSkipResultIgnored},
+    {(int32_t)0x6a7e7366, "oo", OGTLSkipResultIgnoredUnlessFailed},
+    {(int32_t)0x6b134e8e, "m", OGTLSkipResultNone},
+    {(int32_t)0x6b39f4ec, "oooivv", OGTLSkipResultNone},
+    {(int32_t)0x6c0d8e23, "ilbi", OGTLSkipResultIgnored},
+    {(int32_t)0x6c37c15c, "ii", OGTLSkipResultNone},
+    {(int32_t)0x6c8e1e06, "fii0?i", OGTLSkipResultNone},
+    {(int32_t)0x6c9ce8ed, "fo1?v2?s4?l3?v0?svv", OGTLSkipResultNone},
+    {(int32_t)0x6c9d0efe, "lvv", OGTLSkipResultNone},
+    {(int32_t)0x6ca9c2e9, "sb", OGTLSkipResultNone},
+    {(int32_t)0x6ebdff91, "islsls", OGTLSkipResultNone},
+    {(int32_t)0x6f747657, "oo", OGTLSkipResultNone},
+    {(int32_t)0x6f7863f4, "", OGTLSkipResultNone},
+    {(int32_t)0x6fb4ad87, "", OGTLSkipResultNone},
+    {(int32_t)0x7063c3db, "oim", OGTLSkipResultNone},
+    {(int32_t)0x711d692d, "f1?i", OGTLSkipResultNone},
+    {(int32_t)0x7184603b, "fllssliiii0?i", OGTLSkipResultNone},
+    {(int32_t)0x71f276c4, "i", OGTLSkipResultNone},
+    {(int32_t)0x72c64955, "", OGTLSkipResultNone},
+    {(int32_t)0x74aee3e0, "l", OGTLSkipResultNone},
+    {(int32_t)0x74c34319, "fisls0?s", OGTLSkipResultNone},
+    {(int32_t)0x751f3146, "sv", OGTLSkipResultNone},
+    {(int32_t)0x7533a588, "", OGTLSkipResultNone},
+    {(int32_t)0x75b3b798, "oo", OGTLSkipResultIgnoredUnlessFailed},
+    {(int32_t)0x76768bed, "ivo", OGTLSkipResultNone},
+    {(int32_t)0x767d61eb, "nnn", OGTLSkipResultNone},
+    {(int32_t)0x768e3aad, "iv", OGTLSkipResultNone},
+    {(int32_t)0x770416af, "oli", OGTLSkipResultNone},
+    {(int32_t)0x771a4e66, "iiilvmiiiiv", OGTLSkipResultNone},
+    {(int32_t)0x77608b83, "v", OGTLSkipResultNone},
+    {(int32_t)0x7781fe18, "l", OGTLSkipResultNone},
+    {(int32_t)0x77b0e372, "loi", OGTLSkipResultNone},
+    {(int32_t)0x78fbf3a8, "", OGTLSkipResultNone},
+    {(int32_t)0x79b26a24, "fii18?o17?oi0?s1?vo14?v2?v3?o15?o19?n20?o", OGTLSkipResultNone},
+    {(int32_t)0x79eb8cb3, "ivvl", OGTLSkipResultNone},
+    {(int32_t)0x79f5d419, "", OGTLSkipResultNone},
+    {(int32_t)0x7a1e11d1, "lm", OGTLSkipResultNone},
+    {(int32_t)0x7a9abda9, "slt", OGTLSkipResultNone},
+    {(int32_t)0x7adf2420, "f1?v2?i3?v4?s4?v", OGTLSkipResultNone},
+    {(int32_t)0x7b560a0b, "", OGTLSkipResultNone},
+    {(int32_t)0x7c8fe7b6, "ilo", OGTLSkipResultNone},
+    {(int32_t)0x7d5bd1f0, "vvv", OGTLSkipResultNone},
+    {(int32_t)0x7d627683, "oio", OGTLSkipResultNone}
+};
+
+@interface OGTLSkipObjectParser : OGTLManualParser
 @end
 
-@implementation TLCodexSkipObjectParser
-
-- (int32_t)TLconstructorSignature
-{
-    return 0;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
+@implementation OGTLSkipObjectParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
+    const OGTLSkipLayout *skipLayout = OGTLFindSkipLayout(OGTLSkipLayouts, sizeof(OGTLSkipLayouts) / sizeof(OGTLSkipLayouts[0]), signature);
+    if (skipLayout != NULL)
+    {
+        OGTLSkipFields(is, skipLayout->layout, environment, error);
+        if (skipLayout->result == OGTLSkipResultNone || (skipLayout->result == OGTLSkipResultIgnoredUnlessFailed && error != NULL && *error != nil))
+            return nil;
+        OGTLIgnoredUpdate *result = [[OGTLIgnoredUpdate alloc] init];
+        result.ignoredSignature = signature;
+        return result;
+    }
+
     switch (signature)
     {
-        case (int32_t)0x1cb5c415:
+        case OGTLCtor(0x1cb5c415):
         {
             int32_t count = [is readInt32];
             for (int32_t i = 0; i < count; i++)
             {
                 @try
                 {
-                    CodexReadObject(is, environment, error);
+                    OGTLCoreReadObject(is, environment, error);
                 }
                 @catch (NSException *exception)
                 {
-                    NSString *message = [NSString stringWithFormat:@"index=%d/%d manual=0x%08x manualName=%@ parser=%@ exception=%@ reason=%@", i, count, CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, exception.name, exception.reason];
+                    NSString *message = [NSString stringWithFormat:@"index=%d/%d manual=0x%08x manualName=%@ parser=%@ exception=%@ reason=%@", i, count, OGTLCoreCurrentManualSignature, stringForHash(OGTLCoreCurrentManualSignature), OGTLCoreCurrentManualParser, exception.name, exception.reason];
                     if (error != NULL)
                     {
-                        NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
-                        [userInfo setValue:message forKey:NSLocalizedDescriptionKey];
-                        *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:userInfo];
+                        *error = OGTLCoreMessageError(message);
                     }
                     break;
                 }
-                if (error != NULL && *error != nil)
+                if (OGTLCoreFailed(error))
                 {
                     break;
                 }
             }
             break;
         }
-        case (int32_t)0xe8fd8014:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x711d692d:
+        case OGTLCtor(0xc01e857f):
         {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x75b3b798:
-        {
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (error != NULL && *error != nil)
-                return nil;
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0x0ab4a819:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 7))
-                [is readInt32];
-            if (flags & (1 << 8))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xc01e857f:
-        {
-            int64_t userId = [is readInt64];
-            TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
+            int64_t userId = OGTLTakeInt64(is);
+            TLSendMessageAction *action = (TLSendMessageAction *)OGTLCoreReadObject(is, environment, error);
             TLUpdate$updateUserTyping *result = [[TLUpdate$updateUserTyping alloc] init];
             result.user_id = userId;
             result.action = action;
@@ -1467,10 +1985,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0x2a17bf5c:
         {
             int32_t flags = [is readInt32];
-            int64_t userId = [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
+            int64_t userId = OGTLTakeInt64(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            TLSendMessageAction *action = (TLSendMessageAction *)OGTLCoreReadObject(is, environment, error);
             TLUpdate$updateUserTyping *result = [[TLUpdate$updateUserTyping alloc] init];
             result.user_id = userId;
             result.action = action;
@@ -1478,10 +1995,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         }
         case (int32_t)0x83487af0:
         {
-            int64_t chatId = [is readInt64];
-            TLPeer *fromPeer = (TLPeer *)CodexReadObject(is, environment, error);
-            TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
-            if (![fromPeer isKindOfClass:[TLPeer$peerUser class]])
+            int64_t chatId = OGTLTakeInt64(is);
+            TLPeer *fromPeer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            TLSendMessageAction *action = (TLSendMessageAction *)OGTLCoreReadObject(is, environment, error);
+            if (!OGTLCoreIsKind(fromPeer, [TLPeer$peerUser class]))
                 return nil;
             TLUpdate$updateChatUserTyping *result = [[TLUpdate$updateChatUserTyping alloc] init];
             result.chat_id = chatId;
@@ -1489,2658 +2006,554 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.action = action;
             return result;
         }
-        case (int32_t)0xc32d5b12:
-            [is readInt64];
-            CodexReadInt32Vector(is);
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x5e1b3cb8:
+        case OGTLCtor(0x14b24500):
         {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xd6b19546:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-            {
-                [is readInt64];
-                [is readInt32];
-            }
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0xb390dc08:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readInt64];
-            if (flags & (1 << 3))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x51e6ee4f:
-            [is readInt32];
-            break;
-        case (int32_t)0x14b24500:
-        {
-            [is readInt64];
+            OGTLTakeInt64(is);
 
-            NSError *groupCallSkipError = nil;
-            CodexReadObject(is, environment, &groupCallSkipError);
+            NSError *groupCallSkipError;
+            OGTLCoreReadObject(is, environment, &groupCallSkipError);
             break;
         }
-        case (int32_t)0x7063c3db:
-        {
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadInt64Vector(is);
-            break;
-        }
-        case (int32_t)0xed85eab5:
+        case OGTLCtor(0xed85eab5):
         {
             int32_t flags = [is readInt32];
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
-            NSArray *messages = CodexReadInt32Vector(is);
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            NSArray *messages = OGTLCoreReadInt32Vector(is);
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
             TLUpdate$updatePinnedMessagesCodex *result = [[TLUpdate$updatePinnedMessagesCodex alloc] init];
             result.flags = flags;
-            result.peer = peer;
+            [result setPeer:peer];
             result.messages = messages;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0xd597650c:
-        case (int32_t)0xefb2b617:
+        case OGTLCtor(0xe16459c3):
         {
             int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 3))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-                [is readInt32];
-            if (flags & (1 << 7))
-                [is readInt32];
-            if (flags & (1 << 10))
-                [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 16))
-                [is readString];
-            if (flags & (1 << 20))
-                [is readInt64];
-            if (flags & (1 << 21))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x1bf335b9:
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0xfa0f3ca2:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0xfe198602:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                CodexReadInt32Vector(is);
-            break;
-        }
-        case (int32_t)0x7d627683:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x1824e40b:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x904dd49c:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0xac21d3ce:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x09cb7759:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x8ae5c97a:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x9ddb347c:
-        case (int32_t)0x07df587c:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xa02a982e:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            CodexReadInt32Vector(is);
-            [is readInt32];
-            break;
-        case (int32_t)0x1ea2fda7:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readBytes];
-            break;
-        }
-        case (int32_t)0xa584b019:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x283bd312:
-            [is readInt64];
-            [is readString];
-            [is readInt32];
-            break;
-        case (int32_t)0x8b725fce:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xe16459c3:
-        {
-            int32_t flags = [is readInt32];
-            TLDialogPeer *peer = (TLDialogPeer *)CodexReadObject(is, environment, error);
+            TLDialogPeer *peer = (TLDialogPeer *)OGTLCoreReadObject(is, environment, error);
             TLUpdate$updateDialogUnreadMark *result = [[TLUpdate$updateDialogUnreadMark alloc] init];
             result.flags = flags;
-            result.peer = peer;
+            [result setPeer:peer];
             return result;
         }
-        case (int32_t)0xe56dbf05:
+        case OGTLCtor(0xe56dbf05):
         {
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
             TLDialogPeer$dialogPeer *result = [[TLDialogPeer$dialogPeer alloc] init];
-            result.peer = peer;
+            [result setPeer:peer];
             return result;
         }
-        case (int32_t)0x514519e2:
-            [is readInt32];
-            break;
-        case (int32_t)0x77b0e372:
-        case (int32_t)0xa4a79376:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x9f812b08:
-        {
-            [is readInt32];
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x683b2c52:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xdef143d0:
+        case OGTLCtor(0x9e84bc99):
         {
             int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadInt32Vector(is);
-            break;
-        }
-        case (int32_t)0xfb9c547a:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x9e84bc99:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readInt32];
-            int32_t maxId = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
+            int32_t maxId = OGTLTakeInt32(is);
             [is readInt32];
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
-            TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
-            result.peer = peer;
-            result.max_id = maxId;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
+            TLUpdate$updateReadHistoryInbox *result = OGTLNewObject(TLUpdate$updateReadHistoryInbox);
+            [result setPeer:peer];
+            [result setMax_id:maxId];
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0x2f2f21bf:
+        case OGTLCtor(0x2f2f21bf):
         {
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
-            int32_t maxId = [is readInt32];
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
-            TLUpdate$updateReadHistoryOutbox *result = [[TLUpdate$updateReadHistoryOutbox alloc] init];
-            result.peer = peer;
-            result.max_id = maxId;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            int32_t maxId = OGTLTakeInt32(is);
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
+            TLUpdate$updateReadHistoryOutbox *result = OGTLNewObject(TLUpdate$updateReadHistoryOutbox);
+            [result setPeer:peer];
+            [result setMax_id:maxId];
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0x0bb2d201:
-            [is readInt32];
-            CodexReadInt64Vector(is);
-            break;
-        case (int32_t)0x31c24808:
-            [is readInt32];
-            break;
-        case (int32_t)0xb23fc698:
+        case OGTLCtor(0xb23fc698):
         {
-            int64_t channelId = [is readInt64];
+            int64_t channelId = OGTLTakeInt64(is);
             int32_t availableMinId = [is readInt32];
             TLUpdate$updateChannelAvailableMessages *result = [[TLUpdate$updateChannelAvailableMessages alloc] init];
             result.channel_id = channelId;
             result.available_min_id = availableMinId;
             return result;
         }
-        case (int32_t)0x9d2216e0:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xf2ebdb4e:
-            CodexReadObject(is, environment, error);
-            if (error != NULL && *error != nil)
+        case OGTLCtor(0xf2ebdb4e):
+            OGTLCoreReadObject(is, environment, error);
+            if (OGTLCoreFailed(error))
                 break;
-            CodexReadObjectVector(is, environment, error);
-            if (error != NULL && *error != nil)
+            OGTLCoreReadObjectVector(is, environment, error);
+            if (OGTLCoreFailed(error))
                 break;
             [is readInt32];
             break;
-        case (int32_t)0x2a3dc7ac:
-        case (int32_t)0xeba636fe:
+        case OGTLCtor(0x2a3dc7ac):
+        case OGTLCtor(0xeba636fe):
         {
             int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
+            OGTLCoreReadObject(is, environment, error);
             [is readInt32];
-            if (flags & (1 << 3)) [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'i');
             [is readInt32];
-            if (flags & (1 << 7)) [is readInt32];
-            if (flags & (1 << 11)) [is readString];
-            if (flags & (1 << 13)) [is readInt64];
-            if (flags & (1 << 6)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 14)) CodexReadObject(is, environment, error);
-            if (signature == (int32_t)0x2a3dc7ac && (flags & (1 << 16))) [is readInt64];
+            OGTLSkipFlagged(is, environment, error, flags, 7, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 11, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 13, 'l');
+            if (flags & (1 << 6)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 14)) OGTLCoreReadObject(is, environment, error);
+            if (signature == (int32_t)0x2a3dc7ac && (OGTLFlagSet(flags, 16))) [is readInt64];
             break;
         }
-        case (int32_t)0x67753ac8:
+        case OGTLCtor(0x67753ac8):
         {
             int32_t flags = [is readInt32];
-            [is readString];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1)) [is readInt32];
+            OGTLTakeString(is);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
             break;
         }
-        case (int32_t)0xdcb118b7:
-            [is readString];
-            CodexReadInt32Vector(is);
-            break;
-        case (int32_t)0xbb9bb9a5:
+        case OGTLCtor(0x5bb98608):
         {
             int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x1e297bfa:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xaca1657b:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x86e18161:
-        {
-            [is readInt64];
-            int32_t flags = [is readInt32];
-            [is readString];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x6ca9c2e9:
-            [is readString];
-            [is readBytes];
-            break;
-        case (int32_t)0xfb4c496c:
-        case (int32_t)0x30f443db:
-        case (int32_t)0x39c67432:
-        case (int32_t)0x8c0f91fb:
-            break;
-        case (int32_t)0x28373599:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x07b68920:
-            [is readInt64];
-            [is readInt32];
-            break;
-        case (int32_t)0xa477288f:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexSkipBytesVector(is);
-            [is readInt32];
-            break;
-        case (int32_t)0x140502d1:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x5bb98608:
-        {
-            int32_t flags = [is readInt32];
-            int64_t channelId = [is readInt64];
-            NSArray *messages = CodexReadInt32Vector(is);
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
+            int64_t channelId = OGTLTakeInt64(is);
+            NSArray *messages = OGTLCoreReadInt32Vector(is);
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
             TLUpdate$updatePinnedChannelMessagesCodex *result = [[TLUpdate$updatePinnedChannelMessagesCodex alloc] init];
             result.flags = flags;
             result.channel_id = channelId;
             result.messages = messages;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0x4e80a379:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x48e246c2:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xdc58f31e:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xac072444:
-            break;
-        case (int32_t)0x50cc03d3:
-        {
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x22c0f6d5:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                [is readString];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x8c39793f:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xe46bcee4:
-            [is readInt64];
-            break;
-        case (int32_t)0xc7b57ce6:
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0x7533a588:
-        case (int32_t)0x4258c205:
-            break;
-        case (int32_t)0xffadc913:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x16a4b93c:
-        case (int32_t)0xedf164f1:
+        case OGTLCtor(0x16a4b93c):
+        case OGTLCtor(0xedf164f1):
         {
             int32_t flags = [is readInt32];
             [is readInt32];
             [is readInt32];
-            if (flags & (1 << 18))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 17))
-                CodexReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 18, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 17, 'o');
             [is readInt32];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 14))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 15))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 19))
-                CodexReadInt32Vector(is);
-            if (signature == (int32_t)0x16a4b93c && (flags & (1 << 20)))
-                CodexReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'v');
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 14, 'v');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'v');
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 15, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 19, 'n');
+            if (signature == (int32_t)0x16a4b93c && (OGTLFlagSet(flags, 20)))
+                OGTLCoreReadObject(is, environment, error);
             break;
         }
-        case (int32_t)0x79b26a24:
+        case OGTLCtor(0x03d1ea4e):
+        {
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            break;
+        }
+        case OGTLCtor(0xcfc9e002):
         {
             int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 18))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 17))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 14))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 15))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 19))
-                CodexReadInt32Vector(is);
-            if (flags & (1 << 20))
-                CodexReadObject(is, environment, error);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLTakeDouble(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'd');
             break;
         }
-        case (int32_t)0x68cb6283:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x9a35e999:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x63c3dd0a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadInt32Vector(is);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x8d595cd6:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadInt64Vector(is);
-            break;
-        }
-        case (int32_t)0xb826e150:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x2e94c3e7:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x54b56617:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xcf6f6db8:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x31cad303:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x01c641c2:
-            CodexReadObject(is, environment, error);
+        case OGTLCtor(0x49a6549c):
+            OGTLCoreReadObject(is, environment, error);
+            OGTLTakeString(is);
+            OGTLTakeDouble(is);
             [is readInt32];
             break;
-        case (int32_t)0x7781fe18:
-            [is readInt64];
-            break;
-        case (int32_t)0xbbb6b4a3:
-            [is readInt64];
-            [is readInt32];
-            break;
-        case (int32_t)0x74aee3e0:
-            [is readInt64];
-            break;
-        case (int32_t)0x313a9547:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            [is readInt64];
-            if (flags & (1 << 0))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            [is readInt64];
-            if (flags & (1 << 1))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            if (flags & (1 << 3))
-                [is readInt64];
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 5))
-                [is readString];
-            if (flags & (1 << 6))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 8))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            if (flags & (1 << 9))
-                [is readInt32];
-            if (flags & (1 << 11))
-            {
-                [is readString];
-                [is readInt32];
-                [is readInt32];
-                [is readInt32];
-                [is readInt32];
-            }
-            if (flags & (1 << 12))
-                [is readInt32];
-            if (flags & (1 << 13))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x85f0a9cd:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readString];
-            [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 3))
-                [is readString];
-            if (flags & (1 << 4))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 5))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 8))
-            {
-                [is readInt64];
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 10))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 11))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 12))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 13))
-                [is readInt32];
-            if (flags & (1 << 16))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x565251e2:
+        case OGTLCtor(0xbe382906):
         {
             [is readInt32];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x4e7085ea:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x9f2504e4:
-            [is readString];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xe0bff26c:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x36437737:
-            [is readInt32];
-            break;
-        case (int32_t)0xdbce6389:
-        case (int32_t)0xf08d516b:
-        case (int32_t)0x78fbf3a8:
-        case (int32_t)0xcef7e7a8:
-            break;
-        case (int32_t)0xaff56398:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x71f276c4:
-            [is readInt32];
-            break;
-        case (int32_t)0x4d4bd46a:
-            break;
-        case (int32_t)0xb98cd696:
-        case (int32_t)0x72c64955:
-        case (int32_t)0xab339c00:
-        case (int32_t)0x9f27d26e:
-        case (int32_t)0xe477092e:
-        case (int32_t)0xd3656499:
-        case (int32_t)0xa2c0f695:
-            break;
-        case (int32_t)0x3458f9c8:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xfe333952:
-            break;
-        case (int32_t)0x771a4e66:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadInt64Vector(is);
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x972dabbf:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-            {
-                [is readInt32];
-                [is readString];
-            }
-            break;
-        }
-        case (int32_t)0x2eeed1c4:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-            {
-                [is readInt64];
-                [is readInt32];
-                [is readInt64];
-                CodexReadObject(is, environment, error);
-            }
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x3aae0528:
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x0aa021e5:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x03d1ea4e:
-        {
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            break;
-        }
-        case (int32_t)0xcfc9e002:
-        {
-            int32_t flags = [is readInt32];
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            [is readDouble];
-            if (flags & (1 << 0))
-                [is readDouble];
-            break;
-        }
-        case (int32_t)0x770416af:
-            CodexReadObject(is, environment, error);
-            [is readInt64];
-            [is readInt32];
-            break;
-        case (int32_t)0xbe82db9c:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0xb282217f:
-            CodexReadObject(is, environment, error);
-            [is readInt64];
-            [is readString];
-            break;
-        case (int32_t)0xcad5452d:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x14455871:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x2271f2bf:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x37381085:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            break;
-        case (int32_t)0x49a6549c:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readDouble];
-            [is readInt32];
-            break;
-        case (int32_t)0x5787686d:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            break;
-        case (int32_t)0xdf8b3b22:
-        {
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            break;
-        }
-        case (int32_t)0xa5d9abb8:
-        {
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xde4c5d93:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xb0bdeac5:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x9083670b:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xbd74cf49:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x59d78fc5:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xde9eed1d:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xe87acbc0:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xe2de7737:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x6090d6d5:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xbbab2643:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xcfcd0f13:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xaa5f789c:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xa388a368:
-            break;
-        case (int32_t)0x2ed82995:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x3de1dfed:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x416c56e8:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x41df43fc:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 11))
-                [is readInt64];
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 6))
-                [is readInt64];
-            if (flags & (1 << 7))
-                [is readInt32];
-            if (flags & (1 << 8))
-                [is readInt64];
-            if (flags & (1 << 13))
-                [is readInt32];
-            if (flags & (1 << 14))
-                [is readInt32];
-            if (flags & (1 << 15))
-                CodexReadInt32Vector(is);
-            if (flags & (1 << 16))
-                [is readString];
-            if (flags & (1 << 18))
-                [is readInt64];
-            if (flags & (1 << 19))
-                [is readInt32];
-            if (flags & (1 << 20))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x95f389b1:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x69279795:
-            [is readInt32];
-            break;
-        case (int32_t)0xf101aa7f:
-            CodexReadObject(is, environment, error);
-            [is readInt64];
-            break;
-        case (int32_t)0x2085c238:
-            [is readString];
-            break;
-        case (int32_t)0x84aa3a9c:
-            [is readString];
-            break;
-        case (int32_t)0x48aaae3c:
-        case (int32_t)0x4a162433:
-            [is readInt64];
-            break;
-        case (int32_t)0x1f01c757:
-            [is readInt32];
-            break;
-        case (int32_t)0x2eb1b658:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x947a12df:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-            {
-                CodexReadObjectVector(is, environment, error);
-                [is readInt64];
-            }
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x9d6b13b0:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0xa0ba4f17:
-            break;
-        case (int32_t)0x8a2932f3:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x512fe446:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            if (flags & (1 << 0))
-            {
-                [is readInt32];
-                [is readInt64];
-            }
-            if (flags & (1 << 2))
-                [is readInt64];
-            if (flags & (1 << 3))
-                [is readInt64];
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-            {
-                [is readInt32];
-                [is readString];
-            }
-            break;
-        }
-        case (int32_t)0x99ea331d:
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0x6b39f4ec:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x42b00348:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x7d5bd1f0:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xd31bc45d:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xdb33dad0:
-            break;
-        case (int32_t)0xaef6abbc:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x46c6e36f:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x9f120418:
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0xd072acb4:
-            [is readString];
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0xb4073647:
-            [is readInt32];
-            [is readString];
-            break;
-        case (int32_t)0xb54b5acf:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt64];
-            break;
-        }
-        case (int32_t)0xb9c0639a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readInt64];
-            [is readInt32];
-            CodexReadInt32Vector(is);
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadInt32Vector(is);
-            break;
-        }
-        case (int32_t)0x5da674b7:
-            break;
-        case (int32_t)0x95fcd1d6:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readString];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x2de11aae:
-            break;
-        case (int32_t)0xe7ff068a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x7184603b:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x07141dbf:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x929b619d:
-            [is readInt64];
-            break;
-        case (int32_t)0xfa30a8c7:
-            [is readInt64];
-            [is readInt32];
-            break;
-        case (int32_t)0xee8c1e86:
-            break;
-        case (int32_t)0xf35aec28:
-            [is readInt64];
-            [is readInt64];
-            break;
-        case (int32_t)0x5b934f9d:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0xcdbbcebb:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xbe382906:
-        {
-            [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            int32_t vectorSignature = [is readInt32];
-            if (vectorSignature == (int32_t)0x1cb5c415)
+            OGTLTakeInt64(is);
+            [is readInt32];
+            OGTLCoreReadObjectVector(is, environment, error);
+            int32_t vectorSignature = OGTLTakeInt32(is);
+            if (vectorSignature == OGTLCtor(0x1cb5c415))
             {
                 int32_t count = [is readInt32];
                 for (int32_t i = 0; i < count; i++)
-                    [is readInt64];
+                    OGTLTakeInt64(is);
             }
             break;
         }
-        case (int32_t)0x2cb51097:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x3b6d152e:
+        case OGTLCtor(0x3b6d152e):
         {
-            TLUserFull$userFull *fullUser = (TLUserFull$userFull *)CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            NSArray *users = CodexReadObjectVector(is, environment, error);
-            if (fullUser.user == nil && users.count != 0)
-                fullUser.user = [users objectAtIndex:0];
-            return fullUser;
+            TLUserFull$userFull *userFull = (TLUserFull$userFull *)OGTLCoreReadObject(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            NSArray *users = OGTLCoreReadObjectVector(is, environment, error);
+            if (users.count != 0 && userFull.user == nil)
+                [userFull setUser:[users objectAtIndex:0]];
+            return userFull;
         }
-        case (int32_t)0xb53e8b21:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x8c9a88ac:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xcc997720:
-        case (int32_t)0xd2234ea0:
-        case (int32_t)0x06cbe645:
+        case OGTLCtor(0xcc997720):
+        case OGTLCtor(0xd2234ea0):
+        case OGTLCtor(0x06cbe645):
+        case (int32_t)0xb90c2afd:
         {
             TLUserFull$userFull *result = [[TLUserFull$userFull alloc] init];
             int32_t flags = [is readInt32];
-            int32_t flags2 = [is readInt32];
-            [is readInt64];
-            result.flags = flags & ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3));
-            if (flags & (1 << 1))
+            int32_t flags2 = OGTLTakeInt32(is);
+            OGTLTakeInt64(is);
+            [result setFlags:flags & ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3))];
+            if (OGTLFlagSet(flags, 1))
                 result.about = [is readString];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 21))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                result.profile_photo = (TLPhoto *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 22))
-                CodexReadObject(is, environment, error);
-            result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                result.bot_info = (TLBotInfo *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 6))
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 21, 'o');
+            if (OGTLFlagSet(flags, 2))
+                result.profile_photo = (TLPhoto *)OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 22, 'o');
+            result.notify_settings = (TLPeerNotifySettings *)OGTLCoreReadObject(is, environment, error);
+            if (OGTLFlagSet(flags, 3))
+                result.bot_info = (TLBotInfo *)OGTLCoreReadObject(is, environment, error);
+            if (OGTLFlagSet(flags, 6))
                 result.pinned_msg_id = [is readInt32];
             result.common_chats_count = [is readInt32];
-            if (flags & (1 << 11))
-                [is readInt32];
-            if (flags & (1 << 14))
-                [is readInt32];
-            if (flags & (1 << 15))
+            OGTLSkipFlagged(is, environment, error, flags, 11, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 14, 'i');
+            if (OGTLFlagSet(flags, 15))
             {
-                if (signature == (int32_t)0x06cbe645)
-                    CodexReadObject(is, environment, error);
+                if (signature == (int32_t)0x06cbe645 || signature == (int32_t)0xb90c2afd)
+                    OGTLCoreReadObject(is, environment, error);
                 else
-                    [is readString];
+                    OGTLTakeString(is);
             }
-            if (flags & (1 << 16))
-                [is readString];
-            if (flags & (1 << 17))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 18))
-                CodexReadObject(is, environment, error);
-            if (signature != (int32_t)0x06cbe645 && (flags & (1 << 19)))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 24))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 25))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 2))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 4))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 5))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 6))
+            OGTLSkipFlagged(is, environment, error, flags, 16, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 17, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 18, 'o');
+            if (signature != (int32_t)0x06cbe645 && signature != (int32_t)0xb90c2afd && (flags & (1 << 19)))
+                OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 24, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 25, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 0, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 1, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 2, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 3, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 4, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 5, 'o');
+            if (OGTLFlagSet(flags2, 6))
             {
-                [is readInt64];
+                OGTLTakeInt64(is);
                 [is readInt32];
             }
-            if (flags2 & (1 << 8))
-                [is readInt32];
-            if (flags2 & (1 << 11))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 12))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 14))
-                [is readInt64];
-            if (flags2 & (1 << 15))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 17))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 18))
+            OGTLSkipFlagged(is, environment, error, flags2, 8, 'i');
+            OGTLSkipFlagged(is, environment, error, flags2, 11, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 12, 'o');
+            if (OGTLFlagSet(flags2, 14))
+                result.send_paid_messages_stars = [is readInt64];
+            OGTLSkipFlagged(is, environment, error, flags2, 15, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 17, 'o');
+            if (OGTLFlagSet(flags2, 18))
             {
-                CodexReadObject(is, environment, error);
+                OGTLCoreReadObject(is, environment, error);
                 [is readInt32];
             }
-            if (flags2 & (1 << 20))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 21))
+            OGTLSkipFlagged(is, environment, error, flags2, 20, 'o');
+            if (OGTLFlagSet(flags2, 21))
             {
-                result.saved_music = (TLDocument *)CodexReadObject(is, environment, error);
+                result.saved_music = (TLDocument *)OGTLCoreReadObject(is, environment, error);
             }
-            if (flags2 & (1 << 22))
-                CodexReadObject(is, environment, error);
-            if (flags2 & (1 << 25))
-                [is readInt64];
+            OGTLSkipFlagged(is, environment, error, flags2, 22, 'o');
+            OGTLSkipFlagged(is, environment, error, flags2, 25, 'l');
+            if (signature == (int32_t)0xb90c2afd && (flags2 & (1 << 19)))
+            {
+                int32_t walletCardSignature = [is readInt32];
+                result.wallet_card = [TGTLDynamicObject parseObjectFromStream:is signature:walletCardSignature error:error];
+            }
+            if (signature == (int32_t)0xb90c2afd && (flags2 & (1 << 27)))
+                OGTLCoreReadObject(is, environment, error);
             return result;
         }
-        case (int32_t)0x6c8e1e06:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x120b1ab9:
+        case OGTLCtor(0x8c92b098):
         {
             [is readInt32];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x8c92b098:
-        {
-            [is readInt32];
-            [is readString];
-            int32_t vectorMarker = [is readInt32];
+            OGTLTakeString(is);
+            int32_t vectorMarker = OGTLTakeInt32(is);
             int32_t count = 0;
-            if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-                count = [is readInt32];
-            else if (vectorMarker >= 0 && vectorMarker <= 10000)
-                count = vectorMarker;
-            else
+            if (!OGTLCoreVectorCountForMarker(is, vectorMarker, &count))
             {
                 break;
             }
             for (int32_t i = 0; i < count; i++)
             {
-                int32_t itemSignature = [is readInt32];
-                if (itemSignature == (int32_t)0x120b1ab9)
+                int32_t itemSignature = OGTLTakeInt32(is);
+                if (itemSignature == OGTLCtor(0x120b1ab9))
                 {
                     [is readInt32];
                     [is readInt32];
                 }
                 else
                 {
-                    TLMetaClassStore::constructObject(is, itemSignature, environment, nil, error);
-                    if (error != nil && *error != nil)
+                    OGTLCoreBuildObject(is, itemSignature, environment, error);
+                    if (OGTLCoreFailed(error))
                         break;
                 }
             }
             break;
         }
-        case (int32_t)0x5a0a066d:
+        case OGTLCtor(0x6f8b32aa):
+        case OGTLCtor(0xc4e5921e):
         {
             int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 4, 'v');
+            if (signature == (int32_t)0xc4e5921e && (OGTLFlagSet(flags, 6)))
+                OGTLCoreReadObjectVector(is, environment, error);
             break;
         }
-        case (int32_t)0xac5c1af7:
+        case OGTLCtor(0x13659eb0):
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            [is readString];
+            OGTLTakeString(is);
+            OGTLCoreReadObject(is, environment, error);
+            [is readInt32];
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 's');
+            if (flags & (1 << 2)) OGTLCoreReadObject(is, environment, error);
+            if (OGTLFlagSet(flags, 5)) { [is readInt32]; [is readString]; }
+            OGTLSkipFlagged(is, environment, error, flags, 7, 'b');
+            OGTLSkipFlagged(is, environment, error, flags, 8, 'i');
+            if (flags & (1 << 9)) OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 12, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 13, 'i');
+            if (flags & (1 << 14)) OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 15, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 16, 'i');
+            if (flags & (1 << 17)) { OGTLCoreReadObject(is, environment, error); OGTLCoreReadObject(is, environment, error); }
+            OGTLSkipFlagged(is, environment, error, flags, 19, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 20, 'i');
+            if (OGTLFlagSet(flags, 23)) { [is readInt32]; [is readInt32]; }
             break;
         }
-        case (int32_t)0x21108ff7:
+        case OGTLCtor(0x6c207376):
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 4))
-                CodexReadInt64Vector(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'o');
+            OGTLCoreReadObject(is, environment, error);
+            OGTLCoreReadObject(is, environment, error);
+            OGTLTakeDouble(is);
             break;
         }
-        case (int32_t)0xe519abab:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0xc9b9e2b9:
-        case (int32_t)0xc3f2f501:
-            break;
-        case (int32_t)0xcc4d9ecc:
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0xef156a5c:
-        {
-            [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x1b0e4f07:
+        case OGTLCtor(0x2e6eab1a):
         {
             int32_t flags = [is readInt32];
+            OGTLTakeString(is);
+            OGTLCoreReadObject(is, environment, error);
             [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt64];
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 3, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 4, 's');
+            if (flags & (1 << 5)) OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 6, 's');
             break;
         }
-        case (int32_t)0x4b3e14d6:
+        case OGTLCtor(0xdd0c66f2):
         {
             int32_t flags = [is readInt32];
-            [is readString];
-            if (flags & (1 << 0))
-                [is readInt64];
-            if (flags & (1 << 2))
-                [is readInt32];
+            OGTLTakeInt64(is);
             [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 4))
-                [is readString];
-            if (flags & (1 << 5))
-                [is readInt32];
-            if (flags & (1 << 6))
-                [is readInt64];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
+            if (flags & (1 << 2)) OGTLCoreReadObject(is, environment, error);
             break;
         }
-        case (int32_t)0x8f34b2f5:
+        case OGTLCtor(0x19a13f71):
         {
             int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
+            OGTLTakeString(is);
             [is readInt32];
+            OGTLTakeInt64(is);
             [is readInt32];
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            OGTLTakeInt64(is);
+            OGTLTakeInt64(is);
             break;
         }
-        case (int32_t)0xfebe5491:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x206ad49e:
-        case (int32_t)0x1f0c1ad9:
-            break;
-        case (int32_t)0xdc6cfcf0:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xad628cc8:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0xee479c64:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xcba9a52f:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x49b92a26:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x221bb5e4:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0xcae68768:
-        case (int32_t)0xfd5e12bd:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x257e962b:
+        case OGTLCtor(0xb4d5d859):
         {
             int32_t flags = [is readInt32];
             [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                [is readInt32];
-            [is readString];
-            [is readInt64];
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
             break;
         }
-        case (int32_t)0xeb983f8f:
+        case OGTLCtor(0xc69708d3):
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
+            OGTLTakeBytes(is);
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 's');
             break;
         }
-        case (int32_t)0x4367daa0:
+        case OGTLCtor(0x9325705a):
         {
             int32_t flags = [is readInt32];
             [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt64];
-            if (flags & (1 << 4))
-                [is readString];
+            OGTLTakeString(is);
+            if (flags & (1 << 0)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 1)) OGTLCoreReadObject(is, environment, error);
             break;
         }
-        case (int32_t)0xe175e66f:
+        case OGTLCtor(0x1a8afc7e):
         {
             int32_t flags = [is readInt32];
             [is readInt32];
-            if (flags & (1 << 3))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt64];
+            OGTLCoreReadObject(is, environment, error);
             [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt32];
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'l');
             break;
         }
-        case (int32_t)0xb2539d54:
-            [is readInt64];
+        case OGTLCtor(0x44e56023):
+        {
+            int32_t flags = [is readInt32];
+            OGTLTakeString(is);
+            OGTLTakeInt64(is);
             [is readInt32];
-            [is readInt32];
-            [is readInt32];
+            OGTLCoreReadInt32Vector(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
             break;
-        case (int32_t)0x9a9d77e0:
-            [is readInt64];
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
+        }
+        case OGTLCtor(0xcff63ea9):
+        {
+            int32_t flags = [is readInt32];
+            OGTLTakeInt64(is);
+            OGTLTakeInt64(is);
+            OGTLTakeString(is);
+            OGTLTakeString(is);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'l');
+            OGTLSkipFlagged(is, environment, error, flags, 4, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'l');
+            if (flags & (1 << 5)) OGTLCoreReadObject(is, environment, error);
             break;
-        case (int32_t)0x86f8613c:
+        }
+        case OGTLCtor(0x933ca597):
+        {
+            int32_t flags = [is readInt32];
+            OGTLTakeString(is);
+            OGTLTakeString(is);
+            OGTLTakeString(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'l');
+            break;
+        }
+        case OGTLCtor(0x7dbf8673):
+        {
+            int32_t flags = [is readInt32];
+            OGTLTakeBytes(is);
+            OGTLTakeString(is);
+            OGTLTakeString(is);
+            OGTLTakeString(is);
+            if (flags & (1 << 1)) OGTLCoreReadObjectVector(is, environment, error);
+            if (flags & (1 << 6)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 14)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 13)) OGTLCoreReadObject(is, environment, error);
+            OGTLTakeString(is);
+            OGTLSkipFlagged(is, environment, error, flags, 7, 's');
+            OGTLSkipFlagged(is, environment, error, flags, 8, 's');
+            if (OGTLFlagSet(flags, 15)) { [is readInt32]; [is readInt32]; }
+            break;
+        }
+        case OGTLCtor(0xffda656d):
+        {
+            int32_t flags = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            break;
+        }
+        case OGTLCtor(0x31bd492d):
         {
             int32_t flags = [is readInt32];
             [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
             break;
         }
-        case (int32_t)0xc448415c:
+        case OGTLCtor(0x5f2d1df2):
         {
             int32_t flags = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 3, 's');
             [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
+            OGTLTakeString(is);
+            OGTLTakeInt64(is);
+            OGTLTakeString(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
             break;
         }
-        case (int32_t)0x9ae228e2:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x4959427a:
+        case OGTLCtor(0x71e4ea58):
         {
             int32_t flags = [is readInt32];
+            if (flags & (1 << 0)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 1)) OGTLCoreReadObject(is, environment, error);
+            if (flags & (1 << 2)) OGTLCoreReadObject(is, environment, error);
+            OGTLCoreReadObject(is, environment, error);
             [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            [is readString];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadInt32Vector(is);
             break;
         }
-        case (int32_t)0xe7058e7f:
-        case (int32_t)0x8a480e27:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x50cd067c:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x1f2bf4a:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xedf3add0:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x93037e20:
+        case OGTLCtor(0x98613ebf):
         {
             int32_t flags = [is readInt32];
+            OGTLTakeString(is);
+            OGTLTakeString(is);
             [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'l');
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
             break;
         }
-        case (int32_t)0xb8ea86a9:
-            [is readInt64];
-            break;
-        case (int32_t)0x26219a58:
-            CodexReadInt32Vector(is);
-            break;
-        case (int32_t)0x767d61eb:
-            CodexReadInt32Vector(is);
-            CodexReadInt32Vector(is);
-            CodexReadInt32Vector(is);
-            break;
-        case (int32_t)0xadec6ebe:
+        case OGTLCtor(0xea29055d):
         {
             int32_t flags = [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 4))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x2ba1f5ce:
-            break;
-        case (int32_t)0x00f8ed08:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x64407ea7:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xf83ae221:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x44ba9dd9:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xc01f6fe8:
-            [is readInt32];
-            break;
-        case (int32_t)0xcb6ff828:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x889b59ef:
-            break;
-        case (int32_t)0x3259950a:
-            CodexReadObjectVector(is, environment, error);
-            [is readInt64];
-            break;
-        case (int32_t)0x3bb842ac:
-            [is readInt32];
-            break;
-        case (int32_t)0x2aee9191:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                [is readString];
-            [is readString];
-            break;
-        }
-        case (int32_t)0x6f8b32aa:
-        case (int32_t)0xc4e5921e:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 4))
-                CodexReadObjectVector(is, environment, error);
-            if (signature == (int32_t)0xc4e5921e && (flags & (1 << 6)))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x0194cb3b:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x832175e0:
-        {
-            [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x033ed001:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                [is readInt32];
-            if (flags & (1 << 2))
-                [is readString];
-            break;
-        }
-        case (int32_t)0x17d7f87b:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x09c469cd:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xb88cf373:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 4))
-                CodexReadInt64Vector(is);
-            if (flags & (1 << 6))
-                CodexReadInt64Vector(is);
-            break;
-        }
-        case (int32_t)0x1d998733:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x114ff30d:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x628c9224:
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0xb4ae666f:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xec43a2d1:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x9a23af21:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x93c3e27e:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 0))
-                [is readInt64];
-            [is readInt64];
-            if (flags & (1 << 1))
-                [is readInt64];
-            break;
-        }
-        case (int32_t)0xd1ed9a5b:
-            break;
-        case (int32_t)0xbddb616e:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xb89bfccf:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-            {
-                [is readString];
-                CodexReadObject(is, environment, error);
-            }
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x95f2bfe4:
-        case (int32_t)0xb457b375:
-        case (int32_t)0x7b560a0b:
-        case (int32_t)0x250dbaf8:
-        case (int32_t)0xe92fd902:
-        case (int32_t)0x60682812:
-        case (int32_t)0xf9677aad:
-            break;
-        case (int32_t)0xd80da15d:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x0bd915c0:
-        case (int32_t)0x5e0589f1:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readString];
-            [is readString];
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x13659eb0:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0)) [is readString];
-            if (flags & (1 << 1)) [is readString];
-            if (flags & (1 << 2)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 5)) { [is readInt32]; [is readString]; }
-            if (flags & (1 << 7)) [is readBytes];
-            if (flags & (1 << 8)) [is readInt32];
-            if (flags & (1 << 9)) CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 12)) [is readInt32];
-            if (flags & (1 << 13)) [is readInt32];
-            if (flags & (1 << 14)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 15)) [is readInt32];
-            if (flags & (1 << 16)) [is readInt32];
-            if (flags & (1 << 17)) { CodexReadObject(is, environment, error); CodexReadObject(is, environment, error); }
-            if (flags & (1 << 19)) [is readInt32];
-            if (flags & (1 << 20)) [is readInt32];
-            if (flags & (1 << 23)) { [is readInt32]; [is readInt32]; }
-            break;
-        }
-        case (int32_t)0x6c9ce8ed:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readString];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x6c207376:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readDouble];
-            break;
-        }
-        case (int32_t)0x1dab80b7:
-        case (int32_t)0x394e7f21:
-            [is readString];
-            break;
-        case (int32_t)0x5416d58:
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0x2e6eab1a:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 3)) [is readString];
-            if (flags & (1 << 4)) [is readString];
-            if (flags & (1 << 5)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 6)) [is readString];
-            break;
-        }
-        case (int32_t)0x94ce852a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 2))
-                [is readString];
-            [is readString];
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x54236209:
-            [is readInt32];
-            [is readInt32];
-            [is readInt64];
-            break;
-        case (int32_t)0xdd0c66f2:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 0)) [is readInt32];
-            if (flags & (1 << 1)) [is readInt32];
-            if (flags & (1 << 2)) CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x19a13f71:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt32];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 0)) [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x98d5ea1d:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xb4d5d859:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0)) [is readString];
-            break;
-        }
-        case (int32_t)0xf93cd45c:
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            break;
-        case (int32_t)0x1e109708:
-            [is readInt64];
-            break;
-        case (int32_t)0xe581e4e9:
-            break;
-        case (int32_t)0xb4f67e93:
-            [is readInt64];
-            break;
-        case (int32_t)0xa0624cf7:
-            [is readInt32];
-            break;
-        case (int32_t)0xc69708d3:
-        {
-            int32_t flags = [is readInt32];
-            [is readBytes];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0)) [is readString];
-            if (flags & (1 << 1)) [is readString];
-            break;
-        }
-        case (int32_t)0xea32b4b1:
-            break;
-        case (int32_t)0xeb032884:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xc387c04e:
-            [is readInt32];
-            break;
-        case (int32_t)0xe7e82e12:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readString];
-            break;
-        case (int32_t)0x0e8e37e5:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0x9325705a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readString];
-            if (flags & (1 << 0)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 1)) CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xc3987a3a:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x374fa7ad:
-            break;
-        case (int32_t)0xd5e58274:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x87e5dfe4:
-            [is readString];
-            break;
-        case (int32_t)0x1a8afc7e:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0)) [is readInt64];
-            break;
-        }
-        case (int32_t)0xee430c85:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x9d1dbd26:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xda2ad647:
-            [is readBytes];
-            [is readInt64];
-            [is readInt64];
-            break;
-        case (int32_t)0x59e65335:
-            break;
-        case (int32_t)0x44e56023:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            CodexReadInt32Vector(is);
-            if (flags & (1 << 0)) [is readInt32];
-            break;
-        }
-        case (int32_t)0x90d7adfa:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xcff63ea9:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 1)) [is readInt64];
-            if (flags & (1 << 4)) [is readString];
-            if (flags & (1 << 2)) [is readInt32];
-            if (flags & (1 << 3)) [is readInt64];
-            if (flags & (1 << 5)) CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x9bad6414:
-            [is readString];
-            [is readInt64];
-            [is readString];
-            break;
-        case (int32_t)0xc1f46103:
-            break;
-        case (int32_t)0x6c9d0efe:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xf1d628ec:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x933ca597:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 0)) [is readInt64];
-            break;
-        }
-        case (int32_t)0x79eb8cb3:
-        {
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0xbaf39d8b:
-        {
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x7dbf8673:
-        {
-            int32_t flags = [is readInt32];
-            [is readBytes];
-            [is readString];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 1)) CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 6)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 14)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 13)) CodexReadObject(is, environment, error);
-            [is readString];
-            if (flags & (1 << 7)) [is readString];
-            if (flags & (1 << 8)) [is readString];
-            if (flags & (1 << 15)) { [is readInt32]; [is readInt32]; }
-            break;
-        }
-        case (int32_t)0xffda656d:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0)) [is readInt32];
-            if (flags & (1 << 1)) [is readInt32];
-            if (flags & (1 << 2)) [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x1839490f:
-            break;
-        case (int32_t)0x31bd492d:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0)) [is readString];
-            break;
-        }
-        case (int32_t)0xc077ec01:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-            {
-                CodexReadObject(is, environment, error);
-                CodexReadObject(is, environment, error);
-            }
-            break;
-        }
-        case (int32_t)0x9f071957:
-        case (int32_t)0xb06fdbdf:
-        case (int32_t)0xd08ce645:
-        case (int32_t)0x481eadfa:
-        case (int32_t)0x6fb4ad87:
-            break;
-        case (int32_t)0x768e3aad:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x90c467d1:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xeafdf716:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x5f2d1df2:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3)) [is readString];
-            [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 0)) [is readString];
-            break;
-        }
-        case (int32_t)0xb81c7034:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x367617d3:
-        {
-            [is readInt32];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x43b46b20:
-            [is readInt32];
-            break;
-        case (int32_t)0x7a1e11d1:
-            [is readInt64];
-            CodexReadInt64Vector(is);
-            break;
-        case (int32_t)0x7a9abda9:
-        case (int32_t)0x80d26cc7:
-            [is readString];
-            [is readInt64];
-            CodexSkipStringVector(is);
-            break;
-        case (int32_t)0x093bcf34:
-            [is readString];
-            [is readInt64];
-            break;
-        case (int32_t)0x881fb94b:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xa26156c0:
-            [is readInt64];
-            [is readString];
-            break;
-        case (int32_t)0xc556a45d:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xd90d8dfe:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0xcfb9d957:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 1))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            break;
-        }
-        case (int32_t)0x5334759c:
-            [is readString];
-            CodexReadObjectVector(is, environment, error);
-            CodexSkipStringVector(is);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x4345be73:
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0x527d22eb:
-        case (int32_t)0xbbf51685:
-            break;
-        case (int32_t)0x922e55a9:
-        case (int32_t)0xdb909ec2:
-        case (int32_t)0x96d074fd:
-            [is readString];
-            break;
-        case (int32_t)0x2b96cd1b:
-            [is readString];
-            break;
-        case (int32_t)0xe1bb0d61:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x3fc9053b:
-            [is readString];
-            break;
-        case (int32_t)0x6ebdff91:
-            [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            break;
-        case (int32_t)0xbac3a61a:
-        case (int32_t)0x4b9e22a0:
-            break;
-        case (int32_t)0x71e4ea58:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 1)) CodexReadObject(is, environment, error);
-            if (flags & (1 << 2)) CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x98613ebf:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            [is readInt32];
-            if (flags & (1 << 0)) [is readInt64];
-            if (flags & (1 << 1)) [is readInt32];
-            break;
-        }
-        case (int32_t)0x0a339f0b:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0xdaad85b0:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadInt64Vector(is);
-            if (flags & (1 << 1))
-                CodexSkipStringVector(is);
-            if (flags & (1 << 3))
-                [is readString];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xc6991068:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 3))
-                [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadInt64Vector(is);
-            [is readInt32];
-            if (flags & (1 << 1))
-                [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x4ba3a95a:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x3e0b5b6a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0xea29055d:
-        {
-            int32_t flags = [is readInt32];
-            int64_t channelId = [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            NSArray *messages = CodexReadInt32Vector(is);
+            int64_t channelId = OGTLTakeInt64(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            NSArray *messages = OGTLCoreReadInt32Vector(is);
             TLUpdate$updateChannelReadMessagesContents *result = [[TLUpdate$updateChannelReadMessagesContents alloc] init];
             result.channel_id = channelId;
             result.messages = messages;
             return result;
         }
-        case (int32_t)0xf8227181:
+        case OGTLCtor(0xf8227181):
         {
             int32_t flags = [is readInt32];
-            NSArray *messages = CodexReadInt32Vector(is);
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            TLUpdate$updateReadMessagesContents *result = [[TLUpdate$updateReadMessagesContents alloc] init];
+            NSArray *messages = OGTLCoreReadInt32Vector(is);
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            TLUpdate$updateReadMessagesContents *result = OGTLNewObject(TLUpdate$updateReadMessagesContents);
             result.messages = messages;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0xebe07752:
+        case OGTLCtor(0xebe07752):
         {
             int32_t flags = [is readInt32];
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
-            if ([peer isKindOfClass:[TLPeer$peerUser class]])
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            if (OGTLCoreIsKind(peer, [TLPeer$peerUser class]))
             {
                 TLUpdate$updateUserBlocked *result = [[TLUpdate$updateUserBlocked alloc] init];
                 result.user_id = ((TLPeer$peerUser *)peer).user_id;
@@ -4149,137 +2562,86 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             }
             return nil;
         }
-        case (int32_t)0x20529438:
+        case OGTLCtor(0x635b4c09):
         {
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x635b4c09:
-        {
-            int64_t channelId = [is readInt64];
+            int64_t channelId = OGTLTakeInt64(is);
             TLUpdate$updateChannel *result = [[TLUpdate$updateChannel alloc] init];
             result.channel_id = channelId;
             return result;
         }
-        case (int32_t)0x922e6e10:
+        case OGTLCtor(0x922e6e10):
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            int64_t channelId = [is readInt64];
-            int32_t maxId = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            int64_t channelId = OGTLTakeInt64(is);
+            int32_t maxId = OGTLTakeInt32(is);
             [is readInt32];
             [is readInt32];
-            TLUpdate$updateReadChannelInbox *result = [[TLUpdate$updateReadChannelInbox alloc] init];
+            TLUpdate$updateReadChannelInbox *result = OGTLNewObject(TLUpdate$updateReadChannelInbox);
             result.channel_id = channelId;
-            result.max_id = maxId;
+            [result setMax_id:maxId];
             return result;
         }
-        case (int32_t)0xf74e932b:
-        {
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x9c974fdf:
+        case OGTLCtor(0x9c974fdf):
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
-            int32_t maxId = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            TLPeer *peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            int32_t maxId = OGTLTakeInt32(is);
             [is readInt32];
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
-            TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
-            result.peer = peer;
-            result.max_id = maxId;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
+            TLUpdate$updateReadHistoryInbox *result = OGTLNewObject(TLUpdate$updateReadHistoryInbox);
+            [result setPeer:peer];
+            [result setMax_id:maxId];
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0xb75f99a9:
+        case OGTLCtor(0xb75f99a9):
         {
-            int64_t channelId = [is readInt64];
-            int32_t maxId = [is readInt32];
+            int64_t channelId = OGTLTakeInt64(is);
+            int32_t maxId = OGTLTakeInt32(is);
             TLUpdate$updateReadChannelOutbox *result = [[TLUpdate$updateReadChannelOutbox alloc] init];
             result.channel_id = channelId;
-            result.max_id = maxId;
+            [result setMax_id:maxId];
             return result;
         }
-        case (int32_t)0xf226ac08:
+        case OGTLCtor(0xf226ac08):
         {
-            int64_t channelId = [is readInt64];
-            int32_t messageId = [is readInt32];
-            int32_t views = [is readInt32];
+            int64_t channelId = OGTLTakeInt64(is);
+            int32_t messageId = OGTLTakeInt32(is);
+            int32_t views = OGTLTakeInt32(is);
             TLUpdate$updateChannelMessageViews *result = [[TLUpdate$updateChannelMessageViews alloc] init];
             result.channel_id = channelId;
             result.n_id = messageId;
             result.views = views;
             return result;
         }
-        case (int32_t)0x6f7863f4:
-            break;
-        case (int32_t)0x86fccf85:
-        {
-            [is readInt32];
-            [is readInt64];
-            break;
-        }
-        case (int32_t)0x74c34319:
+        case OGTLCtor(0x98657f0d):
         {
             int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 0))
-                [is readString];
-            break;
-        }
-        case (int32_t)0x50a04e45:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x98657f0d:
-        {
-            int32_t flags = [is readInt32];
-            int32_t firstMarker = [is readInt32];
-            if (firstMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR && (firstMarker < 0 || firstMarker > 10000))
+            int32_t firstMarker = OGTLTakeInt32(is);
+            if (!OGTLCoreMarkerStartsVector(firstMarker))
             {
-                CodexSkipStringWithFirstWord(is, firstMarker);
-                firstMarker = [is readInt32];
+                OGTLCoreSkipStringWithFirstWord(is, firstMarker);
+                firstMarker = OGTLTakeInt32(is);
             }
-            CodexReadObjectVectorWithMarker(is, firstMarker, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 3))
-                [is readInt32];
+            OGTLCoreReadObjectVectorWithMarker(is, firstMarker, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLCoreReadObjectVector(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'i');
             break;
         }
-        case (int32_t)0x1759c560:
+        case OGTLCtor(0x8c88c923):
         {
             int32_t flags = [is readInt32];
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            break;
-        }
-        case (int32_t)0x8c88c923:
-        {
-            int32_t flags = [is readInt32];
-            int64_t channelId = [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            TLPeer *fromPeer = (TLPeer *)CodexReadObject(is, environment, error);
-            TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
+            int64_t channelId = OGTLTakeInt64(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            TLPeer *fromPeer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+            TLSendMessageAction *action = (TLSendMessageAction *)OGTLCoreReadObject(is, environment, error);
             int64_t userId = 0;
-            if ([fromPeer isKindOfClass:[TLPeer$peerUser class]])
+            if (OGTLCoreIsKind(fromPeer, [TLPeer$peerUser class]))
                 userId = ((TLPeer$peerUser *)fromPeer).user_id;
             if (userId == 0)
                 return nil;
@@ -4289,515 +2651,44 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.action = action;
             return result;
         }
-        case (int32_t)0xb05ac6b1:
-            break;
-        case (int32_t)0x7c8fe7b6:
+        case OGTLCtor(0x19360dc0):
         {
-            [is readInt32];
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x39f23300:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xa8718dc5:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 5))
-            {
-                [is readInt32];
-                [is readInt32];
-            }
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xf259a80b:
-            [is readString];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x65a0fa4d:
-        case (int32_t)0x031f9590:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xef1751b5:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x804361ea:
-            [is readInt64];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x1e148390:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xbf4dea82:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x76768bed:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x16115a96:
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xa44f3ef6:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x25e073fc:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xe4e88011:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xb92fb6cd:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x9a8ae1e1:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x5e068047:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x98dd8936:
-            [is readString];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x6f747657:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0xfffe1bac:
-        case (int32_t)0x65427b82:
-        case (int32_t)0xf888fa1a:
-        case (int32_t)0x8b73e763:
-        case (int32_t)0xf7e8d89b:
-        case (int32_t)0xece9814b:
-        case (int32_t)0x21461b5d:
-        case (int32_t)0xf6a5f82f:
-            break;
-        case (int32_t)0xb8905fb2:
-        case (int32_t)0xe4621141:
-        case (int32_t)0x6b134e8e:
-        case (int32_t)0x41c87565:
-            CodexReadInt64Vector(is);
-            break;
-        case (int32_t)0x2dd14edc:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            [is readInt64];
-            [is readInt64];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 4))
-            {
-                CodexReadObjectVector(is, environment, error);
-                [is readInt32];
-                [is readInt32];
-            }
-            if (flags & (1 << 8))
-                [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x4f2b9479:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0xa3d1cb80:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0x8c79b63c:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x1b2286b8:
-            [is readString];
-            break;
-        case (int32_t)0x8935fc73:
-            [is readInt64];
-            break;
-        case (int32_t)0x79f5d419:
-        case (int32_t)0x523da4eb:
-        case (int32_t)0xeafc32bc:
-            break;
-        case (int32_t)0x52928bca:
-            [is readInt32];
-            break;
-        case (int32_t)0x661d4037:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xe9baa668:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x19360dc0:
-        {
-            NSArray *folderPeers = CodexReadObjectVector(is, environment, error);
-            int32_t pts = [is readInt32];
-            int32_t ptsCount = [is readInt32];
-            TLUpdate$updateFolderPeers *result = [[TLUpdate$updateFolderPeers alloc] init];
+            NSArray *folderPeers = OGTLCoreReadObjectVector(is, environment, error);
+            int32_t pts = OGTLTakeInt32(is);
+            int32_t ptsCount = OGTLTakeInt32(is);
+            TLUpdate$updateFolderPeers *result = OGTLNewObject(TLUpdate$updateFolderPeers);
             result.folder_peers = folderPeers;
-            result.pts = pts;
-            result.pts_count = ptsCount;
+            [result setPts:pts];
+            [result setPts_count:ptsCount];
             return result;
         }
-        case (int32_t)0x695c9e7c:
-        {
-            [is readInt64];
-            [is readInt32];
-            [is readInt32];
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0x83d60fc2:
+        case OGTLCtor(0xa03e5b85):
+        case OGTLCtor(0x86b40b08):
         {
             int32_t flags = [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 0))
-                [is readInt64];
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 3))
-                [is readInt32];
+            if (signature == (int32_t)0x86b40b08 && (OGTLFlagSet(flags, 3)))
+                OGTLTakeString(is);
             break;
         }
-        case (int32_t)0x85dd99d1:
+        case OGTLCtor(0x17399fad):
         {
             int32_t flags = [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 3))
-                [is readString];
+            OGTLTakeDouble(is);
+            [is readInt32];
+            [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 4, 'd');
             break;
         }
-        case (int32_t)0x48a30254:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xa03e5b85:
-        case (int32_t)0x86b40b08:
+        case OGTLCtor(0xd38ff1c2):
         {
             int32_t flags = [is readInt32];
-            if (signature == (int32_t)0x86b40b08 && (flags & (1 << 3)))
-                [is readString];
+            OGTLTakeDouble(is);
+            [is readInt32];
+            [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
             break;
         }
-        case (int32_t)0x77608b83:
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0xa2fa4880:
-        case (int32_t)0xb16a6c29:
-        case (int32_t)0xfc796b3f:
-        case (int32_t)0x50f41ccf:
-        case (int32_t)0xafd93fbb:
-            [is readString];
-            break;
-        case (int32_t)0x258aff05:
-        case (int32_t)0xa0c0505c:
-        case (int32_t)0x13767230:
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0x35bbdb6b:
-            [is readInt32];
-            [is readString];
-            [is readBytes];
-            break;
-        case (int32_t)0x93b9fbb5:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        case (int32_t)0x10b78d29:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            if (flags & (1 << 0))
-                [is readString];
-            [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xd02e7fd4:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            if (flags & (1 << 1))
-                [is readString];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xbbc7515d:
-            [is readInt32];
-            [is readString];
-            break;
-        case (int32_t)0x308660c1:
-            [is readString];
-            [is readInt64];
-            break;
-        case (int32_t)0xe988037b:
-            [is readString];
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x53d7bfd8:
-            [is readString];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x5f3b8a00:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xc9f06e1b:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x339bef6c:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x3e81e078:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                [is readString];
-            if (flags & (1 << 2))
-                [is readString];
-            break;
-        }
-        case (int32_t)0xc9662d05:
-            [is readInt32];
-            [is readString];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            break;
-        case (int32_t)0x6c37c15c:
-            [is readInt32];
-            [is readInt32];
-            break;
-        case (int32_t)0x11b58939:
-        case (int32_t)0x9801d2f7:
-            break;
-        case (int32_t)0x17399fad:
-        {
-            int32_t flags = [is readInt32];
-            [is readDouble];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 4))
-                [is readDouble];
-            break;
-        }
-        case (int32_t)0x15590068:
-            [is readString];
-            break;
-        case (int32_t)0xfd149899:
-        {
-            [is readInt32];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xd38ff1c2:
-        {
-            int32_t flags = [is readInt32];
-            [is readDouble];
-            [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 2))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0xeeca5ce3:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 1))
-                [is readString];
-            [is readString];
-            [is readInt32];
-            [is readInt32];
-            [is readString];
-            break;
-        }
-        case (int32_t)0x751f3146:
-            [is readString];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x58747131:
-        {
-            [is readInt64];
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-                [is readInt32];
-            break;
-        }
-        case (int32_t)0xff16e2ca:
-            CodexReadObject(is, environment, error);
-            [is readBytes];
-            break;
-        case (int32_t)0x7adf2420:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 4))
-            {
-                [is readString];
-                CodexReadObjectVector(is, environment, error);
-            }
-            break;
-        }
-        case (int32_t)0x3b6ddad2:
-            [is readInt32];
-            [is readBytes];
-            [is readInt32];
-            break;
-        case (int32_t)0x6a7e7366:
-        {
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (error != NULL && *error != nil)
-                return nil;
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0xd9c6dc1a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt64];
-            if (flags & (1 << 1))
-                [is readInt32];
-            [is readInt32];
-            [is readString];
-            if (flags & (1 << 2))
-                CodexReadObjectVector(is, environment, error);
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 6))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x20bcbba1:
-        case (int32_t)0x4bbb8f01:
-        {
-            CodexReadObject(is, environment, error);
-            if (error != NULL && *error != nil)
-                return nil;
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0x56dbfcf8:
-        {
-            CodexReadObject(is, environment, error);
-            CodexReadInt32Vector(is);
-            if (error != NULL && *error != nil)
-                return nil;
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0x6c0d8e23:
-        {
-            [is readInt32];
-            [is readInt64];
-            [is readBytes];
-            [is readInt32];
-            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
-            result.ignoredSignature = signature;
-            return result;
-        }
-        case (int32_t)0xbe376999:
-        case (int32_t)0x2f65c8e4:
-            [is readInt64];
-            break;
         default:
             break;
     }
@@ -4806,56 +2697,37 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexPhoneConnectionParser : NSObject <TLObject>
+@interface OGTLPhoneConnectionParser : OGTLManualParser
 @end
 
-@implementation TLCodexPhoneConnectionParser
+@implementation OGTLPhoneConnectionParser
 
-- (int32_t)TLconstructorSignature
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)error
 {
-    return 0;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
-}
-
-- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
-{
-    return nil;
-}
-
-- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
-{
-}
-
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
-{
-    if (signature == (int32_t)0x9cc123c7)
+    if (signature == OGTLCtor(0x9cc123c7))
     {
-        TLPhoneConnection$phoneConnection *result = [[TLPhoneConnection$phoneConnection alloc] init];
+        TLPhoneConnection$phoneConnection *result = OGTLNewObject(TLPhoneConnection$phoneConnection);
         result.flags = [is readInt32];
         result.n_id = [is readInt64];
-        result.ip = [is readString];
-        result.ipv6 = [is readString];
-        result.port = [is readInt32];
-        result.peer_tag = [is readBytes];
+        result.ip = OGTLTakeString(is);
+        result.ipv6 = OGTLTakeString(is);
+        result.port = OGTLTakeInt32(is);
+        result.peer_tag = OGTLTakeBytes(is);
         if (error != NULL)
             *error = nil;
         return result;
     }
     
-    if (signature == (int32_t)0x635fe375)
+    if (signature == OGTLCtor(0x635fe375))
     {
-        TLPhoneConnection$phoneConnectionWebrtc *result = [[TLPhoneConnection$phoneConnectionWebrtc alloc] init];
+        TLPhoneConnection$phoneConnectionWebrtc *result = OGTLNewObject(TLPhoneConnection$phoneConnectionWebrtc);
         result.flags = [is readInt32];
         result.n_id = [is readInt64];
-        result.ip = [is readString];
-        result.ipv6 = [is readString];
-        result.port = [is readInt32];
+        result.ip = OGTLTakeString(is);
+        result.ipv6 = OGTLTakeString(is);
+        result.port = OGTLTakeInt32(is);
         result.username = [is readString];
-        result.password = [is readString];
+        result.password = OGTLTakeString(is);
         if (error != NULL)
             *error = nil;
         return result;
@@ -4867,328 +2739,241 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexModernWebPageEmptyParser : TLWebPage$webPageEmpty
+@interface OGTLModernWebPageEmptyParser : TLWebPage$webPageEmpty
 @end
 
-@implementation TLCodexModernWebPageEmptyParser
+@implementation OGTLModernWebPageEmptyParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernWebPageEmptyParser *result = [[TLCodexModernWebPageEmptyParser alloc] init];
+    OGTLModernWebPageEmptyParser *result = [[OGTLModernWebPageEmptyParser alloc] init];
     int32_t flags = [is readInt32];
     result.n_id = [is readInt64];
-    if (flags & (1 << 0))
-        [is readString];
+    OGTLSkipFlagged(is, environment, error, flags, 0, 's');
     return result;
 }
 
 @end
 
-@interface TLCodexModernWebPageParser : TLWebPage$webPage
+@interface OGTLModernWebPageParser : TLWebPage$webPage
 @end
 
-@implementation TLCodexModernWebPageParser
+@implementation OGTLModernWebPageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernWebPageParser *result = [[TLCodexModernWebPageParser alloc] init];
+    OGTLModernWebPageParser *result = [[OGTLModernWebPageParser alloc] init];
     int32_t flags = [is readInt32];
-    [is readInt64];
-    [is readString];
-    [is readString];
+    OGTLTakeInt64(is);
+    OGTLTakeString(is);
+    OGTLTakeString(is);
     [is readInt32];
-    if (flags & (1 << 0))
-        [is readString];
-    if (flags & (1 << 1))
-        [is readString];
-    if (flags & (1 << 2))
-        [is readString];
-    if (flags & (1 << 3))
-        [is readString];
-    if (flags & (1 << 4))
-        CodexReadObject(is, environment, error);
-    if (flags & (1 << 5))
+    OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 1, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 2, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 3, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 4, 'o');
+    if (OGTLFlagSet(flags, 5))
     {
-        [is readString];
-        [is readString];
+        OGTLTakeString(is);
+        OGTLTakeString(is);
     }
-    if (flags & (1 << 6))
+    if (OGTLFlagSet(flags, 6))
     {
         [is readInt32];
         [is readInt32];
     }
-    if (flags & (1 << 7))
-        [is readInt32];
-    if (flags & (1 << 8))
-        [is readString];
-    if (flags & (1 << 9))
-        CodexReadObject(is, environment, error);
-    if (flags & (1 << 10))
-        CodexReadObject(is, environment, error);
-    if (flags & (1 << 12))
-        CodexReadObjectVector(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 7, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 8, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 9, 'o');
+    OGTLSkipFlagged(is, environment, error, flags, 10, 'o');
+    OGTLSkipFlagged(is, environment, error, flags, 12, 'v');
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageMediaUnsupportedParser : TLMessageMedia$messageMediaUnsupported
+static const OGTLSkipLayout OGTLMediaUnsupportedSkipLayouts[] =
+{
+    {(int32_t)0x8a53b014, "fo0?v", OGTLSkipResultNone},
+    {(int32_t)0x9f84f49e, "", OGTLSkipResultNone},
+    {(int32_t)0xa8852491, "lv", OGTLSkipResultNone},
+    {(int32_t)0xaa073beb, "fm1?t3?si4?i5?li", OGTLSkipResultNone},
+    {(int32_t)0xca5cab89, "io", OGTLSkipResultNone},
+    {(int32_t)0xceaa3ea1, "fl3?iiiim4?i5?l1?si", OGTLSkipResultNone},
+    {(int32_t)0xf6a548d3, "fss0?o2?isls4?o", OGTLSkipResultNone},
+    {(int32_t)0xfdb19008, "o", OGTLSkipResultNone},
+    {(int32_t)0x2238f214, "fiib3?s3?l4?s5?l", OGTLSkipResultNone},
+    {(int32_t)0x2ec0533f, "osssss", OGTLSkipResultNone},
+    {(int32_t)0x3ded6320, "", OGTLSkipResultNone},
+    {(int32_t)0x773f4e66, "foo0?o", OGTLSkipResultNone}
+};
+
+@interface OGTLModernMessageMediaUnsupportedParser : TLMessageMedia$messageMediaUnsupported
 @end
 
-@implementation TLCodexModernMessageMediaUnsupportedParser
+@implementation OGTLModernMessageMediaUnsupportedParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    switch (signature)
+    const OGTLSkipLayout *skipLayout = OGTLFindSkipLayout(OGTLMediaUnsupportedSkipLayouts, sizeof(OGTLMediaUnsupportedSkipLayouts) / sizeof(OGTLMediaUnsupportedSkipLayouts[0]), signature);
+    if (skipLayout != NULL)
+        OGTLSkipFields(is, skipLayout->layout, environment, error);
+    else
     {
-        case (int32_t)0xf6a548d3:
+        switch (signature)
         {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readString];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 2))
-                [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0x3ded6320:
-        case (int32_t)0x9f84f49e:
-            break;
-        case (int32_t)0x56e0d474:
-        {
-            TLMessageMedia$messageMediaGeo *result = [[TLMessageMedia$messageMediaGeo alloc] init];
-            result.geo = (TLGeoPoint *)CodexReadObject(is, environment, error);
+            case OGTLCtor(0x56e0d474):
+            {
+                TLMessageMedia$messageMediaGeo *result = [[TLMessageMedia$messageMediaGeo alloc] init];
+                result.geo = (TLGeoPoint *)OGTLCoreReadObject(is, environment, error);
 
-            if (error != NULL && *error != nil)
-                return nil;
+                if (OGTLCoreFailed(error))
+                    return nil;
 
-            return result;
-        }
-        case (int32_t)0x70322949:
-        {
-            TLMessageMedia$messageMediaContact *result = [[TLMessageMedia$messageMediaContact alloc] init];
-            result.phone_number = [is readString];
-            result.first_name = [is readString];
-            result.last_name = [is readString];
-            result.vcard = [is readString];
+                return result;
+            }
+            case OGTLCtor(0x70322949):
+            {
+                TLMessageMedia$messageMediaContact *result = [[TLMessageMedia$messageMediaContact alloc] init];
+                result.phone_number = [is readString];
+                result.first_name = [is readString];
+                result.last_name = [is readString];
+                result.vcard = [is readString];
 
-            result.user_id = [is readInt64];
+                result.user_id = [is readInt64];
 
-            return result;
+                return result;
+            }
+            default:
+                break;
         }
-        case (int32_t)0x2ec0533f:
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            [is readString];
-            break;
-        case (int32_t)0xfdb19008:
-            CodexReadObject(is, environment, error);
-            break;
-        case (int32_t)0x773f4e66:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xca5cab89:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            break;
-        }
-        case (int32_t)0xaa073beb:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadInt64Vector(is);
-            if (flags & (1 << 1))
-                CodexSkipStringVector(is);
-            if (flags & (1 << 3))
-                [is readString];
-            [is readInt32];
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-                [is readInt64];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xceaa3ea1:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 3))
-                [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            CodexReadInt64Vector(is);
-            if (flags & (1 << 4))
-                [is readInt32];
-            if (flags & (1 << 5))
-                [is readInt64];
-            if (flags & (1 << 1))
-                [is readString];
-            [is readInt32];
-            break;
-        }
-        case (int32_t)0xa8852491:
-            [is readInt64];
-            CodexReadObjectVector(is, environment, error);
-            break;
-        case (int32_t)0x8a53b014:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                CodexReadObjectVector(is, environment, error);
-            break;
-        }
-        default:
-            break;
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
-    return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    return OGTLNewObject(TLMessageMedia$messageMediaUnsupported);
 }
 
 @end
 
-@interface TLCodexModernMessageMediaGeoLiveParser : TLMessageMedia$messageMediaGeoLive
+@interface OGTLModernMessageMediaGeoLiveParser : TLMessageMedia$messageMediaGeoLive
 @end
 
-@implementation TLCodexModernMessageMediaGeoLiveParser
+@implementation OGTLModernMessageMediaGeoLiveParser
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xb940c666;
+    return OGTLCtor(0xb940c666);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessageMediaGeoLiveParser *result = [[TLCodexModernMessageMediaGeoLiveParser alloc] init];
+    OGTLModernMessageMediaGeoLiveParser *result = [[OGTLModernMessageMediaGeoLiveParser alloc] init];
     int32_t flags = [is readInt32];
-    result.geo = (TLGeoPoint *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 0))
-        [is readInt32];
+    result.geo = (TLGeoPoint *)OGTLCoreReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
     result.period = [is readInt32];
-    if (flags & (1 << 1))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageMediaPhotoParser : TLMessageMedia$messageMediaPhoto
+@interface OGTLModernMessageMediaPhotoParser : TLMessageMedia$messageMediaPhoto
 @end
 
-@implementation TLCodexModernMessageMediaPhotoParser
+@implementation OGTLModernMessageMediaPhotoParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessageMediaPhotoParser *result = [[TLCodexModernMessageMediaPhotoParser alloc] init];
+    OGTLModernMessageMediaPhotoParser *result = [[OGTLModernMessageMediaPhotoParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 0))
-        result.photo = (TLPhoto *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 2))
+    if (OGTLFlagSet(flags, 0))
+        result.photo = (TLPhoto *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 2))
         result.ttl_seconds = [is readInt32];
-    if (flags & (1 << 4))
-        CodexReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 4, 'o');
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageMediaDocumentParser : TLMessageMedia$messageMediaDocument
+@interface OGTLModernMessageMediaDocumentParser : TLMessageMedia$messageMediaDocument
 @end
 
-@implementation TLCodexModernMessageMediaDocumentParser
+@implementation OGTLModernMessageMediaDocumentParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessageMediaDocumentParser *result = [[TLCodexModernMessageMediaDocumentParser alloc] init];
+    OGTLModernMessageMediaDocumentParser *result = [[OGTLModernMessageMediaDocumentParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 0))
-        result.document = (TLDocument *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 5))
+    if (OGTLFlagSet(flags, 0))
+        result.document = (TLDocument *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 5))
     {
-        int32_t marker = [is readInt32];
-        CodexReadObjectVectorOrSingleWithMarker(is, marker, environment, error);
-        if (error != nil && *error != nil)
+        int32_t marker = OGTLTakeInt32(is);
+        OGTLCoreReadObjectVectorOrSingleWithMarker(is, marker, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
-    if (flags & (1 << 9))
-        CodexReadObject(is, environment, error);
-    if (flags & (1 << 10))
-        [is readInt32];
-    if (flags & (1 << 2))
+    OGTLSkipFlagged(is, environment, error, flags, 9, 'o');
+    OGTLSkipFlagged(is, environment, error, flags, 10, 'i');
+    if (OGTLFlagSet(flags, 2))
         result.ttl_seconds = [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageMediaWebPageParser : TLMessageMedia$messageMediaWebPage
+@interface OGTLModernMessageMediaWebPageParser : TLMessageMedia$messageMediaWebPage
 @end
 
-@implementation TLCodexModernMessageMediaWebPageParser
+@implementation OGTLModernMessageMediaWebPageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessageMediaWebPageParser *result = [[TLCodexModernMessageMediaWebPageParser alloc] init];
+    OGTLModernMessageMediaWebPageParser *result = [[OGTLModernMessageMediaWebPageParser alloc] init];
     [is readInt32];
-    result.webpage = (TLWebPage *)CodexReadObject(is, environment, error);
+    result.webpage = (TLWebPage *)OGTLCoreReadObject(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageMediaDiceParser : TLMessageMedia$messageMediaUnsupported
+@interface OGTLModernMessageMediaDiceParser : TLMessageMedia$messageMediaUnsupported
 @end
 
-@implementation TLCodexModernMessageMediaDiceParser
+@implementation OGTLModernMessageMediaDiceParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x08cbec07)
+    if (signature == OGTLCtor(0x08cbec07))
     {
         int32_t flags = [is readInt32];
         [is readInt32];
-        [is readString];
-        if (flags & (1 << 0))
-            CodexReadObject(is, environment, error);
+        OGTLTakeString(is);
+        OGTLSkipFlagged(is, environment, error, flags, 0, 'o');
     }
     else
     {
         [is readInt32];
-        [is readString];
+        OGTLTakeString(is);
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
-    return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    return OGTLNewObject(TLMessageMedia$messageMediaUnsupported);
 }
 
 @end
 
-@interface TLCodexTextWithEntitiesValue : NSObject <TLObject>
+@interface OGTLTextWithEntitiesValue : OGTLManualParser
 @property (nonatomic, strong) NSString *text;
 @property (nonatomic, strong) NSArray *entities;
 @end
 
-@implementation TLCodexTextWithEntitiesValue
+@implementation OGTLTextWithEntitiesValue
 - (int32_t)TLconstructorSignature { return (int32_t)0x751f3146; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5228,7 +3013,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-static NSArray *CodexReadPollStringVector(NSInputStream *is, __autoreleasing NSError **error)
+static NSArray *OGTLCoreReadPollStringVector(NSInputStream *is, __autoreleasing NSError **error)
 {
     bool failed = false;
     int32_t marker = [is readInt32:&failed];
@@ -5260,10 +3045,10 @@ static NSArray *CodexReadPollStringVector(NSInputStream *is, __autoreleasing NSE
     return result;
 }
 
-@interface TLCodexTextWithEntitiesParser : NSObject <TLObject>
+@interface OGTLTextWithEntitiesParser : OGTLManualParser
 @end
 
-@implementation TLCodexTextWithEntitiesParser
+@implementation OGTLTextWithEntitiesParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5271,28 +3056,28 @@ static NSArray *CodexReadPollStringVector(NSInputStream *is, __autoreleasing NSE
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexTextWithEntitiesValue *result = [[TLCodexTextWithEntitiesValue alloc] init];
+    OGTLTextWithEntitiesValue *result = [[OGTLTextWithEntitiesValue alloc] init];
     result.text = [is readString];
-    result.entities = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.entities = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 @end
 
-static NSString *CodexPollText(id text)
+static NSString *OGTLCorePollText(id text)
 {
-    if ([text isKindOfClass:[NSString class]])
+    if (OGTLCoreIsKind(text, [NSString class]))
         return text;
-    if ([text isKindOfClass:[TLCodexTextWithEntitiesValue class]])
-        return ((TLCodexTextWithEntitiesValue *)text).text ?: @"";
+    if (OGTLCoreIsKind(text, [OGTLTextWithEntitiesValue class]))
+        return ((OGTLTextWithEntitiesValue *)text).text ?: @"";
     return @"";
 }
 
-@interface TLCodexPollAnswerParser : NSObject <TLObject>
+@interface OGTLPollAnswerParser : OGTLManualParser
 @end
 
-@implementation TLCodexPollAnswerParser
+@implementation OGTLPollAnswerParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5308,28 +3093,28 @@ static NSString *CodexPollText(id text)
         return result;
     }
     result.flags = [is readInt32];
-    id text = CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    id text = OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.text = CodexPollText(text);
+    result.text = OGTLCorePollText(text);
     result.option = [is readBytes];
     if (result.flags & (1 << 0))
-        result.media = CodexReadObject(is, environment, error);
+        result.media = OGTLCoreReadObject(is, environment, error);
     if (result.flags & (1 << 1))
     {
-        result.addedBy = CodexReadObject(is, environment, error);
+        result.addedBy = OGTLCoreReadObject(is, environment, error);
         result.date = [is readInt32];
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 @end
 
-@interface TLCodexPollParser : NSObject <TLObject>
+@interface OGTLPollParser : OGTLManualParser
 @end
 
-@implementation TLCodexPollParser
+@implementation OGTLPollParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5344,21 +3129,21 @@ static NSString *CodexPollText(id text)
         result.question = [is readString];
     else
     {
-        id question = CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        id question = OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.question = CodexPollText(question);
+        result.question = OGTLCorePollText(question);
     }
-    result.answers = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.answers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     if (result.flags & (1 << 4))
         result.closePeriod = [is readInt32];
     if (result.flags & (1 << 5))
         result.closeDate = [is readInt32];
     if (signature == (int32_t)0x966e2dbf && (result.flags & (1 << 12)))
-        result.countries = CodexReadPollStringVector(is, error);
-    if (error != NULL && *error != nil)
+        result.countries = OGTLCoreReadPollStringVector(is, error);
+    if (OGTLCoreFailed(error))
         return nil;
     if (signature != (int32_t)0x86e18161)
         result.pollHash = [is readInt64];
@@ -5366,10 +3151,10 @@ static NSString *CodexPollText(id text)
 }
 @end
 
-@interface TLCodexPollAnswerVotersParser : NSObject <TLObject>
+@interface OGTLPollAnswerVotersParser : OGTLManualParser
 @end
 
-@implementation TLCodexPollAnswerVotersParser
+@implementation OGTLPollAnswerVotersParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5380,21 +3165,21 @@ static NSString *CodexPollText(id text)
     TLCodexPollAnswerVotersValue *result = [[TLCodexPollAnswerVotersValue alloc] init];
     result.flags = [is readInt32];
     result.option = [is readBytes];
-    if (result.flags & (1 << 2))
+    if (OGTLFlagSet(result.flags, 2))
     {
         result.voters = [is readInt32];
-        result.recentVoters = CodexReadObjectVector(is, environment, error);
+        result.recentVoters = OGTLCoreReadObjectVector(is, environment, error);
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 @end
 
-@interface TLCodexPollResultsParser : NSObject <TLObject>
+@interface OGTLPollResultsParser : OGTLManualParser
 @end
 
-@implementation TLCodexPollResultsParser
+@implementation OGTLPollResultsParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -5405,35 +3190,35 @@ static NSString *CodexPollText(id text)
     TLCodexPollResultsValue *result = [[TLCodexPollResultsValue alloc] init];
     result.flags = [is readInt32];
     if (result.flags & (1 << 1))
-        result.results = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+        result.results = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (result.flags & (1 << 2))
+    if (OGTLFlagSet(result.flags, 2))
         result.totalVoters = [is readInt32];
-    if (result.flags & (1 << 3))
-        result.recentVoters = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    if (OGTLFlagSet(result.flags, 3))
+        result.recentVoters = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     if (result.flags & (1 << 4))
     {
         result.solution = [is readString];
-        result.solutionEntities = CodexReadObjectVector(is, environment, error);
+        result.solutionEntities = OGTLCoreReadObjectVector(is, environment, error);
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
     if (signature == (int32_t)0xba7bb15e && (result.flags & (1 << 5)))
-        result.solutionMedia = CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+        result.solutionMedia = OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 @end
 
 
-@interface TLCodexModernMessageMediaPollParser : TLMessageMedia$messageMediaPollCodex
+@interface OGTLModernMessageMediaPollParser : TLMessageMedia$messageMediaPollCodex
 @end
 
-@implementation TLCodexModernMessageMediaPollParser
+@implementation OGTLModernMessageMediaPollParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -5442,23 +3227,23 @@ static NSString *CodexPollText(id text)
     int32_t flags = 0;
     id poll = nil;
     if (firstIsPoll)
-        poll = TLMetaClassStore::constructObject(is, first, environment, nil, error);
+        poll = OGTLCoreBuildObject(is, first, environment, error);
     else
     {
         flags = first;
-        poll = CodexReadObject(is, environment, error);
+        poll = OGTLCoreReadObject(is, environment, error);
     }
-    if (error != NULL && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
-    id results = CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    id results = OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     if (!firstIsPoll && (flags & (1 << 0)))
-        CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (![poll isKindOfClass:[TLCodexPollValue class]] || ![results isKindOfClass:[TLCodexPollResultsValue class]])
-        return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    if (!OGTLCoreIsKind(poll, [TLCodexPollValue class]) || !OGTLCoreIsKind(results, [TLCodexPollResultsValue class]))
+        return OGTLNewObject(TLMessageMedia$messageMediaUnsupported);
     TLMessageMedia$messageMediaPollCodex *result = [[TLMessageMedia$messageMediaPollCodex alloc] init];
     result.poll = poll;
     result.results = results;
@@ -5467,83 +3252,82 @@ static NSString *CodexPollText(id text)
 
 @end
 
-@interface TLCodexUpdateMessagePollParser : TLUpdate$updateMessagePollCodex
+@interface OGTLUpdateMessagePollParser : TLUpdate$updateMessagePollCodex
 @end
 
-@implementation TLCodexUpdateMessagePollParser
+@implementation OGTLUpdateMessagePollParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLUpdate$updateMessagePollCodex *result = [[TLUpdate$updateMessagePollCodex alloc] init];
     int32_t flags = [is readInt32];
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
     {
-        id peer = CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        id peer = OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        if ([peer isKindOfClass:[TLPeer class]])
-            result.peer = peer;
+        if (OGTLCoreIsKind(peer, [TLPeer class]))
+            [result setPeer:peer];
         result.msg_id = [is readInt32];
     }
-    if (flags & (1 << 2))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
     result.poll_id = [is readInt64];
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
     {
-        id poll = CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        id poll = OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        if ([poll isKindOfClass:[TLCodexPollValue class]])
+        if (OGTLCoreIsKind(poll, [TLCodexPollValue class]))
             result.poll = poll;
     }
-    id results = CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    id results = OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if ([results isKindOfClass:[TLCodexPollResultsValue class]])
+    if (OGTLCoreIsKind(results, [TLCodexPollResultsValue class]))
         result.results = results;
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageEntityMentionNameParser : TLMessageEntity$messageEntityMentionName
+@interface OGTLModernMessageEntityMentionNameParser : TLMessageEntity$messageEntityMentionName
 @end
 
-@implementation TLCodexModernMessageEntityMentionNameParser
+@implementation OGTLModernMessageEntityMentionNameParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernMessageEntityMentionNameParser *result = [[TLCodexModernMessageEntityMentionNameParser alloc] init];
-    result.offset = [is readInt32];
-    result.length = [is readInt32];
+    OGTLModernMessageEntityMentionNameParser *result = [[OGTLModernMessageEntityMentionNameParser alloc] init];
+    result.offset = OGTLTakeInt32(is);
+    result.length = OGTLTakeInt32(is);
     result.user_id = [is readInt64];
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageEntityCustomEmojiParser : TLMessageEntity$messageEntityUnknown
+@interface OGTLModernMessageEntityCustomEmojiParser : TLMessageEntity$messageEntityCustomEmoji
 @end
 
-@implementation TLCodexModernMessageEntityCustomEmojiParser
+@implementation OGTLModernMessageEntityCustomEmojiParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernMessageEntityCustomEmojiParser *result = [[TLCodexModernMessageEntityCustomEmojiParser alloc] init];
-    result.offset = [is readInt32];
-    result.length = [is readInt32];
-    [is readInt64];
+    TLMessageEntity$messageEntityCustomEmoji *result = [[TLMessageEntity$messageEntityCustomEmoji alloc] init];
+    result.offset = OGTLTakeInt32(is);
+    result.length = OGTLTakeInt32(is);
+    result.document_id = [is readInt64];
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageEntitySimpleParser : TLMessageEntity$messageEntityUnknown
+@interface OGTLModernMessageEntitySimpleParser : TLMessageEntity$messageEntityUnknown
 @end
 
-@implementation TLCodexModernMessageEntitySimpleParser
+@implementation OGTLModernMessageEntitySimpleParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
     TLMessageEntity *result = nil;
     if (signature == (int32_t)0x9c4e7e8b)
@@ -5553,24 +3337,24 @@ static NSString *CodexPollText(id text)
     else if (signature == (int32_t)0x32ca960f)
         result = [[TLMessageEntity$messageEntitySpoiler alloc] init];
     else
-        result = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-    if (signature == (int32_t)0xf1ccaaac || signature == (int32_t)0x904ac7c7)
+        result = [[OGTLModernMessageEntitySimpleParser alloc] init];
+    if (signature == OGTLCtor(0xf1ccaaac) || signature == OGTLCtor(0x904ac7c7))
         [is readInt32];
-    result.offset = [is readInt32];
-    result.length = [is readInt32];
-    if (signature == (int32_t)0x904ac7c7)
+    result.offset = OGTLTakeInt32(is);
+    result.length = OGTLTakeInt32(is);
+    if (signature == OGTLCtor(0x904ac7c7))
         [is readInt32];
-    if (signature == (int32_t)0x6c622f67 || signature == (int32_t)0xc6c1e5a7)
-        [is readString];
+    if (signature == OGTLCtor(0x6c622f67) || signature == OGTLCtor(0xc6c1e5a7))
+        OGTLTakeString(is);
     return result;
 }
 
 @end
 
-@interface TLCodexDialogsParser : TLmessages_Dialogs
+@interface OGTLDialogsParser : TLmessages_Dialogs
 @end
 
-@implementation TLCodexDialogsParser
+@implementation OGTLDialogsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -5627,16 +3411,16 @@ static NSString *CodexPollText(id text)
         return nil;
     }
 
-    result.dialogs = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.dialogs", environment, error);
+    result.dialogs = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.dialogs.dialogs", environment, error);
     if (result.dialogs == nil)
         return nil;
-    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.messages", environment, error);
+    result.messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.dialogs.messages", environment, error);
     if (result.messages == nil)
         return nil;
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.chats", environment, error);
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.dialogs.chats", environment, error);
     if (result.chats == nil)
         return nil;
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.users", environment, error);
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.dialogs.users", environment, error);
     if (result.users == nil)
         return nil;
 
@@ -5645,97 +3429,94 @@ static NSString *CodexPollText(id text)
 
 @end
 
-@interface TLCodexModernContactParser : TLContact$contact
+@interface OGTLModernContactParser : TLContact$contact
 @end
 
-@implementation TLCodexModernContactParser
+@implementation OGTLModernContactParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernContactParser *result = [[TLCodexModernContactParser alloc] init];
+    OGTLModernContactParser *result = [[OGTLModernContactParser alloc] init];
     result.user_id = [is readInt64];
-    TLBool *mutual = (TLBool *)CodexReadObject(is, environment, error);
-    result.mutual = [mutual boolValue];
+    TLBool *mutual = (TLBool *)OGTLCoreReadObject(is, environment, error);
+    [result setMutual:[mutual boolValue]];
     return result;
 }
 
 @end
 
-@interface TLCodexModernContactsParser : TLcontacts_Contacts$contacts_contacts
+@interface OGTLModernContactsParser : TLcontacts_Contacts$contacts_contacts
 @end
 
-@implementation TLCodexModernContactsParser
+@implementation OGTLModernContactsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernContactsParser *result = [[TLCodexModernContactsParser alloc] init];
-    int32_t vectorMarker = [is readInt32];
+    OGTLModernContactsParser *result = [[OGTLModernContactsParser alloc] init];
+    int32_t vectorMarker = OGTLTakeInt32(is);
     int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
+    OGTLCoreVectorCountForMarker(is, vectorMarker, &count);
     
-    NSMutableArray *contacts = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
-    bool hasUsersMarker = false;
-    int32_t usersMarker = 0;
+    NSMutableArray *parsedContacts = OGTLCoreMakeArray(count);
+    bool usersEarly = false;
+    int32_t earlyUsersMarker = 0;
     for (int32_t i = 0; i < count; i++)
     {
-        int32_t contactSignature = [is readInt32];
-        if (contactSignature == TL_UNIVERSAL_VECTOR_CONSTRUCTOR || (contactSignature >= 0 && contactSignature <= 10000))
+        int32_t contactSignature = OGTLTakeInt32(is);
+        if (OGTLCoreMarkerStartsVector(contactSignature))
         {
-            hasUsersMarker = true;
-            usersMarker = contactSignature;
+            usersEarly = true;
+            earlyUsersMarker = contactSignature;
             break;
         }
-        if (contactSignature == (int32_t)0x145ade0b)
+        if (contactSignature == OGTLCtor(0x145ade0b))
         {
-            TLContact$contact *contact = [[TLContact$contact alloc] init];
+            TLContact$contact *contact = OGTLNewObject(TLContact$contact);
             contact.user_id = [is readInt64];
-            int32_t mutualSignature = [is readInt32];
-            contact.mutual = mutualSignature == (int32_t)TL_BOOL_TRUE_CONSTRUCTOR;
-            [contacts addObject:contact];
+            int32_t mutualSignature = OGTLTakeInt32(is);
+            [contact setMutual:mutualSignature == (int32_t)TL_BOOL_TRUE_CONSTRUCTOR];
+            [parsedContacts addObject:contact];
         }
         else
         {
-            id contact = TLMetaClassStore::constructObject(is, contactSignature, environment, nil, error);
-            if (error != nil && *error != nil)
+            id contact = OGTLCoreBuildObject(is, contactSignature, environment, error);
+            if (OGTLCoreFailed(error))
                 return nil;
             if (contact != nil)
-                [contacts addObject:contact];
+                [parsedContacts addObject:contact];
         }
     }
     
-    result.contacts = contacts;
-    if (hasUsersMarker)
+    [result setContacts:parsedContacts];
+    if (usersEarly)
     {
-        result.saved_count = 0;
-        result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, usersMarker, environment, error);
+        [result setSaved_count:0];
+        result.users = OGTLCoreReadMaybeDoubleObjectVectorWithMarker(is, earlyUsersMarker, environment, error);
         return result;
     }
-    int32_t nextMarker = [is readInt32];
-    if (nextMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+    int32_t nextMarker = OGTLTakeInt32(is);
+    if (nextMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
-        result.saved_count = 0;
-        result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, nextMarker, environment, error);
+        [result setSaved_count:nextMarker];
+        int32_t lateUsersMarker = OGTLTakeInt32(is);
+        result.users = OGTLCoreReadMaybeDoubleObjectVectorWithMarker(is, lateUsersMarker, environment, error);
     }
     else
     {
-        result.saved_count = nextMarker;
-        int32_t usersMarker = [is readInt32];
-        result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, usersMarker, environment, error);
+        [result setSaved_count:0];
+        result.users = OGTLCoreReadMaybeDoubleObjectVectorWithMarker(is, nextMarker, environment, error);
     }
     return result;
 }
 
 @end
 
-static NSError *TLCodexLangPackError(NSString *description)
+static NSError *OGTLLangPackError(NSString *description)
 {
     return [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
 }
 
-static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t signature, bool *failed)
+static TLLangPackString *OGTLReadLangPackString(NSInputStream *is, int32_t signature, bool *failed)
 {
     switch (signature)
     {
@@ -5752,15 +3533,15 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
             int32_t flags = [is readInt32:failed];
             string.flags = flags;
             string.key = [is readString:failed];
-            if (flags & (1 << 0))
+            if (OGTLFlagSet(flags, 0))
                 string.zero_value = [is readString:failed];
-            if (flags & (1 << 1))
+            if (OGTLFlagSet(flags, 1))
                 string.one_value = [is readString:failed];
-            if (flags & (1 << 2))
+            if (OGTLFlagSet(flags, 2))
                 string.two_value = [is readString:failed];
-            if (flags & (1 << 3))
+            if (OGTLFlagSet(flags, 3))
                 string.few_value = [is readString:failed];
-            if (flags & (1 << 4))
+            if (OGTLFlagSet(flags, 4))
                 string.many_value = [is readString:failed];
             string.other_value = [is readString:failed];
             return string;
@@ -5776,19 +3557,19 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
     }
 }
 
-@interface TLCodexLangPackStringParser : TLLangPackString$langPackString
+@interface OGTLLangPackStringParser : TLLangPackString$langPackString
 @end
 
-@implementation TLCodexLangPackStringParser
+@implementation OGTLLangPackStringParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)error
 {
     bool failed = false;
-    TLLangPackString *result = TLCodexReadLangPackString(is, signature, &failed);
+    TLLangPackString *result = OGTLReadLangPackString(is, signature, &failed);
     if (failed || result == nil)
     {
         if (error != NULL)
-            *error = TLCodexLangPackError([NSString stringWithFormat:@"Invalid LangPackString %08x", signature]);
+            *error = OGTLLangPackError([NSString stringWithFormat:@"Invalid LangPackString %08x", signature]);
         return nil;
     }
     return result;
@@ -5796,10 +3577,10 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 
 @end
 
-@interface TLCodexLangPackDifferenceParser : TLLangPackDifference$langPackDifference
+@interface OGTLLangPackDifferenceParser : TLLangPackDifference$langPackDifference
 @end
 
-@implementation TLCodexLangPackDifferenceParser
+@implementation OGTLLangPackDifferenceParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -5813,7 +3594,7 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
     if (failed || vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || count < 0 || count > 100000)
     {
         if (error != NULL)
-            *error = TLCodexLangPackError(failed ? @"Unexpected end of stream in langPackDifference" : [NSString stringWithFormat:@"Invalid langPackDifference strings vector %08x count %d", vectorMarker, count]);
+            *error = OGTLLangPackError(failed ? @"Unexpected end of stream in langPackDifference" : [NSString stringWithFormat:@"Invalid langPackDifference strings vector %08x count %d", vectorMarker, count]);
         return nil;
     }
 
@@ -5825,11 +3606,11 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
             int32_t stringSignature = [is readInt32:&failed];
             if (failed)
                 break;
-            id string = TLCodexReadLangPackString(is, stringSignature, &failed);
+            id string = OGTLReadLangPackString(is, stringSignature, &failed);
             if (string == nil && !failed)
             {
-                string = TLMetaClassStore::constructObject(is, stringSignature, environment, nil, error);
-                if (error != NULL && *error != nil)
+                string = OGTLCoreBuildObject(is, stringSignature, environment, error);
+                if (OGTLCoreFailed(error))
                     return nil;
             }
             if (failed)
@@ -5837,12 +3618,12 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
             if (string != nil)
                 [strings addObject:string];
         }
-        CodexCooperateWithInteraction(i);
+        OGTLCoreCooperateWithInteraction(i);
     }
     if (failed)
     {
         if (error != NULL)
-            *error = TLCodexLangPackError(@"Unexpected end of stream in langPackDifference strings");
+            *error = OGTLLangPackError(@"Unexpected end of stream in langPackDifference strings");
         return nil;
     }
 
@@ -5852,115 +3633,103 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 
 @end
 
-@interface TLCodexModernBlockedParser : TLcontacts_Blocked$contacts_blocked
+@interface OGTLModernBlockedParser : TLcontacts_Blocked$contacts_blocked
 @end
 
-@implementation TLCodexModernBlockedParser
+@implementation OGTLModernBlockedParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLcontacts_Blocked$contacts_blocked *result = [[TLcontacts_Blocked$contacts_blocked alloc] init];
-    if (signature == (int32_t)0xe1664194)
+    TLcontacts_Blocked$contacts_blocked *result = OGTLNewObject(TLcontacts_Blocked$contacts_blocked);
+    if (signature == OGTLCtor(0xe1664194))
         [is readInt32];
-    CodexReadObjectVector(is, environment, error);
-    CodexReadObjectVector(is, environment, error);
-    result.blocked = @[];
-    result.users = CodexReadObjectVector(is, environment, error);
+    OGTLCoreReadObjectVector(is, environment, error);
+    OGTLCoreReadObjectVector(is, environment, error);
+    [result setBlocked:@[]];
+    result.users = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageFwdHeaderParser : TLMessageFwdHeader$messageFwdHeaderMeta
+@interface OGTLModernMessageFwdHeaderParser : TLMessageFwdHeader$messageFwdHeaderMeta
 @end
 
-@implementation TLCodexModernMessageFwdHeaderParser
+@implementation OGTLModernMessageFwdHeaderParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessageFwdHeaderParser *result = [[TLCodexModernMessageFwdHeaderParser alloc] init];
+    OGTLModernMessageFwdHeaderParser *result = [[OGTLModernMessageFwdHeaderParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
     {
-        TLPeer *fromPeer = (TLPeer *)CodexReadObject(is, environment, error);
-        if ([fromPeer isKindOfClass:[TLPeer$peerUser class]])
-            result.from_id = ((TLPeer$peerUser *)fromPeer).user_id;
-        else if ([fromPeer isKindOfClass:[TLPeer$peerChannel class]])
-            result.channel_id = ((TLPeer$peerChannel *)fromPeer).channel_id;
-        else if ([fromPeer isKindOfClass:[TLPeer$peerChat class]])
-            result.from_id = ((TLPeer$peerChat *)fromPeer).chat_id;
+        TLPeer *fromPeer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreIsKind(fromPeer, [TLPeer$peerUser class]))
+            [result setFrom_id:((TLPeer$peerUser *)fromPeer).user_id];
+        else if (OGTLCoreIsKind(fromPeer, [TLPeer$peerChannel class]))
+            [result setChannel_id:((TLPeer$peerChannel *)fromPeer).channel_id];
+        else if (OGTLCoreIsKind(fromPeer, [TLPeer$peerChat class]))
+            [result setFrom_id:((TLPeer$peerChat *)fromPeer).chat_id];
     }
-    if (flags & (1 << 5))
-        [is readString];
+    OGTLSkipFlagged(is, environment, error, flags, 5, 's');
     result.date = [is readInt32];
-    if (flags & (1 << 2))
+    if (OGTLFlagSet(flags, 2))
         result.channel_post = [is readInt32];
-    if (flags & (1 << 3))
+    if (OGTLFlagSet(flags, 3))
         result.post_author = [is readString];
-    if (flags & (1 << 4))
+    if (OGTLFlagSet(flags, 4))
     {
-        result.saved_from_peer = (TLPeer *)CodexReadObject(is, environment, error);
+        result.saved_from_peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
         result.saved_from_msg_id = [is readInt32];
     }
-    if (flags & (1 << 8))
-        CodexReadObject(is, environment, error);
-    if (flags & (1 << 9))
-        [is readString];
-    if (flags & (1 << 10))
-        [is readInt32];
-    if (flags & (1 << 6))
-        [is readString];
+    OGTLSkipFlagged(is, environment, error, flags, 8, 'o');
+    OGTLSkipFlagged(is, environment, error, flags, 9, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 10, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 6, 's');
     return result;
 }
 
 @end
 
-@interface TLCodexMessageViewsResultParser : NSObject<TLObject>
+@interface OGTLMessageViewsResultParser : OGTLManualParser
 @end
 
-@implementation TLCodexMessageViewsResultParser
+@implementation OGTLMessageViewsResultParser
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xb6c4f543;
+    return OGTLCtor(0xb6c4f543);
 }
 
 - (int32_t)TLconstructorName
 {
-    return (int32_t)0xb6c4f543;
+    return OGTLCtor(0xb6c4f543);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    int32_t vectorMarker = [is readInt32];
+    int32_t vectorMarker = OGTLTakeInt32(is);
     int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
+    if (!OGTLCoreVectorCountForMarker(is, vectorMarker, &count))
     {
         count = 0;
     }
     
-    NSMutableArray *viewCounts = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+    NSMutableArray *countList = OGTLCoreMakeArray(count);
     for (int32_t i = 0; i < count; i++)
     {
-        int32_t itemSignature = [is readInt32];
-        int32_t views = 0;
-        if (itemSignature == (int32_t)0x455b853d)
+        int32_t itemSignature = OGTLTakeInt32(is);
+        int32_t itemViews = 0;
+        if (itemSignature == OGTLCtor(0x455b853d))
         {
             int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                views = [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            if (error != nil && *error != nil)
+            if (OGTLFlagSet(flags, 0))
+                itemViews = OGTLTakeInt32(is);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'o');
+            if (OGTLCoreFailed(error))
             {
                 TGLog(@"VIEWS failed nested field index=%d flags=0x%08x error=%@", i, flags, *error);
                 *error = nil;
@@ -5968,55 +3737,55 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
         }
         else
             TGLog(@"VIEWS unknown MessageViews item sig=0x%08x index=%d", itemSignature, i);
-        [viewCounts addObject:@(views)];
+        [countList addObject:@(itemViews)];
     }
     
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
     {
         TGLog(@"VIEWS failed chats vector error=%@", *error);
         *error = nil;
     }
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
     {
         TGLog(@"VIEWS failed users vector error=%@", *error);
         *error = nil;
     }
     
-    return (id<TLObject>)viewCounts;
+    return (id<TLObject>)countList;
 }
 
 @end
 
-@interface TLCodexModernMessagesParser : TLmessages_Messages$messages_messages
+@interface OGTLModernMessagesParser : TLmessages_Messages$messages_messages
 @end
 
-@implementation TLCodexModernMessagesParser
+@implementation OGTLModernMessagesParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessagesParser *result = [[TLCodexModernMessagesParser alloc] init];
-    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.messages", environment, error);
-    if (error != nil && *error != nil)
+    OGTLModernMessagesParser *result = [[OGTLModernMessagesParser alloc] init];
+    result.messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.messages.messages", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
-    if (signature == (int32_t)0x1d73e7ea)
+    if (signature == OGTLCtor(0x1d73e7ea))
     {
-        CodexReadStrictObjectVectorWithRole(is, @"messages.messages.topics", environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.messages.topics", environment, error);
+        if (OGTLCoreFailed(error))
         {
             return nil;
         }
     }
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.chats", environment, error);
-    if (error != nil && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.messages.chats", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.users", environment, error);
-    if (error != nil && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"messages.messages.users", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
@@ -6026,47 +3795,45 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 
 @end
 
-@interface TLCodexModernMessagesSliceParser : TLmessages_Messages$messages_messagesSlice
+@interface OGTLModernMessagesSliceParser : TLmessages_Messages$messages_messagesSlice
 @end
 
-@implementation TLCodexModernMessagesSliceParser
+@implementation OGTLModernMessagesSliceParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernMessagesSliceParser *result = [[TLCodexModernMessagesSliceParser alloc] init];
+    OGTLModernMessagesSliceParser *result = [[OGTLModernMessagesSliceParser alloc] init];
     int32_t flags = [is readInt32];
     result.count = [is readInt32];
-    if (flags & (1 << 0))
-        [is readInt32];
-    if (flags & (1 << 2))
-        [is readInt32];
-    if (signature == (int32_t)0x5f206716 && (flags & (1 << 3)))
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
+    if (signature == (int32_t)0x5f206716 && (OGTLFlagSet(flags, 3)))
     {
-        CodexReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
     
-    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.messages", environment, error);
-    if (error != nil && *error != nil)
+    result.messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"messagesSlice.messages", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
-    if (signature == (int32_t)0x5f206716)
+    if (signature == OGTLCtor(0x5f206716))
     {
-        CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.topics", environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadStrictObjectVectorWithRole(is, @"messagesSlice.topics", environment, error);
+        if (OGTLCoreFailed(error))
         {
             return nil;
         }
     }
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.chats", environment, error);
-    if (error != nil && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"messagesSlice.chats", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.users", environment, error);
-    if (error != nil && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"messagesSlice.users", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
@@ -6076,22 +3843,21 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 
 @end
 
-@interface TLCodexModernDraftMessageEmptyParser : TLDraftMessage$draftMessageEmpty
+@interface OGTLModernDraftMessageEmptyParser : TLDraftMessage$draftMessageEmpty
 @end
 
-@implementation TLCodexModernDraftMessageEmptyParser
+@implementation OGTLModernDraftMessageEmptyParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     int32_t flags = [is readInt32];
-    if (flags & (1 << 0))
-        [is readInt32];
-    return [[TLDraftMessage$draftMessageEmpty alloc] init];
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+    return OGTLNewObject(TLDraftMessage$draftMessageEmpty);
 }
 
 @end
 
-@interface TLCodexModernInputPeerValue : NSObject <TLObject>
+@interface OGTLModernInputPeerValue : OGTLManualParser
 @property (nonatomic) int32_t signature;
 @property (nonatomic) int64_t peerId;
 @property (nonatomic) int64_t accessHash;
@@ -6099,7 +3865,7 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 @property (nonatomic, strong) id sourcePeer;
 @end
 
-@implementation TLCodexModernInputPeerValue
+@implementation OGTLModernInputPeerValue
 - (int32_t)TLconstructorSignature { return _signature; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -6107,10 +3873,10 @@ static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t si
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static OGTLModernInputPeerValue *OGTLCoreReadModernInputPeerValue(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t signature = [is readInt32];
-    TLCodexModernInputPeerValue *result = [[TLCodexModernInputPeerValue alloc] init];
+    OGTLModernInputPeerValue *result = [[OGTLModernInputPeerValue alloc] init];
     result.signature = signature;
     switch (signature)
     {
@@ -6127,8 +3893,8 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             break;
         case (int32_t)0xa87b0a1c:
         case (int32_t)0xbd2a0840:
-            result.sourcePeer = CodexReadModernInputPeerValue(is, environment, error);
-            if (error != NULL && *error != nil)
+            result.sourcePeer = OGTLCoreReadModernInputPeerValue(is, environment, error);
+            if (OGTLCoreFailed(error))
                 return nil;
             result.messageId = [is readInt32];
             result.peerId = [is readInt64];
@@ -6136,7 +3902,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         default:
         {
             id object = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-            if (error != NULL && *error != nil)
+            if (OGTLCoreFailed(error))
                 return nil;
             result.sourcePeer = object;
             break;
@@ -6145,7 +3911,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     return result;
 }
 
-@interface TLCodexModernInputReplyToValue : NSObject <TLObject>
+@interface OGTLModernInputReplyToValue : OGTLManualParser
 @property (nonatomic) int32_t signature;
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t replyToMessageId;
@@ -6160,7 +3926,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 @property (nonatomic) int32_t storyId;
 @end
 
-@implementation TLCodexModernInputReplyToValue
+@implementation OGTLModernInputReplyToValue
 - (int32_t)TLconstructorSignature { return _signature; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -6168,10 +3934,10 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-@interface TLCodexModernInputReplyToParser : NSObject <TLObject>
+@interface OGTLModernInputReplyToParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernInputReplyToParser
+@implementation OGTLModernInputReplyToParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -6179,20 +3945,20 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernInputReplyToValue *result = [[TLCodexModernInputReplyToValue alloc] init];
+    OGTLModernInputReplyToValue *result = [[OGTLModernInputReplyToValue alloc] init];
     result.signature = signature;
     if (signature == (int32_t)0x5881323a)
     {
-        result.replyToPeer = CodexReadModernInputPeerValue(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.replyToPeer = OGTLCoreReadModernInputPeerValue(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         result.storyId = [is readInt32];
         return result;
     }
     if (signature == (int32_t)0x69d66c45)
     {
-        result.monoforumPeer = CodexReadModernInputPeerValue(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.monoforumPeer = OGTLCoreReadModernInputPeerValue(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         return result;
     }
@@ -6202,525 +3968,515 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         result.topMessageId = [is readInt32];
     if (result.flags & (1 << 1))
     {
-        result.replyToPeer = CodexReadModernInputPeerValue(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.replyToPeer = OGTLCoreReadModernInputPeerValue(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
-    if (result.flags & (1 << 2))
+    if (OGTLFlagSet(result.flags, 2))
         result.quoteText = [is readString];
-    if (result.flags & (1 << 3))
+    if (OGTLFlagSet(result.flags, 3))
     {
-        result.quoteEntities = CodexReadObjectVector(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.quoteEntities = OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
     if (result.flags & (1 << 4))
         result.quoteOffset = [is readInt32];
     if (signature != (int32_t)0x22c0f6d5 && (result.flags & (1 << 5)))
     {
-        result.monoforumPeer = CodexReadModernInputPeerValue(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.monoforumPeer = OGTLCoreReadModernInputPeerValue(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
     if (signature != (int32_t)0x22c0f6d5 && (result.flags & (1 << 6)))
         result.todoItemId = [is readInt32];
-    if (signature == (int32_t)0x3bd4b7c2 && (result.flags & (1 << 7)))
+    if ((signature == (int32_t)0x3bd4b7c2 || signature == (int32_t)0x75c1ad70) && (result.flags & (1 << 7)))
         result.pollOption = [is readBytes];
+    if (signature == (int32_t)0x75c1ad70 && (result.flags & (1 << 8)))
+    {
+        OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
+            return nil;
+    }
     return result;
 }
 @end
 
-@interface TLCodexModernDraftMessageParser : TLDraftMessage$draftMessage
+@interface OGTLModernDraftMessageParser : TLDraftMessage$draftMessage
 @end
 
-@implementation TLCodexModernDraftMessageParser
+@implementation OGTLModernDraftMessageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLDraftMessage$draftMessage *result = [[TLDraftMessage$draftMessage alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 4))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 4, 'o');
+    if (OGTLCoreFailed(error))
         return nil;
     result.message = [is readString];
-    if (flags & (1 << 3))
-        result.entities = CodexReadObjectVectorOrSingle(is, environment, error);
-    if (error != nil && *error != nil)
+    if (OGTLFlagSet(flags, 3))
+        result.entities = OGTLCoreReadObjectVectorOrSingle(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 5))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 5, 'o');
+    if (OGTLCoreFailed(error))
         return nil;
     result.date = [is readInt32];
-    if (flags & (1 << 7))
-        [is readInt64];
-    bool hasSuggestedPost = signature == (int32_t)0x96eaa5eb || signature == (int32_t)0x60fe3294;
-    bool hasRichMessage = signature == (int32_t)0x60fe3294;
-    if (hasSuggestedPost && (flags & (1 << 8)))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 7, 'l');
+    bool hasSuggestedPost = signature == OGTLCtor(0x96eaa5eb) || signature == OGTLCtor(0x60fe3294);
+    bool hasRichMessage = signature == OGTLCtor(0x60fe3294);
+    if (hasSuggestedPost && (OGTLFlagSet(flags, 8)))
+        OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (hasRichMessage && (flags & (1 << 9)))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    if (hasRichMessage && (OGTLFlagSet(flags, 9)))
+        OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateDraftMessageParser : TLUpdate$updateDraftMessage
+@interface OGTLModernUpdateDraftMessageParser : TLUpdate$updateDraftMessage
 @end
 
-@implementation TLCodexModernUpdateDraftMessageParser
+@implementation OGTLModernUpdateDraftMessageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLUpdate$updateDraftMessage *result = [[TLUpdate$updateDraftMessage alloc] init];
+    TLUpdate$updateDraftMessage *result = OGTLNewObject(TLUpdate$updateDraftMessage);
     int32_t flags = [is readInt32];
-    result.peer = (TLPeer *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    result.peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 0))
-        [is readInt32];
-    if (signature == (int32_t)0xedfc111e && (flags & (1 << 1)))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+    if (signature == (int32_t)0xedfc111e && (OGTLFlagSet(flags, 1)))
+        OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.draft = (TLDraftMessage *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    result.draft = (TLDraftMessage *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernChatParticipantParser : NSObject <TLObject>
+@interface OGTLModernChatParticipantParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernChatParticipantParser
+@implementation OGTLModernChatParticipantParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
-    TLChatParticipant *result = nil;
+    TLChatParticipant *parsed = nil;
     switch (signature)
     {
-        case (int32_t)0xc02d4007:
+        case OGTLCtor(0xc02d4007):
         {
-            TLChatParticipant$chatParticipant *participant = [[TLChatParticipant$chatParticipant alloc] init];
+            TLChatParticipant$chatParticipant *participant = OGTLNewObject(TLChatParticipant$chatParticipant);
             participant.user_id = [is readInt64];
             participant.inviter_id = [is readInt64];
-            participant.date = [is readInt32];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            parsed = participant;
             break;
         }
-        case (int32_t)0xe46bcee4:
+        case OGTLCtor(0xe46bcee4):
         {
-            TLChatParticipant$chatParticipantCreator *participant = [[TLChatParticipant$chatParticipantCreator alloc] init];
+            TLChatParticipant$chatParticipantCreator *participant = OGTLNewObject(TLChatParticipant$chatParticipantCreator);
             participant.user_id = [is readInt64];
-            result = participant;
+            parsed = participant;
             break;
         }
-        case (int32_t)0xa0933f5b:
+        case OGTLCtor(0xa0933f5b):
         {
-            TLChatParticipant$chatParticipantAdmin *participant = [[TLChatParticipant$chatParticipantAdmin alloc] init];
+            TLChatParticipant$chatParticipantAdmin *participant = OGTLNewObject(TLChatParticipant$chatParticipantAdmin);
             participant.user_id = [is readInt64];
             participant.inviter_id = [is readInt64];
-            participant.date = [is readInt32];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            parsed = participant;
             break;
         }
     }
-    return result;
+    return parsed;
 }
 
 @end
 
-@interface TLCodexModernChannelParticipantParser : NSObject <TLObject>
+@interface OGTLModernChannelParticipantParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernChannelParticipantParser
+@implementation OGTLModernChannelParticipantParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     int32_t flags = 0;
-    TLChannelParticipant *result = nil;
+    TLChannelParticipant *parsed = nil;
     switch (signature)
     {
-        case (int32_t)0xc00c07c0:
+        case OGTLCtor(0xc00c07c0):
         {
-            TLChannelParticipant$channelParticipant *participant = [[TLChannelParticipant$channelParticipant alloc] init];
+            TLChannelParticipant$channelParticipant *participant = OGTLNewObject(TLChannelParticipant$channelParticipant);
             participant.user_id = [is readInt64];
-            participant.date = [is readInt32];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            parsed = participant;
             break;
         }
-        case (int32_t)0x1bd54456:
+        case OGTLCtor(0x1bd54456):
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipant *participant = [[TLChannelParticipant$channelParticipant alloc] init];
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipant *participant = OGTLNewObject(TLChannelParticipant$channelParticipant);
             participant.user_id = [is readInt64];
-            participant.date = [is readInt32];
-            if (flags & (1 << 0)) [is readInt32];
-            if (flags & (1 << 2)) [is readString];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 's');
+            parsed = participant;
             break;
         }
         case (int32_t)0x35a8bfa7:
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantSelf *participant = OGTLNewObject(TLChannelParticipant$channelParticipantSelf);
             participant.user_id = [is readInt64];
             participant.inviter_id = [is readInt64];
-            participant.date = [is readInt32];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            parsed = participant;
             break;
         }
-        case (int32_t)0xa9478a1a:
+        case OGTLCtor(0xa9478a1a):
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantSelf *participant = OGTLNewObject(TLChannelParticipant$channelParticipantSelf);
             participant.user_id = [is readInt64];
             participant.inviter_id = [is readInt64];
-            participant.date = [is readInt32];
-            if (flags & (1 << 1)) [is readInt32];
-            if (flags & (1 << 2)) [is readString];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 2, 's');
+            parsed = participant;
             break;
         }
-        case (int32_t)0x2fe601d3:
+        case OGTLCtor(0x2fe601d3):
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantCreator *participant = [[TLChannelParticipant$channelParticipantCreator alloc] init];
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantCreator *participant = OGTLNewObject(TLChannelParticipant$channelParticipantCreator);
             participant.user_id = [is readInt64];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0)) [is readString];
-            result = participant;
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+            parsed = participant;
             break;
         }
-        case (int32_t)0x34c3bb53:
+        case OGTLCtor(0x34c3bb53):
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantAdmin *participant = [[TLChannelParticipant$channelParticipantAdmin alloc] init];
-            participant.flags = flags;
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantAdmin *participant = OGTLNewObject(TLChannelParticipant$channelParticipantAdmin);
+            [participant setFlags:flags];
             participant.user_id = [is readInt64];
-            if (flags & (1 << 1))
+            if (OGTLFlagSet(flags, 1))
                 participant.inviter_id = [is readInt64];
             participant.promoted_by = [is readInt64];
-            participant.date = [is readInt32];
-            participant.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 2)) [is readString];
-            result = participant;
+            participant.date = OGTLTakeInt32(is);
+            participant.admin_rights = (TLChannelAdminRights *)OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 2, 's');
+            parsed = participant;
             break;
         }
         case (int32_t)0x6df8014e:
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
-            participant.flags = flags;
-            CodexReadObject(is, environment, error);
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantBanned *participant = OGTLNewObject(TLChannelParticipant$channelParticipantBanned);
+            [participant setFlags:flags];
+            OGTLCoreReadObject(is, environment, error);
             participant.kicked_by = [is readInt64];
-            participant.date = [is readInt32];
-            participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
-            result = participant;
+            [participant setDate:[is readInt32]];
+            participant.banned_rights = (TLChannelBannedRights *)OGTLCoreReadObject(is, environment, error);
+            parsed = participant;
             break;
         }
-        case (int32_t)0xd5f0ad91:
+        case OGTLCtor(0xd5f0ad91):
         {
-            flags = [is readInt32];
-            TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
-            participant.flags = flags;
-            CodexReadObject(is, environment, error);
+            flags = OGTLTakeInt32(is);
+            TLChannelParticipant$channelParticipantBanned *participant = OGTLNewObject(TLChannelParticipant$channelParticipantBanned);
+            [participant setFlags:flags];
+            OGTLCoreReadObject(is, environment, error);
             participant.kicked_by = [is readInt64];
-            participant.date = [is readInt32];
-            participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
-            if (flags & (1 << 2)) [is readString];
-            result = participant;
+            [participant setDate:[is readInt32]];
+            participant.banned_rights = (TLChannelBannedRights *)OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 2, 's');
+            parsed = participant;
             break;
         }
-        case (int32_t)0x1b03f006:
+        case OGTLCtor(0x1b03f006):
         {
-            CodexReadObject(is, environment, error);
-            result = [[TLChannelParticipant alloc] init];
+            OGTLCoreReadObject(is, environment, error);
+            parsed = OGTLNewObject(TLChannelParticipant);
             break;
         }
     }
-    if (error != nil && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
-    return result;
+    return parsed;
 }
 
 @end
 
-@interface TLCodexModernChannelParticipantResultParser : TLchannels_ChannelParticipant$channels_channelParticipant
+@interface OGTLModernChannelParticipantResultParser : TLchannels_ChannelParticipant$channels_channelParticipant
 @end
 
-@implementation TLCodexModernChannelParticipantResultParser
+@implementation OGTLModernChannelParticipantResultParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLchannels_ChannelParticipant$channels_channelParticipant *result = [[TLchannels_ChannelParticipant$channels_channelParticipant alloc] init];
-    result.participant = (TLChannelParticipant *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    result.participant = (TLChannelParticipant *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.chats = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadObjectVector(is, environment, error);
+    result.users = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernChannelsParticipantsParser : TLchannels_ChannelParticipants$channels_channelParticipants
+@interface OGTLModernChannelsParticipantsParser : TLchannels_ChannelParticipants$channels_channelParticipants
 @end
 
-@implementation TLCodexModernChannelsParticipantsParser
+@implementation OGTLModernChannelsParticipantsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLchannels_ChannelParticipants$channels_channelParticipants *result = [[TLchannels_ChannelParticipants$channels_channelParticipants alloc] init];
+    TLchannels_ChannelParticipants$channels_channelParticipants *result = OGTLNewObject(TLchannels_ChannelParticipants$channels_channelParticipants);
     result.count = [is readInt32];
-    result.participants = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.participants = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadObjectVector(is, environment, error);
+    result.users = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernMessageEmptyParser : TLMessage$messageEmpty
+@interface OGTLModernMessageEmptyParser : TLMessage$messageEmpty
 @end
 
-@implementation TLCodexModernMessageEmptyParser
+@implementation OGTLModernMessageEmptyParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLMessage$messageEmpty *result = [[TLMessage$messageEmpty alloc] init];
+    TLMessage$messageEmpty *result = OGTLNewObject(TLMessage$messageEmpty);
     int32_t flags = [is readInt32];
     result.n_id = [is readInt32];
-    if (flags & (1 << 0))
-        CodexReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'o');
     return result;
 }
 
 @end
 
-@interface TLCodexModernPeerSettingsParser : TLPeerSettings$peerSettings
+@interface OGTLModernPeerSettingsParser : TLPeerSettings$peerSettings
 @end
 
-@implementation TLCodexModernPeerSettingsParser
+@implementation OGTLModernPeerSettingsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLPeerSettings$peerSettings *result = [[TLPeerSettings$peerSettings alloc] init];
+    TLPeerSettings$peerSettings *result = OGTLNewObject(TLPeerSettings$peerSettings);
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 6))
-        [is readInt32];
-    if (flags & (1 << 9))
+    OGTLSkipFlagged(is, environment, error, flags, 6, 'i');
+    if (OGTLFlagSet(flags, 9))
     {
-        [is readString];
+        OGTLTakeString(is);
         [is readInt32];
     }
-    if (flags & (1 << 13))
+    if (OGTLFlagSet(flags, 13))
     {
-        [is readInt64];
-        [is readString];
+        OGTLTakeInt64(is);
+        OGTLTakeString(is);
     }
-    if (flags & (1 << 14))
-        [is readInt64];
-    if (flags & (1 << 15))
-        [is readString];
-    if (flags & (1 << 16))
-        [is readString];
-    if (flags & (1 << 17))
-        [is readInt32];
-    if (flags & (1 << 18))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 14, 'l');
+    OGTLSkipFlagged(is, environment, error, flags, 15, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 16, 's');
+    OGTLSkipFlagged(is, environment, error, flags, 17, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 18, 'i');
     return result;
 }
 
 @end
 
-@interface TLCodexInputGroupCallParser : NSObject <TLObject>
+@interface OGTLInputGroupCallParser : OGTLManualParser
 @end
 
-@implementation TLCodexInputGroupCallParser
+@implementation OGTLInputGroupCallParser
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xd8aa840f;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
+    return OGTLCtor(0xd8aa840f);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    [is readInt64];
-    [is readInt64];
+    OGTLTakeInt64(is);
+    OGTLTakeInt64(is);
     return nil;
 }
 
 @end
 
-@interface TLCodexModernBotCommandParser : TLBotCommand$botCommand
+@interface OGTLModernBotCommandParser : TLBotCommand$botCommand
 @end
 
-@implementation TLCodexModernBotCommandParser
+@implementation OGTLModernBotCommandParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
-    TLBotCommand$botCommand *result = [[TLBotCommand$botCommand alloc] init];
+    TLBotCommand$botCommand *result = OGTLNewObject(TLBotCommand$botCommand);
     if (signature == (int32_t)0x9852d6d2)
         [is readInt32];
-    result.command = [is readString];
+    result.command = OGTLTakeString(is);
     result.n_description = [is readString];
     return result;
 }
 
 @end
 
-@interface TLCodexModernAllStickersParser : TLmessages_AllStickers$messages_allStickers
+@interface OGTLModernAllStickersParser : TLmessages_AllStickers$messages_allStickers
 @end
 
-@implementation TLCodexModernAllStickersParser
+@implementation OGTLModernAllStickersParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xe86602c3)
+    if (signature == OGTLCtor(0xe86602c3))
     {
-        return [[TLmessages_AllStickers$messages_allStickersNotModified alloc] init];
+        return OGTLNewObject(TLmessages_AllStickers$messages_allStickersNotModified);
     }
     
-    TLmessages_AllStickers$messages_allStickers *result = [[TLmessages_AllStickers$messages_allStickers alloc] init];
-    result.n_hash = (int32_t)[is readInt64];
-    result.sets = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    TLmessages_AllStickers$messages_allStickers *result = OGTLNewObject(TLmessages_AllStickers$messages_allStickers);
+    result.n_hash = (int32_t)OGTLTakeInt64(is);
+    result.sets = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernRecentStickersParser : TLmessages_RecentStickers$messages_recentStickers
+@interface OGTLModernRecentStickersParser : TLmessages_RecentStickers$messages_recentStickers
 @end
 
-@implementation TLCodexModernRecentStickersParser
+@implementation OGTLModernRecentStickersParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x0b17f890)
+    if (signature == OGTLCtor(0x0b17f890))
     {
-        return [[TLmessages_RecentStickers$messages_recentStickersNotModified alloc] init];
+        return OGTLNewObject(TLmessages_RecentStickers$messages_recentStickersNotModified);
     }
     
-    TLmessages_RecentStickers$messages_recentStickers *result = [[TLmessages_RecentStickers$messages_recentStickers alloc] init];
-    result.n_hash = (int32_t)[is readInt64];
-    result.packs = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    TLmessages_RecentStickers$messages_recentStickers *result = OGTLNewObject(TLmessages_RecentStickers$messages_recentStickers);
+    result.n_hash = (int32_t)OGTLTakeInt64(is);
+    result.packs = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.stickers = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.stickers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.dates = CodexReadInt32Vector(is);
+    result.dates = OGTLCoreReadInt32Vector(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernFeaturedStickersParser : TLmessages_FeaturedStickers$messages_featuredStickers
+@interface OGTLModernFeaturedStickersParser : TLmessages_FeaturedStickers$messages_featuredStickers
 @end
 
-@implementation TLCodexModernFeaturedStickersParser
+@implementation OGTLModernFeaturedStickersParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xc6dc0c66)
+    if (signature == OGTLCtor(0xc6dc0c66))
     {
         [is readInt32];
-        return [[TLmessages_FeaturedStickers$messages_featuredStickersNotModified alloc] init];
+        return OGTLNewObject(TLmessages_FeaturedStickers$messages_featuredStickersNotModified);
     }
     
-    TLmessages_FeaturedStickers$messages_featuredStickers *result = [[TLmessages_FeaturedStickers$messages_featuredStickers alloc] init];
+    TLmessages_FeaturedStickers$messages_featuredStickers *result = OGTLNewObject(TLmessages_FeaturedStickers$messages_featuredStickers);
     [is readInt32];
-    result.n_hash = (int32_t)[is readInt64];
+    result.n_hash = (int32_t)OGTLTakeInt64(is);
     [is readInt32];
-    result.sets = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.sets = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.unread = CodexReadInt64Vector(is);
+    result.unread = OGTLCoreReadInt64Vector(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernFavedStickersParser : TLmessages_FavedStickers$messages_favedStickers
+@interface OGTLModernFavedStickersParser : TLmessages_FavedStickers$messages_favedStickers
 @end
 
-@implementation TLCodexModernFavedStickersParser
+@implementation OGTLModernFavedStickersParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x9e8fa6d3)
+    if (signature == OGTLCtor(0x9e8fa6d3))
     {
-        return [[TLmessages_FavedStickers$messages_favedStickersNotModified alloc] init];
+        return OGTLNewObject(TLmessages_FavedStickers$messages_favedStickersNotModified);
     }
     
-    TLmessages_FavedStickers$messages_favedStickers *result = [[TLmessages_FavedStickers$messages_favedStickers alloc] init];
-    result.n_hash = (int32_t)[is readInt64];
-    result.packs = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    TLmessages_FavedStickers$messages_favedStickers *result = OGTLNewObject(TLmessages_FavedStickers$messages_favedStickers);
+    result.n_hash = (int32_t)OGTLTakeInt64(is);
+    result.packs = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.stickers = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.stickers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernInputStickerSetParser : TLInputStickerSet
+@interface OGTLModernInputStickerSetParser : TLInputStickerSet
 @end
 
-@implementation TLCodexModernInputStickerSetParser
+@implementation OGTLModernInputStickerSetParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
-    if (signature == (int32_t)0x9de7a269)
+    if (signature == OGTLCtor(0x9de7a269))
     {
-        TLInputStickerSet$inputStickerSetID *result = [[TLInputStickerSet$inputStickerSetID alloc] init];
+        TLInputStickerSet$inputStickerSetID *result = OGTLNewObject(TLInputStickerSet$inputStickerSetID);
         result.n_id = [is readInt64];
         result.access_hash = [is readInt64];
         return result;
     }
-    if (signature == (int32_t)0x861cc8a0)
+    if (signature == OGTLCtor(0x861cc8a0))
     {
-        TLInputStickerSet$inputStickerSetShortName *result = [[TLInputStickerSet$inputStickerSetShortName alloc] init];
+        TLInputStickerSet$inputStickerSetShortName *result = OGTLNewObject(TLInputStickerSet$inputStickerSetShortName);
         result.short_name = [is readString];
         return result;
     }
-    if (signature == (int32_t)0xe67f520e)
-        [is readString];
+    if (signature == OGTLCtor(0xe67f520e))
+        OGTLTakeString(is);
     
     return [[TLInputStickerSet$inputStickerSetEmpty alloc] init];
 }
 
 @end
 
-@interface TLCodexModernDocumentAttributeStickerParser : TLDocumentAttributeSticker
+@interface OGTLModernDocumentAttributeStickerParser : TLDocumentAttributeSticker
 @end
 
-@implementation TLCodexModernDocumentAttributeStickerParser
+@implementation OGTLModernDocumentAttributeStickerParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -6728,65 +4484,63 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     int32_t flags = [is readInt32];
     result.flags = flags;
     result.alt = [is readString];
-    result.stickerset = (TLInputStickerSet *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    result.stickerset = (TLInputStickerSet *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 0))
-        result.mask_coords = (TLMaskCoords *)CodexReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 0))
+        result.mask_coords = (TLMaskCoords *)OGTLCoreReadObject(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernLangPackLanguageParser : TLLangPackLanguage
+@interface OGTLModernLangPackLanguageParser : TLLangPackLanguage
 @end
 
-@implementation TLCodexModernLangPackLanguageParser
+@implementation OGTLModernLangPackLanguageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLLangPackLanguage$langPackLanguage *result = [[TLLangPackLanguage$langPackLanguage alloc] init];
+    TLLangPackLanguage$langPackLanguage *result = OGTLNewObject(TLLangPackLanguage$langPackLanguage);
     int32_t flags = [is readInt32];
     result.name = [is readString];
-    result.native_name = [is readString];
-    result.lang_code = [is readString];
-    if (flags & (1 << 1))
-        [is readString];
-    [is readString];
+    result.native_name = OGTLTakeString(is);
+    result.lang_code = OGTLTakeString(is);
+    OGTLSkipFlagged(is, environment, error, flags, 1, 's');
+    OGTLTakeString(is);
     [is readInt32];
     [is readInt32];
-    [is readString];
+    OGTLTakeString(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernStickerSetMetaParser : TLStickerSet$stickerSetMeta
+@interface OGTLModernStickerSetMetaParser : TLStickerSet$stickerSetMeta
 @end
 
-@implementation TLCodexModernStickerSetMetaParser
+@implementation OGTLModernStickerSetMetaParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLStickerSet$stickerSetMeta *result = [[TLStickerSet$stickerSetMeta alloc] init];
+    TLStickerSet$stickerSetMeta *result = OGTLNewObject(TLStickerSet$stickerSetMeta);
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
         result.installed_date = [is readInt32];
     result.n_id = [is readInt64];
     result.access_hash = [is readInt64];
     result.title = [is readString];
     result.short_name = [is readString];
-    if (flags & (1 << 4))
+    if (OGTLFlagSet(flags, 4))
     {
-        CodexReadObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         [is readInt32];
         [is readInt32];
     }
-    if (flags & (1 << 8))
-        [is readInt64];
+    OGTLSkipFlagged(is, environment, error, flags, 8, 'l');
     result.count = [is readInt32];
     result.n_hash = [is readInt32];
     return result;
@@ -6794,98 +4548,98 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernStickerKeywordParser : NSObject <TLObject>
+@interface OGTLModernStickerKeywordParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernStickerKeywordParser
+@implementation OGTLModernStickerKeywordParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    [is readInt64];
-    CodexSkipStringVector(is);
+    OGTLTakeInt64(is);
+    OGTLCoreSkipStringVector(is);
     return nil;
 }
 
 @end
 
-@interface TLCodexStickerPackParser : TLStickerPack$stickerPack
+@interface OGTLStickerPackParser : TLStickerPack$stickerPack
 @end
 
-@implementation TLCodexStickerPackParser
+@implementation OGTLStickerPackParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLStickerPack$stickerPack *result = [[TLStickerPack$stickerPack alloc] init];
     result.emoticon = [is readString];
-    result.documents = CodexReadInt64Vector(is);
+    result.documents = OGTLCoreReadInt64Vector(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernStickerSetParser : TLmessages_StickerSet$messages_stickerSet
+@interface OGTLModernStickerSetParser : TLmessages_StickerSet$messages_stickerSet
 @end
 
-@implementation TLCodexModernStickerSetParser
+@implementation OGTLModernStickerSetParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xd3f924eb)
+    if (signature == OGTLCtor(0xd3f924eb))
     {
-        return [[TLmessages_StickerSet alloc] init];
+        return OGTLNewObject(TLmessages_StickerSet);
     }
     
-    TLmessages_StickerSet$messages_stickerSet *result = [[TLmessages_StickerSet$messages_stickerSet alloc] init];
-    result.set = (TLStickerSet *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    TLmessages_StickerSet$messages_stickerSet *result = OGTLNewObject(TLmessages_StickerSet$messages_stickerSet);
+    result.set = (TLStickerSet *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.packs = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.packs = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.documents = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.documents = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernStickerSetCoveredParser : TLStickerSetCovered$stickerSetMultiCovered
+@interface OGTLModernStickerSetCoveredParser : TLStickerSetCovered$stickerSetMultiCovered
 @end
 
-@implementation TLCodexModernStickerSetCoveredParser
+@implementation OGTLModernStickerSetCoveredParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x6410a5d2)
+    if (signature == OGTLCtor(0x6410a5d2))
     {
-        TLStickerSetCovered$stickerSetCovered *result = [[TLStickerSetCovered$stickerSetCovered alloc] init];
-        result.set = (TLStickerSet *)CodexReadObject(is, environment, error);
-        result.cover = (TLDocument *)CodexReadObject(is, environment, error);
+        TLStickerSetCovered$stickerSetCovered *result = OGTLNewObject(TLStickerSetCovered$stickerSetCovered);
+        result.set = (TLStickerSet *)OGTLCoreReadObject(is, environment, error);
+        result.cover = (TLDocument *)OGTLCoreReadObject(is, environment, error);
         return result;
     }
 
-    TLStickerSetCovered$stickerSetMultiCovered *result = [[TLStickerSetCovered$stickerSetMultiCovered alloc] init];
-    result.set = (TLStickerSet *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    TLStickerSetCovered$stickerSetMultiCovered *result = OGTLNewObject(TLStickerSetCovered$stickerSetMultiCovered);
+    result.set = (TLStickerSet *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
 
-    if (signature == (int32_t)0x3407e51b)
+    if (signature == OGTLCtor(0x3407e51b))
     {
-        result.covers = CodexReadObjectVector(is, environment, error);
+        result.covers = OGTLCoreReadObjectVector(is, environment, error);
     }
-    else if (signature == (int32_t)0x40d13c0e)
+    else if (signature == OGTLCtor(0x40d13c0e))
     {
-        CodexReadObjectVector(is, environment, error);
-        CodexReadObjectVector(is, environment, error);
-        result.covers = CodexReadObjectVector(is, environment, error);
+        OGTLCoreReadObjectVector(is, environment, error);
+        OGTLCoreReadObjectVector(is, environment, error);
+        result.covers = OGTLCoreReadObjectVector(is, environment, error);
     }
     else
     {
-        result.covers = @[];
+        [result setCovers:@[]];
     }
 
     return result;
@@ -6893,119 +4647,116 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernStickerSetInstallResultParser : TLmessages_StickerSetInstallResult
+@interface OGTLModernStickerSetInstallResultParser : TLmessages_StickerSetInstallResult
 @end
 
-@implementation TLCodexModernStickerSetInstallResultParser
+@implementation OGTLModernStickerSetInstallResultParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x38641628)
+    if (signature == OGTLCtor(0x38641628))
     {
-        return [[TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultSuccess alloc] init];
+        return OGTLNewObject(TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultSuccess);
     }
     
-    TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive *result = [[TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive alloc] init];
-    result.sets = CodexReadObjectVector(is, environment, error);
+    TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive *result = OGTLNewObject(TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive);
+    result.sets = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernFoundStickerSetsParser : TLmessages_FoundStickerSets$messages_foundStickerSets
+@interface OGTLModernFoundStickerSetsParser : TLmessages_FoundStickerSets$messages_foundStickerSets
 @end
 
-@implementation TLCodexModernFoundStickerSetsParser
+@implementation OGTLModernFoundStickerSetsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x0d54b65d)
+    if (signature == OGTLCtor(0x0d54b65d))
     {
-        return [[TLmessages_FoundStickerSets alloc] init];
+        return OGTLNewObject(TLmessages_FoundStickerSets);
     }
     
-    TLmessages_FoundStickerSets$messages_foundStickerSets *result = [[TLmessages_FoundStickerSets$messages_foundStickerSets alloc] init];
+    TLmessages_FoundStickerSets$messages_foundStickerSets *result = OGTLNewObject(TLmessages_FoundStickerSets$messages_foundStickerSets);
     result.n_hash = [is readInt32];
-    result.sets = CodexReadObjectVector(is, environment, error);
+    result.sets = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernExportedAuthorizationParser : TLauth_ExportedAuthorization$auth_exportedAuthorization
+@interface OGTLModernExportedAuthorizationParser : TLauth_ExportedAuthorization$auth_exportedAuthorization
 @end
 
-@implementation TLCodexModernExportedAuthorizationParser
+@implementation OGTLModernExportedAuthorizationParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLauth_ExportedAuthorization$auth_exportedAuthorization *result = [[TLauth_ExportedAuthorization$auth_exportedAuthorization alloc] init];
+    TLauth_ExportedAuthorization$auth_exportedAuthorization *result = OGTLNewObject(TLauth_ExportedAuthorization$auth_exportedAuthorization);
     result.n_id = [is readInt64];
-    result.bytes = [is readBytes];
+    result.bytes = OGTLTakeBytes(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernBotInfoParser : TLBotInfo$botInfo
+@interface OGTLModernBotInfoParser : TLBotInfo$botInfo
 @end
 
-@implementation TLCodexModernBotInfoParser
+@implementation OGTLModernBotInfoParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLBotInfo$botInfo *result = [[TLBotInfo$botInfo alloc] init];
+    TLBotInfo$botInfo *result = OGTLNewObject(TLBotInfo$botInfo);
     int32_t flags = [is readInt32];
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
     {
-        int64_t userId = [is readInt64];
+        int64_t userId = OGTLTakeInt64(is);
         result.user_id = userId;
     }
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         result.n_description = [is readString];
-    if (flags & (1 << 4))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 4, 'o');
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 5))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 5, 'o');
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 2))
-        result.commands = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    if (OGTLFlagSet(flags, 2))
+        result.commands = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if (flags & (1 << 3))
-        CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 3, 'o');
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexPeerSettingsContainerParser : TLPeerSettings$peerSettings
+@interface OGTLPeerSettingsContainerParser : TLPeerSettings$peerSettings
 @end
 
-@implementation TLCodexPeerSettingsContainerParser
+@implementation OGTLPeerSettingsContainerParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLPeerSettings *settings = (TLPeerSettings *)CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    TLPeerSettings *settings = (TLPeerSettings *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    return settings != nil ? settings : [[TLPeerSettings$peerSettings alloc] init];
+    return settings != nil ? settings : OGTLNewObject(TLPeerSettings$peerSettings);
 }
 
 @end
 
-@interface TLCodexForumTopic : NSObject <TLObject>
+@interface OGTLForumTopic : OGTLManualParser
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t topicId;
 @property (nonatomic) int32_t date;
@@ -7022,32 +4773,27 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 @property (nonatomic) bool deleted;
 @end
 
-@implementation TLCodexForumTopic
+@implementation OGTLForumTopic
 - (int32_t)TLconstructorSignature { return (int32_t)0xfcdad815; }
 - (int32_t)TLconstructorName { return 0; }
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-@interface TLCodexForumTopicParser : NSObject <TLObject>
+@interface OGTLForumTopicParser : OGTLManualParser
 @end
 
-@implementation TLCodexForumTopicParser
+@implementation OGTLForumTopicParser
 
 - (int32_t)TLconstructorSignature
 {
-    return 0x71701da9;
-}
-
-- (int32_t)TLconstructorName
-{
-    return 0;
+    return OGTLCtor(0x71701da9);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexForumTopic *result = [[TLCodexForumTopic alloc] init];
+    OGTLForumTopic *result = [[OGTLForumTopic alloc] init];
 
-    if (signature == (int32_t)0x023f109b)
+    if (signature == OGTLCtor(0x023f109b))
     {
         result.topicId = [is readInt32];
         result.deleted = true;
@@ -7059,16 +4805,16 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     result.topicId = [is readInt32];
     result.date = [is readInt32];
 
-    if (signature == (int32_t)0xfcdad815)
+    if (signature == OGTLCtor(0xfcdad815))
     {
-        CodexReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
 
     result.title = [is readString];
     result.iconColor = [is readInt32];
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
         result.iconEmojiId = [is readInt64];
 
     result.topMessage = [is readInt32];
@@ -7077,21 +4823,21 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     result.unreadCount = [is readInt32];
     result.unreadMentionsCount = [is readInt32];
     result.unreadReactionsCount = [is readInt32];
-    if (signature == (int32_t)0xfcdad815)
+    if (signature == OGTLCtor(0xfcdad815))
         result.unreadPollVotesCount = [is readInt32];
 
-    CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
 
-    CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
 
-    if (flags & (1 << 4))
+    if (OGTLFlagSet(flags, 4))
     {
-        CodexReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
 
@@ -7100,37 +4846,37 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexForumTopicsResult : TLmessages_Messages$messages_messagesSlice
+@interface OGTLForumTopicsResult : TLmessages_Messages$messages_messagesSlice
 @property (nonatomic, strong) NSArray *ios6_forumTopics;
 @property (nonatomic) int32_t pts;
 @property (nonatomic) bool orderByCreateDate;
 @end
 
-@implementation TLCodexForumTopicsResult
+@implementation OGTLForumTopicsResult
 @end
 
-@interface TLCodexForumTopicsParser : TLmessages_Messages
+@interface OGTLForumTopicsParser : TLmessages_Messages
 @end
 
-@implementation TLCodexForumTopicsParser
+@implementation OGTLForumTopicsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexForumTopicsResult *result = [[TLCodexForumTopicsResult alloc] init];
+    OGTLForumTopicsResult *result = [[OGTLForumTopicsResult alloc] init];
     int32_t flags = [is readInt32];
     result.orderByCreateDate = (flags & (1 << 0)) != 0;
     result.count = [is readInt32];
-    result.ios6_forumTopics = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.ios6_forumTopics = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.messages = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.messages = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.chats = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadObjectVector(is, environment, error);
-    if (error != nil && *error != nil)
+    result.users = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     result.pts = [is readInt32];
     return result;
@@ -7138,63 +4884,62 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernPrivacyRulesParser : TLaccount_PrivacyRules$account_privacyRules
+@interface OGTLModernPrivacyRulesParser : TLaccount_PrivacyRules$account_privacyRules
 @end
 
-@implementation TLCodexModernPrivacyRulesParser
+@implementation OGTLModernPrivacyRulesParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLaccount_PrivacyRules$account_privacyRules *result = [[TLaccount_PrivacyRules$account_privacyRules alloc] init];
-    result.rules = CodexReadObjectVectorWithRole(is, @"privacy.rules", environment, error);
-    if (error != NULL && *error != nil)
+    TLaccount_PrivacyRules$account_privacyRules *result = OGTLNewObject(TLaccount_PrivacyRules$account_privacyRules);
+    result.rules = OGTLCoreReadObjectVectorWithRole(is, @"privacy.rules", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadObjectVectorWithRole(is, @"privacy.chats", environment, error);
-    if (error != NULL && *error != nil)
+    result.chats = OGTLCoreReadObjectVectorWithRole(is, @"privacy.chats", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadObjectVectorWithRole(is, @"privacy.users", environment, error);
-    if (error != NULL && *error != nil)
+    result.users = OGTLCoreReadObjectVectorWithRole(is, @"privacy.users", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernChannelMessagesParser : TLmessages_Messages$messages_channelMessages
+@interface OGTLModernChannelMessagesParser : TLmessages_Messages$messages_channelMessages
 @end
 
-@implementation TLCodexModernChannelMessagesParser
+@implementation OGTLModernChannelMessagesParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernChannelMessagesParser *result = [[TLCodexModernChannelMessagesParser alloc] init];
+    OGTLModernChannelMessagesParser *result = [[OGTLModernChannelMessagesParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
     result.pts = [is readInt32];
     result.count = [is readInt32];
-    if (flags & (1 << 2))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
     
-    result.messages = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.messages", environment, error);
-    if (error != nil && *error != nil)
+    result.messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelMessages.messages", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
     
-    CodexReadStrictObjectVectorWithRole(is, @"channelMessages.topics", environment, error);
-    if (error != nil && *error != nil)
+    OGTLCoreReadStrictObjectVectorWithRole(is, @"channelMessages.topics", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
     
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.chats", environment, error);
-    if (error != nil && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelMessages.chats", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
     
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.users", environment, error);
-    if (error != nil && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelMessages.users", environment, error);
+    if (OGTLCoreFailed(error))
     {
         return nil;
     }
@@ -7204,585 +4949,270 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernMessageActionParser : TLMessageAction
+enum
+{
+    OGTLActionResultChatDeletePhoto,
+    OGTLActionResultChatJoinedByRequest,
+    OGTLActionResultEmpty,
+    OGTLActionResultHistoryClear,
+    OGTLActionResultPinMessage
+};
+
+static const OGTLSkipLayout OGTLActionSkipLayouts[] =
+{
+    {(int32_t)0x80e11a7f, "fl0?i1?i", OGTLActionResultEmpty},
+    {(int32_t)0x87e2f155, "iii", OGTLActionResultEmpty},
+    {(int32_t)0x8f31b327, "fslb0?o1?so", OGTLActionResultEmpty},
+    {(int32_t)0x93b31848, "iv", OGTLActionResultEmpty},
+    {(int32_t)0x94bd38ed, "", OGTLActionResultPinMessage},
+    {(int32_t)0x95ddcf69, "o", OGTLActionResultEmpty},
+    {(int32_t)0x95e3fbef, "", OGTLActionResultChatDeletePhoto},
+    {(int32_t)0x96163f56, "fsl0?s", OGTLActionResultEmpty},
+    {(int32_t)0x98e0d697, "ooi", OGTLActionResultEmpty},
+    {(int32_t)0x9da1cd6c, "o", OGTLActionResultEmpty},
+    {(int32_t)0x9fbab604, "", OGTLActionResultHistoryClear},
+    {(int32_t)0xa80f51e4, "f0?l", OGTLActionResultEmpty},
+    {(int32_t)0xa8a3c699, "fslsl0?s", OGTLActionResultEmpty},
+    {(int32_t)0xaa786345, "s", OGTLActionResultEmpty},
+    {(int32_t)0xb00c47a2, "ilsoi", OGTLActionResultEmpty},
+    {(int32_t)0xb07ed085, "l", OGTLActionResultEmpty},
+    {(int32_t)0xb3a07661, "oi", OGTLActionResultEmpty},
+    {(int32_t)0xb4c38cb5, "s", OGTLActionResultEmpty},
+    {(int32_t)0xb6aef7b0, "", OGTLActionResultEmpty},
+    {(int32_t)0xb91bbd3a, "o", OGTLActionResultEmpty},
+    {(int32_t)0xbf7d6572, "oo", OGTLActionResultEmpty},
+    {(int32_t)0xc0944820, "f0?s1?l2?o3?o", OGTLActionResultEmpty},
+    {(int32_t)0xc516d679, "f0?s2?o", OGTLActionResultEmpty},
+    {(int32_t)0xc624b16e, "fsl0?s4?i", OGTLActionResultEmpty},
+    {(int32_t)0xc7edbc83, "v", OGTLActionResultEmpty},
+    {(int32_t)0xc83d6aec, "fsli0?s0?l", OGTLActionResultEmpty},
+    {(int32_t)0xcc02aa6d, "i", OGTLActionResultEmpty},
+    {(int32_t)0xcc7c5c89, "nn", OGTLActionResultEmpty},
+    {(int32_t)0xd7c0ff9c, "", OGTLActionResultEmpty},
+    {(int32_t)0xd95c6154, "v", OGTLActionResultEmpty},
+    {(int32_t)0xe188503b, "l", OGTLActionResultEmpty},
+    {(int32_t)0xea2c31d3, "fo1?o4?l5?i8?l11?o12?o12?l14?s15?i18?o19?i", OGTLActionResultEmpty},
+    {(int32_t)0xebbca3cb, "", OGTLActionResultChatJoinedByRequest},
+    {(int32_t)0xee7a1596, "f2?s3?i4?o", OGTLActionResultEmpty},
+    {(int32_t)0xf3f25f76, "", OGTLActionResultEmpty},
+    {(int32_t)0xfae69f56, "s", OGTLActionResultEmpty},
+    {(int32_t)0xffa00ccc, "fslb0?o1?so4?i", OGTLActionResultEmpty},
+    {(int32_t)0x0d999256, "fsi0?l", OGTLActionResultEmpty},
+    {(int32_t)0x16605e3e, "l", OGTLActionResultEmpty},
+    {(int32_t)0x1b287353, "vo", OGTLActionResultEmpty},
+    {(int32_t)0x2a9fadc5, "ii", OGTLActionResultEmpty},
+    {(int32_t)0x2c8f2a25, "o", OGTLActionResultEmpty},
+    {(int32_t)0x2ffe2f7a, "fl2?i3?v", OGTLActionResultEmpty},
+    {(int32_t)0x31518e9b, "iv", OGTLActionResultEmpty},
+    {(int32_t)0x31c48347, "f1?ois2?s2?l3?s3?l4?o", OGTLActionResultEmpty},
+    {(int32_t)0x332ba9ed, "", OGTLActionResultEmpty},
+    {(int32_t)0x399674dc, "o", OGTLActionResultEmpty},
+    {(int32_t)0x3c134d7b, "fi0?l", OGTLActionResultEmpty},
+    {(int32_t)0x3e2793ba, "ioo", OGTLActionResultEmpty},
+    {(int32_t)0x41b3e202, "fosl0?bo", OGTLActionResultEmpty},
+    {(int32_t)0x45d5b021, "fsll0?s0?l1?s", OGTLActionResultEmpty},
+    {(int32_t)0x4792929b, "", OGTLActionResultEmpty},
+    {(int32_t)0x47dd8079, "ss", OGTLActionResultEmpty},
+    {(int32_t)0x48e91302, "fsli0?s0?l1?o", OGTLActionResultEmpty},
+    {(int32_t)0x502f92f7, "om", OGTLActionResultEmpty},
+    {(int32_t)0x5060a3f4, "io", OGTLActionResultEmpty},
+    {(int32_t)0x57de635e, "o", OGTLActionResultEmpty},
+    {(int32_t)0x678c2e09, "f1?ois2?s2?l3?s3?l", OGTLActionResultEmpty},
+    {(int32_t)0x69f916f8, "i", OGTLActionResultEmpty},
+    {(int32_t)0x73ada76b, "ioo", OGTLActionResultEmpty},
+    {(int32_t)0x774278d4, "iooi", OGTLActionResultEmpty},
+    {(int32_t)0x7a0d7f42, "fo0?i", OGTLActionResultEmpty}
+};
+
+static id<TLObject> OGTLActionForSkippedResult(uint8_t result)
+{
+    switch (result)
+    {
+        case OGTLActionResultChatDeletePhoto:
+            return OGTLNewObject(TLMessageAction$messageActionChatDeletePhoto);
+        case OGTLActionResultChatJoinedByRequest:
+            return [[TLMessageAction$messageActionChatJoinedByRequest alloc] init];
+        case OGTLActionResultEmpty:
+            return OGTLNewObject(TLMessageAction$messageActionEmpty);
+        case OGTLActionResultHistoryClear:
+            return OGTLNewObject(TLMessageAction$messageActionHistoryClear);
+        case OGTLActionResultPinMessage:
+            return OGTLNewObject(TLMessageAction$messageActionPinMessage);
+        default:
+            return nil;
+    }
+}
+
+@interface OGTLModernMessageActionParser : TLMessageAction
 @end
 
-@implementation TLCodexModernMessageActionParser
+@implementation OGTLModernMessageActionParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
+    const OGTLSkipLayout *skipLayout = OGTLFindSkipLayout(OGTLActionSkipLayouts, sizeof(OGTLActionSkipLayouts) / sizeof(OGTLActionSkipLayouts[0]), signature);
+    if (skipLayout != NULL)
+    {
+        OGTLSkipFields(is, skipLayout->layout, environment, error);
+        return OGTLActionForSkippedResult(skipLayout->result);
+    }
+
     switch (signature)
     {
-        case (int32_t)0xb6aef7b0:
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x80e11a7f:
+        case OGTLCtor(0xbd47cbad):
         {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readInt32];
-            if (flags & (1 << 1))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xbd47cbad:
-        {
-            TLMessageAction$messageActionChatCreate *result = [[TLMessageAction$messageActionChatCreate alloc] init];
+            TLMessageAction$messageActionChatCreate *result = OGTLNewObject(TLMessageAction$messageActionChatCreate);
             result.title = [is readString];
-            result.users = CodexReadInt64Vector(is);
+            result.users = OGTLCoreReadInt64Vector(is);
             return result;
         }
-        case (int32_t)0xb5a1ce5a:
+        case OGTLCtor(0xb5a1ce5a):
         {
-            TLMessageAction$messageActionChatEditTitle *result = [[TLMessageAction$messageActionChatEditTitle alloc] init];
+            TLMessageAction$messageActionChatEditTitle *result = OGTLNewObject(TLMessageAction$messageActionChatEditTitle);
             result.title = [is readString];
             return result;
         }
-        case (int32_t)0x7fcb13a8:
+        case OGTLCtor(0x7fcb13a8):
         {
-            TLMessageAction$messageActionChatEditPhoto *result = [[TLMessageAction$messageActionChatEditPhoto alloc] init];
-            result.photo = (TLPhoto *)CodexReadObject(is, environment, error);
+            TLMessageAction$messageActionChatEditPhoto *result = OGTLNewObject(TLMessageAction$messageActionChatEditPhoto);
+            result.photo = (TLPhoto *)OGTLCoreReadObject(is, environment, error);
             return result;
         }
-        case (int32_t)0x95e3fbef:
-            return [[TLMessageAction$messageActionChatDeletePhoto alloc] init];
-        case (int32_t)0x15cefd00:
+        case OGTLCtor(0x15cefd00):
         {
-            TLMessageAction$messageActionChatAddUser *result = [[TLMessageAction$messageActionChatAddUser alloc] init];
-            result.users = CodexReadInt64Vector(is);
+            TLMessageAction$messageActionChatAddUser *result = OGTLNewObject(TLMessageAction$messageActionChatAddUser);
+            result.users = OGTLCoreReadInt64Vector(is);
             return result;
         }
-        case (int32_t)0xa43f30cc:
+        case OGTLCtor(0xa43f30cc):
         {
-            TLMessageAction$messageActionChatDeleteUser *result = [[TLMessageAction$messageActionChatDeleteUser alloc] init];
+            TLMessageAction$messageActionChatDeleteUser *result = OGTLNewObject(TLMessageAction$messageActionChatDeleteUser);
             result.user_id = [is readInt64];
             return result;
         }
-        case (int32_t)0x31224c3:
+        case OGTLCtor(0x31224c3):
         {
-            TLMessageAction$messageActionChatJoinedByLink *result = [[TLMessageAction$messageActionChatJoinedByLink alloc] init];
+            TLMessageAction$messageActionChatJoinedByLink *result = OGTLNewObject(TLMessageAction$messageActionChatJoinedByLink);
             result.inviter_id = [is readInt64];
             return result;
         }
-        case (int32_t)0x95d2ac92:
+        case OGTLCtor(0x95d2ac92):
         {
-            TLMessageAction$messageActionChannelCreate *result = [[TLMessageAction$messageActionChannelCreate alloc] init];
+            TLMessageAction$messageActionChannelCreate *result = OGTLNewObject(TLMessageAction$messageActionChannelCreate);
             result.title = [is readString];
             return result;
         }
-        case (int32_t)0xe1037f92:
+        case OGTLCtor(0xe1037f92):
         {
-            TLMessageAction$messageActionChatMigrateTo *result = [[TLMessageAction$messageActionChatMigrateTo alloc] init];
+            TLMessageAction$messageActionChatMigrateTo *result = OGTLNewObject(TLMessageAction$messageActionChatMigrateTo);
             result.channel_id = [is readInt64];
             return result;
         }
-        case (int32_t)0xea3948e9:
+        case OGTLCtor(0xea3948e9):
         {
-            TLMessageAction$messageActionChannelMigrateFrom *result = [[TLMessageAction$messageActionChannelMigrateFrom alloc] init];
+            TLMessageAction$messageActionChannelMigrateFrom *result = OGTLNewObject(TLMessageAction$messageActionChannelMigrateFrom);
             result.title = [is readString];
             result.chat_id = [is readInt64];
             return result;
         }
-        case (int32_t)0x94bd38ed:
-            return [[TLMessageAction$messageActionPinMessage alloc] init];
-        case (int32_t)0x9fbab604:
-            return [[TLMessageAction$messageActionHistoryClear alloc] init];
-        case (int32_t)0x92a72876:
+        case OGTLCtor(0x92a72876):
         {
-            TLMessageAction$messageActionGameScore *result = [[TLMessageAction$messageActionGameScore alloc] init];
-            result.game_id = [is readInt64];
-            result.score = [is readInt32];
+            TLMessageAction$messageActionGameScore *result = OGTLNewObject(TLMessageAction$messageActionGameScore);
+            result.game_id = OGTLTakeInt64(is);
+            result.score = OGTLTakeInt32(is);
             return result;
         }
-        case (int32_t)0x3c134d7b:
+        case OGTLCtor(0xe6c31522):
+        case (int32_t)0x7e1c1187:
         {
             int32_t flags = [is readInt32];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xcc02aa6d:
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x0d999256:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x8f31b327:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readBytes];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x96163f56:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x4792929b:
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xfae69f56:
-            [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xc516d679:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x1b287353:
-            CodexReadObjectVector(is, environment, error);
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xd95c6154:
-            CodexReadObjectVector(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x98e0d697:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x7a0d7f42:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 0))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x502f92f7:
-            CodexReadObject(is, environment, error);
-            CodexReadInt64Vector(is);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xb3a07661:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xaa786345:
-            [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x47dd8079:
-            [is readString];
-            [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xb4c38cb5:
-            [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xc83d6aec:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 0))
+            OGTLCoreReadObject(is, environment, error);
+            OGTLSkipFlagged(is, environment, error, flags, 3, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 4, 'l');
+            OGTLSkipFlagged(is, environment, error, flags, 6, 'o');
+            if (OGTLFlagSet(flags, 7))
             {
-                [is readString];
-                [is readInt64];
+                OGTLCoreReadObject(is, environment, error);
+                OGTLTakeInt64(is);
             }
-            return [[TLMessageAction$messageActionEmpty alloc] init];
+            OGTLSkipFlagged(is, environment, error, flags, 8, 'o');
+            OGTLSkipFlagged(is, environment, error, flags, 9, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 10, 'i');
+            OGTLSkipFlagged(is, environment, error, flags, 12, 'l');
+            OGTLSkipFlagged(is, environment, error, flags, 15, 'i');
+            if (signature == (int32_t)0x7e1c1187 && (flags & (1 << 18)))
+                OGTLCoreReadObject(is, environment, error);
+            return OGTLNewObject(TLMessageAction$messageActionEmpty);
         }
-        case (int32_t)0xc0944820:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 1))
-                [is readInt64];
-            if (flags & (1 << 2))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x57de635e:
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x31518e9b:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x5060a3f4:
-        {
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x678c2e09:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readString];
-            if (flags & (1 << 2))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 3))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x332ba9ed:
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x2a9fadc5:
-            [is readInt32];
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x93b31848:
-            [is readInt32];
-            CodexReadObjectVector(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x41b3e202:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            [is readString];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readBytes];
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x45d5b021:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt64];
-            if (flags & (1 << 0))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 1))
-                [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xffa00ccc:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readBytes];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                [is readString];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xc624b16e:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readString];
-            if (flags & (1 << 4))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xb91bbd3a:
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x48e91302:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readInt32];
-            if (flags & (1 << 0))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x31c48347:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readString];
-            if (flags & (1 << 2))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 3))
-            {
-                [is readString];
-                [is readInt64];
-            }
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xa80f51e4:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 0))
-                [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x87e2f155:
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xb00c47a2:
-            [is readInt32];
-            [is readInt64];
-            [is readString];
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xea2c31d3:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 1))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 5))
-                [is readInt32];
-            if (flags & (1 << 8))
-                [is readInt64];
-            if (flags & (1 << 11))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 12))
-            {
-                CodexReadObject(is, environment, error);
-                [is readInt64];
-            }
-            if (flags & (1 << 14))
-                [is readString];
-            if (flags & (1 << 15))
-                [is readInt32];
-            if (flags & (1 << 18))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 19))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xe6c31522:
-        {
-            int32_t flags = [is readInt32];
-            CodexReadObject(is, environment, error);
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 4))
-                [is readInt64];
-            if (flags & (1 << 6))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 7))
-            {
-                CodexReadObject(is, environment, error);
-                [is readInt64];
-            }
-            if (flags & (1 << 8))
-                CodexReadObject(is, environment, error);
-            if (flags & (1 << 9))
-                [is readInt32];
-            if (flags & (1 << 10))
-                [is readInt32];
-            if (flags & (1 << 12))
-                [is readInt64];
-            if (flags & (1 << 15))
-                [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xac1f1fcd:
-            [is readInt32];
-            [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x84b88578:
-            [is readInt32];
-            [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x2ffe2f7a:
-        {
-            int32_t flags = [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 2))
-                [is readInt32];
-            if (flags & (1 << 3))
-                CodexReadObjectVector(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0xcc7c5c89:
-            CodexReadInt32Vector(is);
-            CodexReadInt32Vector(is);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xc7edbc83:
-            CodexReadObjectVector(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xee7a1596:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 2))
-                [is readString];
-            if (flags & (1 << 3))
-                [is readInt32];
-            if (flags & (1 << 4))
-                CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x95ddcf69:
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x69f916f8:
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xa8a3c699:
-        {
-            int32_t flags = [is readInt32];
-            [is readString];
-            [is readInt64];
-            [is readString];
-            [is readInt64];
-            if (flags & (1 << 0))
-                [is readString];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        }
-        case (int32_t)0x2c8f2a25:
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x774278d4:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x73ada76b:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xb07ed085:
-        case (int32_t)0xe188503b:
-            [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xbf7d6572:
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x3e2793ba:
-            [is readInt32];
-            CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x9da1cd6c:
-        case (int32_t)0x399674dc:
-            CodexReadObject(is, environment, error);
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0x16605e3e:
-            [is readInt64];
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xf3f25f76:
-        case (int32_t)0xd7c0ff9c:
-            return [[TLMessageAction$messageActionEmpty alloc] init];
-        case (int32_t)0xebbca3cb:
-            return [[TLMessageAction$messageActionChatJoinedByRequest alloc] init];
         default:
-            return [[TLMessageAction$messageActionEmpty alloc] init];
+            return OGTLNewObject(TLMessageAction$messageActionEmpty);
     }
 }
 
 @end
 
-@interface TLCodexModernDocumentParser : TLDocument$document
+@interface OGTLModernDocumentParser : TLDocument$document
 @end
 
-@implementation TLCodexModernDocumentParser
+@implementation OGTLModernDocumentParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernDocumentParser *result = [[TLCodexModernDocumentParser alloc] init];
+    OGTLModernDocumentParser *result = [[OGTLModernDocumentParser alloc] init];
     int32_t flags = [is readInt32];
     result.n_id = [is readInt64];
     result.access_hash = [is readInt64];
-    result.file_reference = [is readBytes];
+    result.file_reference = OGTLTakeBytes(is);
     result.date = [is readInt32];
-    result.mime_type = [is readString];
-    result.size = (int32_t)[is readInt64];
+    result.mime_type = OGTLTakeString(is);
+    result.size = (int32_t)OGTLTakeInt64(is);
     
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
     {
-        NSArray *thumbs = CodexReadObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
+        NSArray *thumbs = OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
 
-        TLPhotoSize *bestThumbnail = nil;
+        TLPhotoSize *pickedThumb = nil;
         int bestThumbnailDistance = INT_MAX;
-        for (id thumbnail in thumbs)
+        for (id candidate in thumbs)
         {
-            if ([thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
+            if (OGTLCoreIsKind(candidate, [TLPhotoSize$photoCachedSize class]))
             {
-                TLPhotoSize$photoCachedSize *cachedSize = (TLPhotoSize$photoCachedSize *)thumbnail;
-                int side = MAX(cachedSize.w, cachedSize.h);
+                TLPhotoSize$photoCachedSize *cached = (TLPhotoSize$photoCachedSize *)candidate;
+                int side = MAX(cached.w, cached.h);
                 int distance = ABS(side - 320);
-                if (cachedSize.bytes.length != 0 && cachedSize.bytes.length <= 512 * 1024 && cachedSize.w > 0 && cachedSize.h > 0 && side <= 640 && distance < bestThumbnailDistance)
+                if (cached.bytes.length != 0 && cached.bytes.length <= 512 * 1024 && cached.w > 0 && cached.h > 0 && side <= 640 && distance < bestThumbnailDistance)
                 {
-                    bestThumbnail = cachedSize;
+                    pickedThumb = cached;
                     bestThumbnailDistance = distance;
                 }
             }
         }
 
-        for (id thumbnail in thumbs)
+        for (id candidate in thumbs)
         {
-            if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
+            if (OGTLCoreIsKind(candidate, [TLPhotoSize$photoSize class]))
             {
-                TLPhotoSize$photoSize *photoSize = (TLPhotoSize$photoSize *)thumbnail;
-                int side = MAX(photoSize.w, photoSize.h);
+                TLPhotoSize$photoSize *plain = (TLPhotoSize$photoSize *)candidate;
+                int side = MAX(plain.w, plain.h);
                 int distance = ABS(side - 320);
-                if (photoSize.type.length != 0 && photoSize.size <= 512 * 1024 && photoSize.w > 0 && photoSize.h > 0 && side <= 640 && distance < bestThumbnailDistance)
+                if (plain.type.length != 0 && plain.size <= 512 * 1024 && plain.w > 0 && plain.h > 0 && side <= 640 && distance < bestThumbnailDistance)
                 {
-                    bestThumbnail = photoSize;
+                    pickedThumb = plain;
                     bestThumbnailDistance = distance;
                 }
             }
         }
 
-        result.thumb = bestThumbnail;
+        [result setThumb:pickedThumb];
         result.thumbs = thumbs;
     }
     
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
     {
-        NSArray *videoThumbnails = CodexReadObjectVectorOrSingle(is, environment, error);
-        if (error != nil && *error != nil)
+        NSArray *videoThumbnails = OGTLCoreReadObjectVectorOrSingle(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         result.video_thumbs = videoThumbnails;
 
@@ -7790,25 +5220,25 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         {
             TLPhotoSize *bestVideoThumbnail = nil;
             int64_t bestVideoThumbnailArea = -1;
-            for (id thumbnail in videoThumbnails)
+            for (id candidate in videoThumbnails)
             {
-                if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
+                if (OGTLCoreIsKind(candidate, [TLPhotoSize$photoSize class]))
                 {
-                    TLPhotoSize$photoSize *photoSize = (TLPhotoSize$photoSize *)thumbnail;
-                    int64_t area = (int64_t)photoSize.w * (int64_t)photoSize.h;
-                    if (photoSize.type.length != 0 && photoSize.w > 0 && photoSize.h > 0 && area > bestVideoThumbnailArea)
+                    TLPhotoSize$photoSize *plain = (TLPhotoSize$photoSize *)candidate;
+                    int64_t area = (int64_t)plain.w * (int64_t)plain.h;
+                    if (plain.type.length != 0 && plain.w > 0 && plain.h > 0 && area > bestVideoThumbnailArea)
                     {
-                        bestVideoThumbnail = photoSize;
+                        bestVideoThumbnail = plain;
                         bestVideoThumbnailArea = area;
                     }
                 }
-                else if ([thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
+                else if (OGTLCoreIsKind(candidate, [TLPhotoSize$photoCachedSize class]))
                 {
-                    TLPhotoSize$photoCachedSize *cachedSize = (TLPhotoSize$photoCachedSize *)thumbnail;
-                    int64_t area = (int64_t)cachedSize.w * (int64_t)cachedSize.h;
-                    if (cachedSize.bytes.length != 0 && cachedSize.w > 0 && cachedSize.h > 0 && area > bestVideoThumbnailArea)
+                    TLPhotoSize$photoCachedSize *cached = (TLPhotoSize$photoCachedSize *)candidate;
+                    int64_t area = (int64_t)cached.w * (int64_t)cached.h;
+                    if (cached.bytes.length != 0 && cached.w > 0 && cached.h > 0 && area > bestVideoThumbnailArea)
                     {
-                        bestVideoThumbnail = cachedSize;
+                        bestVideoThumbnail = cached;
                         bestVideoThumbnailArea = area;
                     }
                 }
@@ -7817,31 +5247,31 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         }
     }
     
-    int32_t dcIdOrAttributesMarker = [is readInt32];
-    if (dcIdOrAttributesMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+    int32_t leadingMarker = OGTLTakeInt32(is);
+    if (leadingMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
-        result.dc_id = 0;
-        result.attributes = CodexReadObjectVectorWithMarker(is, dcIdOrAttributesMarker, environment, error);
+        [result setDc_id:0];
+        result.attributes = OGTLCoreReadObjectVectorWithMarker(is, leadingMarker, environment, error);
     }
     else
     {
-        result.dc_id = dcIdOrAttributesMarker;
-        int32_t attributesMarker = [is readInt32];
-        result.attributes = CodexReadObjectVectorOrSingleWithMarker(is, attributesMarker, environment, error);
-        if ((error == nil || *error == nil) && attributesMarker == (int32_t)0xd38ff1c2)
+        [result setDc_id:leadingMarker];
+        int32_t attributesMarker = OGTLTakeInt32(is);
+        result.attributes = OGTLCoreReadObjectVectorOrSingleWithMarker(is, attributesMarker, environment, error);
+        if ((error == nil || *error == nil) && attributesMarker == OGTLCtor(0xd38ff1c2))
         {
-            for (int32_t i = 0; i < 3; i++)
+            for (int32_t tailIndex = 0; tailIndex < 3; tailIndex++)
             {
-                int32_t tailWord = [is readInt32];
-                if (CodexSkipBareDocumentAttributeTailWord(is, tailWord))
+                int32_t tailWord = OGTLTakeInt32(is);
+                if (OGTLCoreSkipBareDocumentAttributeTailWord(is, tailWord))
                 {
                     continue;
                 }
-                else if (CodexLooksLikeStringFirstWord(tailWord))
+                else if (OGTLCoreLooksLikeStringFirstWord(tailWord))
                 {
-                    CodexSkipStringWithFirstWord(is, tailWord);
+                    OGTLCoreSkipStringWithFirstWord(is, tailWord);
                 }
-                else if (CodexLooksLikeTinyBareDocumentTailWord(tailWord))
+                else if (OGTLCoreLooksLikeTinyBareDocumentTailWord(tailWord))
                 {
                 }
                 else
@@ -7849,7 +5279,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             }
         }
     }
-    if (error != nil && *error != nil)
+    if (OGTLCoreFailed(error))
         return nil;
     
     return result;
@@ -7857,81 +5287,78 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernDocumentAttributeVideoParser : TLDocumentAttribute$documentAttributeVideo
+@interface OGTLModernDocumentAttributeVideoParser : TLDocumentAttribute$documentAttributeVideo
 @end
 
-@implementation TLCodexModernDocumentAttributeVideoParser
+@implementation OGTLModernDocumentAttributeVideoParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernDocumentAttributeVideoParser *result = [[TLCodexModernDocumentAttributeVideoParser alloc] init];
+    OGTLModernDocumentAttributeVideoParser *result = [[OGTLModernDocumentAttributeVideoParser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    result.duration = (int32_t)[is readDouble];
+    result.duration = (int32_t)OGTLTakeDouble(is);
     result.w = [is readInt32];
     result.h = [is readInt32];
-    if (flags & (1 << 2))
-        [is readInt32];
-    if (flags & (1 << 4))
-        [is readDouble];
-    if (flags & (1 << 5))
+    OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 4, 'd');
+    if (OGTLFlagSet(flags, 5))
         result.video_codec = [is readString];
     return result;
 }
 
 @end
 
-@interface TLCodexModernDocumentAttributeVideoD38Parser : TLDocumentAttribute$documentAttributeVideo
+@interface OGTLModernDocumentAttributeVideoD38Parser : TLDocumentAttribute$documentAttributeVideo
 @end
 
-@implementation TLCodexModernDocumentAttributeVideoD38Parser
+@implementation OGTLModernDocumentAttributeVideoD38Parser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernDocumentAttributeVideoD38Parser *result = [[TLCodexModernDocumentAttributeVideoD38Parser alloc] init];
+    OGTLModernDocumentAttributeVideoD38Parser *result = [[OGTLModernDocumentAttributeVideoD38Parser alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    result.duration = (int32_t)[is readDouble];
+    result.duration = (int32_t)OGTLTakeDouble(is);
     result.w = [is readInt32];
     result.h = [is readInt32];
-    if (flags & (1 << 2))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 2, 'i');
     return result;
 }
 
 @end
 
-@interface TLCodexModernDocumentAttributeFilenameParser : TLDocumentAttribute$documentAttributeFilename
+@interface OGTLModernDocumentAttributeFilenameParser : TLDocumentAttribute$documentAttributeFilename
 @end
 
-@implementation TLCodexModernDocumentAttributeFilenameParser
+@implementation OGTLModernDocumentAttributeFilenameParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernDocumentAttributeFilenameParser *result = [[TLCodexModernDocumentAttributeFilenameParser alloc] init];
-    result.file_name = [is readString];
+    OGTLModernDocumentAttributeFilenameParser *result = [[OGTLModernDocumentAttributeFilenameParser alloc] init];
+    result.file_name = OGTLTakeString(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernUserProfilePhotoParser : TLUserProfilePhoto$userProfilePhoto
+@interface OGTLModernUserProfilePhotoParser : TLUserProfilePhoto$userProfilePhoto
 @end
 
-@implementation TLCodexModernUserProfilePhotoParser
+@implementation OGTLModernUserProfilePhotoParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernUserProfilePhotoParser *result = [[TLCodexModernUserProfilePhotoParser alloc] init];
+    OGTLModernUserProfilePhotoParser *result = [[OGTLModernUserProfilePhotoParser alloc] init];
     int32_t flags = [is readInt32];
-    result.photo_id = [is readInt64];
+    result.photo_id = OGTLTakeInt64(is);
     NSData *strippedThumbnail = nil;
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         strippedThumbnail = [is readBytes];
-    result.dc_id = [is readInt32];
+    result.dc_id = OGTLTakeInt32(is);
     if (OGPlatformUsesConstrainedBackgroundExecution() && strippedThumbnail.length != 0)
     {
-        NSData *decodedThumbnail = CodexDecodedStrippedThumbnail(strippedThumbnail);
+        NSData *decodedThumbnail = OGTLCoreDecodedStrippedThumbnail(strippedThumbnail);
         UIImage *thumbnailImage = decodedThumbnail.length == 0 ? nil : [[UIImage alloc] initWithData:decodedThumbnail];
         if (thumbnailImage != nil)
             objc_setAssociatedObject(result, NSSelectorFromString(@"onegramStrippedAvatar"), thumbnailImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -7942,25 +5369,25 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernChatPhotoParser : TLChatPhoto$chatPhoto
+@interface OGTLModernChatPhotoParser : TLChatPhoto$chatPhoto
 @end
 
-@implementation TLCodexModernChatPhotoParser
+@implementation OGTLModernChatPhotoParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
-    TLChatPhoto$chatPhoto *result = [[TLChatPhoto$chatPhoto alloc] init];
-    if (signature == (int32_t)0x1c6e1c11)
+    TLChatPhoto$chatPhoto *result = OGTLNewObject(TLChatPhoto$chatPhoto);
+    if (signature == OGTLCtor(0x1c6e1c11))
     {
         int32_t flags = [is readInt32];
-        result.photo_id = [is readInt64];
+        result.photo_id = OGTLTakeInt64(is);
         NSData *strippedThumbnail = nil;
-        if (flags & (1 << 1))
+        if (OGTLFlagSet(flags, 1))
             strippedThumbnail = [is readBytes];
-        result.dc_id = [is readInt32];
+        result.dc_id = OGTLTakeInt32(is);
         if (OGPlatformUsesConstrainedBackgroundExecution() && strippedThumbnail.length != 0)
         {
-            NSData *decodedThumbnail = CodexDecodedStrippedThumbnail(strippedThumbnail);
+            NSData *decodedThumbnail = OGTLCoreDecodedStrippedThumbnail(strippedThumbnail);
             UIImage *thumbnailImage = decodedThumbnail.length == 0 ? nil : [[UIImage alloc] initWithData:decodedThumbnail];
             if (thumbnailImage != nil)
                 objc_setAssociatedObject(result, NSSelectorFromString(@"onegramStrippedAvatar"), thumbnailImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -7972,10 +5399,10 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernChatParser : TLChat$chat
+@interface OGTLModernChatParser : TLChat$chat
 @end
 
-@implementation TLCodexModernChatParser
+@implementation OGTLModernChatParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -7985,33 +5412,33 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     result.creator = (flags & (1 << 0));
     result.left = (flags & (1 << 2));
     result.deactivated = (flags & (1 << 5));
-    int64_t chatId = [is readInt64];
+    int64_t chatId = OGTLTakeInt64(is);
     result.n_id = chatId;
     result.title = [is readString];
-    result.photo = (TLChatPhoto *)CodexReadObject(is, environment, error);
+    result.photo = (TLChatPhoto *)OGTLCoreReadObject(is, environment, error);
     result.participants_count = [is readInt32];
     result.date = [is readInt32];
     result.version = [is readInt32];
-    if (flags & (1 << 6))
-        result.migrated_to = (TLInputChannel *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 14))
-        result.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 18))
-        result.default_banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 6))
+        result.migrated_to = (TLInputChannel *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 14))
+        result.admin_rights = (TLChannelAdminRights *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 18))
+        result.default_banned_rights = (TLChannelBannedRights *)OGTLCoreReadObject(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernChatForbiddenParser : TLChat$chatForbidden
+@interface OGTLModernChatForbiddenParser : TLChat$chatForbidden
 @end
 
-@implementation TLCodexModernChatForbiddenParser
+@implementation OGTLModernChatForbiddenParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLChat$chatForbidden *result = [[TLChat$chatForbidden alloc] init];
-    int64_t chatId = [is readInt64];
+    TLChat$chatForbidden *result = OGTLNewObject(TLChat$chatForbidden);
+    int64_t chatId = OGTLTakeInt64(is);
     result.n_id = chatId;
     result.title = [is readString];
     return result;
@@ -8019,10 +5446,10 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernChatAdminRightsParser : TLChannelAdminRights$channelAdminRights
+@interface OGTLModernChatAdminRightsParser : TLChannelAdminRights$channelAdminRights
 @end
 
-@implementation TLCodexModernChatAdminRightsParser
+@implementation OGTLModernChatAdminRightsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
@@ -8033,10 +5460,10 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernChatBannedRightsParser : TLChannelBannedRights$channelBannedRights
+@interface OGTLModernChatBannedRightsParser : TLChannelBannedRights$channelBannedRights
 @end
 
-@implementation TLCodexModernChatBannedRightsParser
+@implementation OGTLModernChatBannedRightsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
@@ -8048,49 +5475,47 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
-@interface TLCodexModernChannelParser : TLChat$channel
+@interface OGTLModernChannelParser : TLChat$channel
 @end
 
-@implementation TLCodexModernChannelParser
+@implementation OGTLModernChannelParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLChat$channel *result = [[TLChat$channel alloc] init];
     result.name_color_id = -1;
     int32_t flags = [is readInt32];
-    int32_t flags2 = [is readInt32];
+    int32_t flags2 = OGTLTakeInt32(is);
     result.flags = flags;
-    result.flags2 = flags2;
-    int64_t channelId = [is readInt64];
+    [result setFlags2:flags2];
+    int64_t channelId = OGTLTakeInt64(is);
     result.n_id = channelId;
-    if (flags & (1 << 13))
+    if (OGTLFlagSet(flags, 13))
         result.access_hash = [is readInt64];
     result.title = [is readString];
-    if (flags & (1 << 6))
+    if (OGTLFlagSet(flags, 6))
         result.username = [is readString];
-    result.photo = (TLChatPhoto *)CodexReadObject(is, environment, error);
+    result.photo = (TLChatPhoto *)OGTLCoreReadObject(is, environment, error);
     result.date = [is readInt32];
-    if (flags & (1 << 9))
-        CodexReadObjectVector(is, environment, error);
-    if (flags & (1 << 14))
-        result.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 15))
-        result.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 18))
-        result.default_banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 17))
+    OGTLSkipFlagged(is, environment, error, flags, 9, 'v');
+    if (OGTLFlagSet(flags, 14))
+        result.admin_rights = (TLChannelAdminRights *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 15))
+        result.banned_rights = (TLChannelBannedRights *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 18))
+        result.default_banned_rights = (TLChannelBannedRights *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 17))
         result.participants_count = [is readInt32];
-    if (flags2 & (1 << 0))
-        CodexReadObjectVector(is, environment, error);
-    if (flags2 & (1 << 4))
+    OGTLSkipFlagged(is, environment, error, flags2, 0, 'v');
+    if (OGTLFlagSet(flags2, 4))
     {
 
-        if (signature == (int32_t)0x1c32b11c || signature == (int32_t)0xd49f34c6)
-            CodexReadObject(is, environment, error);
+        if (signature == (int32_t)0x1c32b11c || signature == (int32_t)0xd49f34c6 || signature == (int32_t)0x7ad15240)
+            OGTLCoreReadObject(is, environment, error);
         else
             [is readInt32];
     }
-    if (flags2 & (1 << 7))
+    if (OGTLFlagSet(flags2, 7))
     {
         int32_t colorSignature = [is readInt32];
         if (colorSignature == (int32_t)0xb54b5acf)
@@ -8099,261 +5524,260 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             if (colorFlags & (1 << 0))
                 result.name_color_id = [is readInt32];
             if (colorFlags & (1 << 1))
-                [is readInt64];
+                OGTLTakeInt64(is);
         }
         else
-            TLMetaClassStore::constructObject(is, colorSignature, environment, nil, error);
+            OGTLCoreBuildObject(is, colorSignature, environment, error);
     }
-    if (flags2 & (1 << 8))
-        CodexReadObject(is, environment, error);
-    if (flags2 & (1 << 9))
-        CodexReadObject(is, environment, error);
-    if (flags2 & (1 << 10))
-        [is readInt32];
-    if (flags2 & (1 << 11))
-        [is readInt32];
-    if (flags2 & (1 << 13))
-        [is readInt64];
-    if (flags2 & (1 << 14))
+    OGTLSkipFlagged(is, environment, error, flags2, 8, 'o');
+    OGTLSkipFlagged(is, environment, error, flags2, 9, 'o');
+    OGTLSkipFlagged(is, environment, error, flags2, 10, 'i');
+    OGTLSkipFlagged(is, environment, error, flags2, 11, 'i');
+    OGTLSkipFlagged(is, environment, error, flags2, 13, 'l');
+    if (OGTLFlagSet(flags2, 14))
         result.send_paid_messages_stars = [is readInt64];
-    if (flags2 & (1 << 18))
+    if (OGTLFlagSet(flags2, 18))
         result.linked_monoforum_id = [is readInt64];
-    if (signature == (int32_t)0xd49f34c6 && (flags2 & (1 << 20)))
+    if ((signature == (int32_t)0xd49f34c6 || signature == (int32_t)0x7ad15240) && (flags2 & (1 << 20)))
         result.linked_community_id = [is readInt64];
+    if (signature == (int32_t)0x7ad15240 && (flags2 & (1 << 22)))
+        [is readInt32];
     return result;
 }
 
 @end
 
-static NSDictionary *TLCodexReadChatReactionPolicy(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSDictionary *OGTLReadChatReactionPolicy(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t signature = [is readInt32];
     if (signature == (int32_t)0xeafc32bc)
-        return @{ @"mode": @"none", @"emojis": @[] };
+        return OGTLChatReactionModeInfo(@"none", @[]);
 
     if (signature == (int32_t)0x52928bca)
     {
         [is readInt32];
-        return @{ @"mode": @"all", @"emojis": @[] };
+        return OGTLChatReactionModeInfo(@"all", @[]);
     }
 
     if (signature == (int32_t)0x661d4037)
     {
-        int32_t marker = [is readInt32];
-        int32_t count = marker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR ? [is readInt32] : 0;
-        if (count < 0 || count > 256)
+        int32_t marker = OGTLTakeInt32(is);
+        int32_t count = marker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR ? OGTLTakeInt32(is) : 0;
+        if ((uint32_t)count > 256)
             count = 0;
 
-        NSMutableArray *emojis = [[NSMutableArray alloc] init];
+        NSMutableArray *pickedEmojis = [[NSMutableArray alloc] init];
         for (int32_t i = 0; i < count; i++)
         {
-            int32_t reactionSignature = [is readInt32];
-            if (reactionSignature == (int32_t)0x1b2286b8)
+            int32_t reactionSignature = OGTLTakeInt32(is);
+            if (reactionSignature == OGTLCtor(0x1b2286b8))
             {
-                NSString *emoji = [is readString];
-                if (emoji.length != 0 && ![emojis containsObject:emoji])
-                    [emojis addObject:emoji];
+                NSString *emoji = OGTLTakeString(is);
+                if (emoji.length == 0 || [pickedEmojis containsObject:emoji])
+                    continue;
+                [pickedEmojis addObject:emoji];
             }
-            else if (reactionSignature == (int32_t)0x8935fc73)
-                [is readInt64];
-            else if (reactionSignature != (int32_t)0x79f5d419 && reactionSignature != (int32_t)0x523da4eb)
-                TLMetaClassStore::constructObject(is, reactionSignature, environment, nil, error);
+            else if (reactionSignature == OGTLCtor(0x8935fc73))
+                OGTLTakeInt64(is);
+            else if (reactionSignature != OGTLCtor(0x79f5d419) && reactionSignature != OGTLCtor(0x523da4eb))
+                OGTLCoreBuildObject(is, reactionSignature, environment, error);
         }
-        return @{ @"mode": @"some", @"emojis": emojis };
+        return OGTLChatReactionModeInfo(@"some", pickedEmojis);
     }
 
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+    OGTLCoreBuildObject(is, signature, environment, error);
     return nil;
 }
 
-static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
+static void OGTLStoreChatReactionPolicy(id object, NSDictionary *policy)
 {
-    if (object != nil && policy != nil)
-        objc_setAssociatedObject(object, NSSelectorFromString(@"tg_ios6_availableReactionPolicy"), policy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (object == nil || policy == nil)
+        return;
+    static NSString *const policyKey = @"tg_ios6_availableReactionPolicy";
+    objc_setAssociatedObject(object, NSSelectorFromString(policyKey), policy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-@interface TLCodexModernChannelFullParser : TLChatFull$chatFull
+@interface OGTLModernChannelFullParser : TLChatFull$chatFull
 @end
 
-@implementation TLCodexModernChannelFullParser
+@implementation OGTLModernChannelFullParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     int32_t flags = [is readInt32];
-    int32_t flags2 = 0;
-    bool isModernChannelFull = signature == (int32_t)0xbbab348d || signature == (int32_t)0xa04e8d3a || signature == (int32_t)0xe4e0b29d;
-    if (isModernChannelFull)
-        flags2 = [is readInt32];
+    bool usesFlags2Layout = signature == (int32_t)0xbbab348d || signature == (int32_t)0xa04e8d3a || signature == (int32_t)0xe4e0b29d || signature == (int32_t)0xc4c4dd40;
+    int32_t flags2 = usesFlags2Layout ? OGTLTakeInt32(is) : 0;
 
-    int64_t channelId = [is readInt64];
+    int64_t channelId = OGTLTakeInt64(is);
     NSString *about = [is readString];
 
-    if (!isModernChannelFull)
+    if (!usesFlags2Layout)
     {
-        TLCodexModernChannelFullParser *result = [[TLCodexModernChannelFullParser alloc] init];
+        OGTLModernChannelFullParser *result = [[OGTLModernChannelFullParser alloc] init];
         result.n_id = channelId;
         objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_chatAbout"), about == nil ? @"" : about, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        result.participants = (TLChatParticipants *)CodexReadObject(is, environment, error);
-        if (flags & (1 << 2))
-            result.chat_photo = (TLPhoto *)CodexReadObject(is, environment, error);
-        result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-        if (flags & (1 << 13))
-            result.exported_invite = (TLExportedChatInvite *)CodexReadObject(is, environment, error);
-        if (flags & (1 << 3))
-            result.bot_info = CodexReadObjectVector(is, environment, error);
-        if (flags & (1 << 6)) [is readInt32];
-        if (flags & (1 << 11)) [is readInt32];
-        if (flags & (1 << 12)) CodexReadObject(is, environment, error);
-        if (flags & (1 << 14)) [is readInt32];
-        if (flags & (1 << 15)) CodexReadObject(is, environment, error);
-        if (flags & (1 << 16)) [is readString];
-        if (flags & (1 << 17)) { [is readInt32]; CodexReadInt64Vector(is); }
-        if (flags & (1 << 18)) TLCodexStoreChatReactionPolicy(result, TLCodexReadChatReactionPolicy(is, environment, error));
-        if (flags & (1 << 20)) [is readInt32];
+        result.participants = (TLChatParticipants *)OGTLCoreReadObject(is, environment, error);
+        if (OGTLFlagSet(flags, 2))
+            result.chat_photo = (TLPhoto *)OGTLCoreReadObject(is, environment, error);
+        result.notify_settings = (TLPeerNotifySettings *)OGTLCoreReadObject(is, environment, error);
+        if (OGTLFlagSet(flags, 13))
+            result.exported_invite = (TLExportedChatInvite *)OGTLCoreReadObject(is, environment, error);
+        if (OGTLFlagSet(flags, 3))
+            result.bot_info = OGTLCoreReadObjectVector(is, environment, error);
+        OGTLSkipFlagged(is, environment, error, flags, 6, 'i');
+        OGTLSkipFlagged(is, environment, error, flags, 11, 'i');
+        if (flags & (1 << 12)) OGTLCoreReadObject(is, environment, error);
+        OGTLSkipFlagged(is, environment, error, flags, 14, 'i');
+        if (flags & (1 << 15)) OGTLCoreReadObject(is, environment, error);
+        OGTLSkipFlagged(is, environment, error, flags, 16, 's');
+        if (flags & (1 << 17)) { [is readInt32]; OGTLCoreReadInt64Vector(is); }
+        if (flags & (1 << 18)) OGTLStoreChatReactionPolicy(result, OGTLReadChatReactionPolicy(is, environment, error));
+        OGTLSkipFlagged(is, environment, error, flags, 20, 'i');
         return result;
     }
 
     TLChatFull$channelFull *result = [[TLChatFull$channelFull alloc] init];
     result.flags = flags;
+    [result setFlags2:flags2];
     result.canViewParticipants = (flags & (1 << 3)) != 0;
     result.can_set_username = (flags & (1 << 6)) != 0;
     result.can_set_stickers = (flags & (1 << 7)) != 0;
     result.n_id = channelId;
     result.about = about;
 
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
         result.participants_count = [is readInt32];
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         result.admins_count = [is readInt32];
-    if (flags & (1 << 2))
+    if (OGTLFlagSet(flags, 2))
     {
         result.kicked_count = [is readInt32];
         result.banned_count = [is readInt32];
     }
-    if (flags & (1 << 13))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 13, 'i');
 
     result.read_inbox_max_id = [is readInt32];
     result.read_outbox_max_id = [is readInt32];
     result.unread_count = [is readInt32];
-    result.chat_photo = (TLPhoto *)CodexReadObject(is, environment, error);
-    result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 23))
-        result.exported_invite = (TLExportedChatInvite *)CodexReadObject(is, environment, error);
-    result.bot_info = CodexReadObjectVector(is, environment, error);
+    result.chat_photo = (TLPhoto *)OGTLCoreReadObject(is, environment, error);
+    result.notify_settings = (TLPeerNotifySettings *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 23))
+        result.exported_invite = (TLExportedChatInvite *)OGTLCoreReadObject(is, environment, error);
+    result.bot_info = OGTLCoreReadObjectVector(is, environment, error);
 
-    if (flags & (1 << 4))
+    if (OGTLFlagSet(flags, 4))
     {
         result.migrated_from_chat_id = [is readInt64];
         result.migrated_from_max_id = [is readInt32];
     }
-    if (flags & (1 << 5))
+    if (OGTLFlagSet(flags, 5))
         result.pinned_msg_id = [is readInt32];
-    if (flags & (1 << 8))
-        result.stickerset = (TLStickerSet *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 9))
+    if (OGTLFlagSet(flags, 8))
+        result.stickerset = (TLStickerSet *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 9))
         result.available_min_id = [is readInt32];
-    if (flags & (1 << 11)) [is readInt32];
-    if (flags & (1 << 14)) [is readInt64];
-    if (flags & (1 << 15)) CodexReadObject(is, environment, error);
-    if (flags & (1 << 17)) [is readInt32];
-    if (flags & (1 << 18)) [is readInt32];
-    if (flags & (1 << 12)) [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 11, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 14, 'l');
+    if (flags & (1 << 15)) OGTLCoreReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 17, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 18, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 12, 'i');
     [is readInt32];
-    if (flags & (1 << 21)) CodexReadObject(is, environment, error);
-    if (flags & (1 << 24)) [is readInt32];
-    if (flags & (1 << 25)) CodexSkipStringVector(is);
-    if (flags & (1 << 26)) CodexReadObject(is, environment, error);
-    if (flags & (1 << 27)) [is readString];
-    if (flags & (1 << 28)) { [is readInt32]; CodexReadInt64Vector(is); }
-    if (flags & (1 << 29)) CodexReadObject(is, environment, error);
-    if (flags & (1 << 30)) TLCodexStoreChatReactionPolicy(result, TLCodexReadChatReactionPolicy(is, environment, error));
-    if (flags2 & (1 << 13)) [is readInt32];
-    if (flags2 & (1 << 4)) CodexReadObject(is, environment, error);
-    if (flags2 & (1 << 7)) CodexReadObject(is, environment, error);
-    if (flags2 & (1 << 8)) [is readInt32];
-    if (flags2 & (1 << 9)) [is readInt32];
-    if (flags2 & (1 << 10)) CodexReadObject(is, environment, error);
+    if (flags & (1 << 21)) OGTLCoreReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 24, 'i');
+    if (flags & (1 << 25)) OGTLCoreSkipStringVector(is);
+    if (flags & (1 << 26)) OGTLCoreReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 27, 's');
+    if (flags & (1 << 28)) { [is readInt32]; OGTLCoreReadInt64Vector(is); }
+    if (flags & (1 << 29)) OGTLCoreReadObject(is, environment, error);
+    if (flags & (1 << 30)) OGTLStoreChatReactionPolicy(result, OGTLReadChatReactionPolicy(is, environment, error));
+    OGTLSkipFlagged(is, environment, error, flags2, 13, 'i');
+    if (flags2 & (1 << 4)) OGTLCoreReadObject(is, environment, error);
+    if (flags2 & (1 << 7)) OGTLCoreReadObject(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags2, 8, 'i');
+    OGTLSkipFlagged(is, environment, error, flags2, 9, 'i');
+    if (flags2 & (1 << 10)) OGTLCoreReadObject(is, environment, error);
     if (signature != (int32_t)0xbbab348d)
     {
-        if (flags2 & (1 << 17)) CodexReadObject(is, environment, error);
-        if (flags2 & (1 << 18)) [is readInt32];
-        if (flags2 & (1 << 21)) [is readInt64];
-        if (flags2 & (1 << 22)) CodexReadObject(is, environment, error);
+        if (flags2 & (1 << 17)) OGTLCoreReadObject(is, environment, error);
+        OGTLSkipFlagged(is, environment, error, flags2, 18, 'i');
+        OGTLSkipFlagged(is, environment, error, flags2, 21, 'l');
+        if (flags2 & (1 << 22)) OGTLCoreReadObject(is, environment, error);
         if (signature != (int32_t)0xe4e0b29d && (flags2 & (1 << 23))) [is readInt64];
+        if (signature == (int32_t)0xc4c4dd40 && (flags2 & (1 << 25))) OGTLCoreReadObject(is, environment, error);
     }
     return result;
 }
 
 @end
 
-@interface TLCodexModernChannelForbiddenParser : TLChat$channelForbidden
+@interface OGTLModernChannelForbiddenParser : TLChat$channelForbidden
 @end
 
-@implementation TLCodexModernChannelForbiddenParser
+@implementation OGTLModernChannelForbiddenParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLChat$channelForbidden *result = [[TLChat$channelForbidden alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    int64_t channelId = [is readInt64];
+    int64_t channelId = OGTLTakeInt64(is);
     result.n_id = channelId;
     result.access_hash = [is readInt64];
     result.title = [is readString];
-    if (flags & (1 << 16))
+    if (OGTLFlagSet(flags, 16))
         result.until_date = [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexModernPeerUserParser : TLPeer$peerUser
+@interface OGTLModernPeerUserParser : TLPeer$peerUser
 @end
 
-@implementation TLCodexModernPeerUserParser
+@implementation OGTLModernPeerUserParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLPeer$peerUser *result = [[TLPeer$peerUser alloc] init];
-    int64_t userId = [is readInt64];
+    TLPeer$peerUser *result = OGTLNewObject(TLPeer$peerUser);
+    int64_t userId = OGTLTakeInt64(is);
     result.user_id = userId;
     return result;
 }
 
 @end
 
-@interface TLCodexModernPeerChatParser : TLPeer$peerChat
+@interface OGTLModernPeerChatParser : TLPeer$peerChat
 @end
 
-@implementation TLCodexModernPeerChatParser
+@implementation OGTLModernPeerChatParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLPeer$peerChat *result = [[TLPeer$peerChat alloc] init];
-    int64_t chatId = [is readInt64];
+    TLPeer$peerChat *result = OGTLNewObject(TLPeer$peerChat);
+    int64_t chatId = OGTLTakeInt64(is);
     result.chat_id = chatId;
     return result;
 }
 
 @end
 
-@interface TLCodexModernPeerChannelParser : TLPeer$peerChannel
+@interface OGTLModernPeerChannelParser : TLPeer$peerChannel
 @end
 
-@implementation TLCodexModernPeerChannelParser
+@implementation OGTLModernPeerChannelParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLPeer$peerChannel *result = [[TLPeer$peerChannel alloc] init];
-    int64_t channelId = [is readInt64];
+    TLPeer$peerChannel *result = OGTLNewObject(TLPeer$peerChannel);
+    int64_t channelId = OGTLTakeInt64(is);
     result.channel_id = channelId;
     return result;
 }
 
 @end
 
-static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleasing *legacySound, __autoreleasing NSError **error)
+static bool OGTLCoreReadNotificationSound(NSInputStream *is, NSString *__autoreleasing *legacySound, __autoreleasing NSError **error)
 {
     if (legacySound != NULL)
         *legacySound = nil;
@@ -8361,24 +5785,24 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
     int32_t signature = [is readInt32];
     switch (signature)
     {
-        case (int32_t)0x97e8bebe:
+        case OGTLCtor(0x97e8bebe):
             if (legacySound != NULL)
                 *legacySound = @"default";
             return true;
-        case (int32_t)0x6f0c34df:
+        case OGTLCtor(0x6f0c34df):
             if (legacySound != NULL)
                 *legacySound = @"";
             return true;
-        case (int32_t)0x830b9ae4:
+        case OGTLCtor(0x830b9ae4):
         {
-            [is readString];
+            OGTLTakeString(is);
             NSString *data = [is readString];
             if (legacySound != NULL)
                 *legacySound = data;
             return true;
         }
-        case (int32_t)0xff6c8049:
-            [is readInt64];
+        case OGTLCtor(0xff6c8049):
+            OGTLTakeInt64(is);
             return true;
         default:
             if (error != NULL)
@@ -8387,59 +5811,57 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
     }
 }
 
-@interface TLCodexModernPeerNotifySettingsParser : TLPeerNotifySettings$peerNotifySettings
+@interface OGTLModernPeerNotifySettingsParser : TLPeerNotifySettings$peerNotifySettings
 @end
 
-@implementation TLCodexModernPeerNotifySettingsParser
+@implementation OGTLModernPeerNotifySettingsParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)error
 {
     TLPeerNotifySettings$peerNotifySettings *result = [[TLPeerNotifySettings$peerNotifySettings alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 0))
+    if (OGTLFlagSet(flags, 0))
         result.showPreviews = [is readInt32] == TL_BOOL_TRUE_CONSTRUCTOR;
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         result.silent = [is readInt32] == TL_BOOL_TRUE_CONSTRUCTOR;
-    if (flags & (1 << 2))
+    if (OGTLFlagSet(flags, 2))
         result.mute_until = [is readInt32];
-    if (flags & (1 << 3))
+    if (OGTLFlagSet(flags, 3))
     {
         NSString *sound = nil;
-        if (!CodexReadNotificationSound(is, &sound, error))
+        if (!OGTLCoreReadNotificationSound(is, &sound, error))
             return nil;
         if (sound != nil)
             result.sound = sound;
         else
             result.flags &= ~(1 << 3);
     }
-    if (flags & (1 << 4))
+    if (OGTLFlagSet(flags, 4))
     {
-        if (!CodexReadNotificationSound(is, NULL, error))
+        if (!OGTLCoreReadNotificationSound(is, NULL, error))
             return nil;
     }
-    if (flags & (1 << 5))
+    if (OGTLFlagSet(flags, 5))
     {
-        if (!CodexReadNotificationSound(is, NULL, error))
+        if (!OGTLCoreReadNotificationSound(is, NULL, error))
             return nil;
     }
-    if (flags & (1 << 6))
-        [is readInt32];
-    if (flags & (1 << 7))
-        [is readInt32];
-    if (flags & (1 << 8))
+    OGTLSkipFlagged(is, environment, error, flags, 6, 'i');
+    OGTLSkipFlagged(is, environment, error, flags, 7, 'i');
+    if (OGTLFlagSet(flags, 8))
     {
-        if (!CodexReadNotificationSound(is, NULL, error))
+        if (!OGTLCoreReadNotificationSound(is, NULL, error))
             return nil;
     }
-    if (flags & (1 << 9))
+    if (OGTLFlagSet(flags, 9))
     {
-        if (!CodexReadNotificationSound(is, NULL, error))
+        if (!OGTLCoreReadNotificationSound(is, NULL, error))
             return nil;
     }
-    if (flags & (1 << 10))
+    if (OGTLFlagSet(flags, 10))
     {
-        if (!CodexReadNotificationSound(is, NULL, error))
+        if (!OGTLCoreReadNotificationSound(is, NULL, error))
             return nil;
     }
     return result;
@@ -8447,37 +5869,37 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
 
 @end
 
-@interface TLCodexUpdateNotifySettingsParser : TLUpdate$updateNotifySettings
+@interface OGTLUpdateNotifySettingsParser : TLUpdate$updateNotifySettings
 @end
 
-@implementation TLCodexUpdateNotifySettingsParser
+@implementation OGTLUpdateNotifySettingsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLUpdate$updateNotifySettings *result = [[TLUpdate$updateNotifySettings alloc] init];
-    result.peer = (TLNotifyPeer *)CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    TLUpdate$updateNotifySettings *result = OGTLNewObject(TLUpdate$updateNotifySettings);
+    result.peer = (TLNotifyPeer *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.notify_settings = (TLPeerNotifySettings *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexUpdateGroupCallParser : TLUpdate
+@interface OGTLUpdateGroupCallParser : TLUpdate
 @end
 
-@implementation TLCodexUpdateGroupCallParser
+@implementation OGTLUpdateGroupCallParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     int32_t flags = [is readInt32];
-    NSError *nestedError = nil;
-    if (flags & (1 << 1))
+    NSError *nestedError;
+    if (OGTLFlagSet(flags, 1))
     {
-        CodexReadObject(is, environment, &nestedError);
+        OGTLCoreReadObject(is, environment, &nestedError);
         if (nestedError != nil)
         {
             if (error != NULL)
@@ -8485,7 +5907,7 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
             return nil;
         }
     }
-    CodexReadObject(is, environment, &nestedError);
+    OGTLCoreReadObject(is, environment, &nestedError);
     if (nestedError != nil)
     {
         if (error != NULL)
@@ -8497,10 +5919,10 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
 
 @end
 
-@interface TLCodexChatInviteParser : TLChatInvite$chatInvite
+@interface OGTLChatInviteParser : TLChatInvite$chatInvite
 @end
 
-@implementation TLCodexChatInviteParser
+@implementation OGTLChatInviteParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -8508,15 +5930,14 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
     int32_t flags = [is readInt32];
     result.flags = flags;
     result.title = [is readString];
-    if (flags & (1 << 5))
-        [is readString];
-    CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    OGTLSkipFlagged(is, environment, error, flags, 5, 's');
+    OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     result.participants_count = [is readInt32];
-    if (flags & (1 << 4))
-        result.participants = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    if (OGTLFlagSet(flags, 4))
+        result.participants = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     [is readInt32];
     return result;
@@ -8524,60 +5945,56 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
 
 @end
 
-@interface TLCodexMessageMediaGiveawayParser : TLMessageMedia$messageMediaUnsupported
+@interface OGTLMessageMediaGiveawayParser : TLMessageMedia$messageMediaUnsupported
 @end
 
-@implementation TLCodexMessageMediaGiveawayParser
+@implementation OGTLMessageMediaGiveawayParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
     int32_t flags = [is readInt32];
-    if (signature == (int32_t)0xdaad85b0)
+    if (signature == OGTLCtor(0xdaad85b0))
     {
-        CodexReadInt64Vector(is);
-        if (flags & (1 << 1))
-            CodexSkipStringVector(is);
-        if (flags & (1 << 3))
-            [is readString];
+        OGTLCoreReadInt64Vector(is);
+        OGTLSkipFlagged(is, environment, error, flags, 1, 't');
+        OGTLSkipFlagged(is, environment, error, flags, 3, 's');
         [is readInt32];
         [is readInt32];
         [is readInt32];
     }
-    else if (signature == (int32_t)0xc6991068)
+    else if (signature == OGTLCtor(0xc6991068))
     {
-        [is readInt64];
-        if (flags & (1 << 3))
-            [is readInt32];
+        OGTLTakeInt64(is);
+        OGTLSkipFlagged(is, environment, error, flags, 3, 'i');
         [is readInt32];
         [is readInt32];
         [is readInt32];
-        CodexReadInt64Vector(is);
+        OGTLCoreReadInt64Vector(is);
         [is readInt32];
-        if (flags & (1 << 1))
-            [is readString];
+        OGTLSkipFlagged(is, environment, error, flags, 1, 's');
         [is readInt32];
     }
-    return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    return OGTLNewObject(TLMessageMedia$messageMediaUnsupported);
 }
 
 @end
 
-@interface TLCodexFolderPeerParser : TLCodexFolderPeer
+@interface OGTLFolderPeerParser : TLFolderPeerEntry
 @end
 
-static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializationEnvironment> environment, NSString **chosenReaction, __autoreleasing NSError **error)
+static NSString *OGTLReadReactionSummary(NSInputStream *is, id<TLSerializationEnvironment> environment, NSString **chosenReaction, __autoreleasing NSError **error)
 {
     if (chosenReaction != NULL)
         *chosenReaction = nil;
     int32_t reactionsSignature = [is readInt32];
     if (reactionsSignature != (int32_t)0x0a339f0b && reactionsSignature != (int32_t)0x4f2b9479)
     {
-        TLMetaClassStore::constructObject(is, reactionsSignature, environment, nil, error);
+        OGTLCoreBuildObject(is, reactionsSignature, environment, error);
         return @"";
     }
 
     int32_t flags = [is readInt32];
-    int32_t vectorMarker = [is readInt32];
+    int32_t vectorMarker = OGTLTakeInt32(is);
     int32_t count = vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR ? [is readInt32] : vectorMarker;
     if (count < 0 || count > 10000)
         count = 0;
@@ -8588,7 +6005,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         int32_t countSignature = [is readInt32];
         if (countSignature != (int32_t)0xa3d1cb80)
         {
-            TLMetaClassStore::constructObject(is, countSignature, environment, nil, error);
+            OGTLCoreBuildObject(is, countSignature, environment, error);
             continue;
         }
 
@@ -8597,16 +6014,16 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         if (chosen)
             [is readInt32];
 
-        int32_t reactionSignature = [is readInt32];
+        int32_t reactionSignature = OGTLTakeInt32(is);
         NSString *reaction = nil;
-        if (reactionSignature == (int32_t)0x1b2286b8)
+        if (reactionSignature == OGTLCtor(0x1b2286b8))
             reaction = [is readString];
-        else if (reactionSignature == (int32_t)0x8935fc73)
+        else if (reactionSignature == OGTLCtor(0x8935fc73))
             reaction = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
         else if (reactionSignature == (int32_t)0x523da4eb)
             reaction = @"★";
         else if (reactionSignature != (int32_t)0x79f5d419)
-            TLMetaClassStore::constructObject(is, reactionSignature, environment, nil, error);
+            OGTLCoreBuildObject(is, reactionSignature, environment, error);
 
         int32_t reactionCount = [is readInt32];
         if (chosen && reaction.length != 0 && chosenReaction != NULL)
@@ -8615,60 +6032,58 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
             [parts addObject:[NSString stringWithFormat:@"%@ %d", reaction, reactionCount]];
     }
 
-    if (flags & (1 << 1))
-        CodexReadObjectVector(is, environment, error);
+    OGTLSkipFlagged(is, environment, error, flags, 1, 'v');
     if (reactionsSignature != (int32_t)0x4f2b9479 && (flags & (1 << 4)))
-        CodexReadObjectVector(is, environment, error);
+        OGTLCoreReadObjectVector(is, environment, error);
 
     return [parts componentsJoinedByString:@"  "];
 }
 
-@interface TLCodexUpdateMessageReactionsParser : TLUpdate$updateMessageReactionsCodex
+@interface OGTLUpdateMessageReactionsParser : TLUpdate$updateMessageReactionsSummary
 @end
 
-@implementation TLCodexUpdateMessageReactionsParser
+@implementation OGTLUpdateMessageReactionsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     int32_t flags = [is readInt32];
-    TLUpdate$updateMessageReactionsCodex *result = [[TLUpdate$updateMessageReactionsCodex alloc] init];
-    result.peer = (TLPeer *)CodexReadObject(is, environment, error);
+    TLUpdate$updateMessageReactionsSummary *result = [[TLUpdate$updateMessageReactionsSummary alloc] init];
+    result.peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
     result.msg_id = [is readInt32];
-    if (flags & (1 << 0))
-        [is readInt32];
+    OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
     if (signature == (int32_t)0x1e297bfa && (flags & (1 << 1)))
-        CodexReadObject(is, environment, error);
+        OGTLCoreReadObject(is, environment, error);
     NSString *chosenReaction = nil;
-    result.reactionSummary = TLCodexReadReactionSummary(is, environment, &chosenReaction, error);
+    result.reactionSummary = OGTLReadReactionSummary(is, environment, &chosenReaction, error);
     result.chosenReaction = chosenReaction;
-    IOS6FeatureProbe(@"REACTION update.parse mid=%d peerClass=%@ flags=0x%08x summary=%@ error=%@", result.msg_id, NSStringFromClass([result.peer class]), flags, result.reactionSummary, error != NULL ? *error : nil);
+    OGFeatureProbe(@"REACTION update.parse mid=%d peerClass=%@ flags=0x%08x summary=%@ error=%@", result.msg_id, NSStringFromClass([result.peer class]), flags, result.reactionSummary, error != NULL ? *error : nil);
     return result;
 }
 
 @end
 
-@implementation TLCodexFolderPeerParser
+@implementation OGTLFolderPeerParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexFolderPeer *result = [[TLCodexFolderPeer alloc] init];
-    result.peer = (TLPeer *)CodexReadObject(is, environment, error);
-    result.folder_id = [is readInt32];
+    TLFolderPeerEntry *result = OGTLNewObject(TLFolderPeerEntry);
+    result.peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
+    result.folder_id = OGTLTakeInt32(is);
     return result;
 }
 
 @end
 
-@interface TLCodexUpdateFolderPeersParser : TLUpdate$updateFolderPeers
+@interface OGTLUpdateFolderPeersParser : TLUpdate$updateFolderPeers
 @end
 
-@implementation TLCodexUpdateFolderPeersParser
+@implementation OGTLUpdateFolderPeersParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLUpdate$updateFolderPeers *result = [[TLUpdate$updateFolderPeers alloc] init];
-    result.folder_peers = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    TLUpdate$updateFolderPeers *result = OGTLNewObject(TLUpdate$updateFolderPeers);
+    result.folder_peers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
@@ -8677,44 +6092,43 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @end
 
-@interface TLCodexModernDialogParser : TLDialog$dialog
+@interface OGTLModernDialogParser : TLDialog$dialog
 @end
 
-@implementation TLCodexModernDialogParser
+@implementation OGTLModernDialogParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLDialog$dialog *result = [[TLDialog$dialog alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    result.peer = (TLPeer *)CodexReadObject(is, environment, error);
+    result.peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
     result.top_message = [is readInt32];
     result.read_inbox_max_id = [is readInt32];
     result.read_outbox_max_id = [is readInt32];
     result.unread_count = [is readInt32];
     result.unread_mentions_count = [is readInt32];
-    if (signature != (int32_t)0xe4def5db)
+    if (signature != OGTLCtor(0xe4def5db))
         [is readInt32];
-    if (signature == (int32_t)0x69274bc6 || signature == (int32_t)0xfc89f7f3)
+    if (signature == OGTLCtor(0x69274bc6) || signature == OGTLCtor(0xfc89f7f3))
         [is readInt32];
-    result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 0))
+    result.notify_settings = (TLPeerNotifySettings *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 0))
         result.pts = [is readInt32];
-    if (flags & (1 << 1))
-        result.draft = (TLDraftMessage *)CodexReadObject(is, environment, error);
-    if (flags & (1 << 4))
-        result.folder_id = [is readInt32];
-    if (flags & (1 << 5))
-        [is readInt32];
+    if (OGTLFlagSet(flags, 1))
+        result.draft = (TLDraftMessage *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(flags, 4))
+        result.folder_id = OGTLTakeInt32(is);
+    OGTLSkipFlagged(is, environment, error, flags, 5, 'i');
     return result;
 }
 
 @end
 
-@interface TLCodexDialogFolderParser : TLDialog$dialog
+@interface OGTLDialogFolderParser : TLDialog$dialog
 @end
 
-@implementation TLCodexDialogFolderParser
+@implementation OGTLDialogFolderParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -8722,21 +6136,20 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     int32_t flags = [is readInt32];
     result.flags = flags;
     
-    int32_t folderSignature = [is readInt32];
-    if (folderSignature == (int32_t)0xff544e65)
+    int32_t folderSignature = OGTLTakeInt32(is);
+    if (folderSignature == OGTLCtor(0xff544e65))
     {
-        int32_t folderFlags = [is readInt32];
+        int32_t folderFlags = OGTLTakeInt32(is);
         [is readInt32];
-        [is readString];
-        if (folderFlags & (1 << 3))
-            CodexReadObject(is, environment, error);
+        OGTLTakeString(is);
+        OGTLSkipFlagged(is, environment, error, folderFlags, 3, 'o');
     }
     else
     {
-        TLMetaClassStore::constructObject(is, folderSignature, environment, nil, error);
+        OGTLCoreBuildObject(is, folderSignature, environment, error);
     }
     
-    result.peer = (TLPeer *)CodexReadObject(is, environment, error);
+    result.peer = (TLPeer *)OGTLCoreReadObject(is, environment, error);
     result.top_message = [is readInt32];
     [is readInt32];
     [is readInt32];
@@ -8747,153 +6160,157 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @end
 
-@interface TLCodexModernImportedContactParser : TLImportedContact$importedContact
+@interface OGTLModernImportedContactParser : TLImportedContact$importedContact
 @end
 
-@implementation TLCodexModernImportedContactParser
+@implementation OGTLModernImportedContactParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLImportedContact$importedContact *result = [[TLImportedContact$importedContact alloc] init];
-    int64_t userId = [is readInt64];
+    TLImportedContact$importedContact *result = OGTLNewObject(TLImportedContact$importedContact);
+    int64_t userId = OGTLTakeInt64(is);
     result.user_id = userId;
-    result.client_id = [is readInt64];
+    result.client_id = OGTLTakeInt64(is);
     return result;
 }
 
 @end
 
-@interface TLCodexUserStatusEmptyParser : TLUserStatus$userStatusEmpty
+@interface OGTLUserStatusEmptyParser : TLUserStatus$userStatusEmpty
 @end
 
-@implementation TLCodexUserStatusEmptyParser
+@implementation OGTLUserStatusEmptyParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    return [[TLUserStatus$userStatusEmpty alloc] init];
+    return OGTLNewObject(TLUserStatus$userStatusEmpty);
 }
 
 @end
 
-@interface TLCodexUserStatusOnlineParser : TLUserStatus$userStatusOnline
+@interface OGTLUserStatusOnlineParser : TLUserStatus$userStatusOnline
 @end
 
-@implementation TLCodexUserStatusOnlineParser
+@implementation OGTLUserStatusOnlineParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLUserStatus$userStatusOnline *result = [[TLUserStatus$userStatusOnline alloc] init];
+    TLUserStatus$userStatusOnline *result = OGTLNewObject(TLUserStatus$userStatusOnline);
     result.expires = [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexUserStatusOfflineParser : TLUserStatus$userStatusOffline
+@interface OGTLUserStatusOfflineParser : TLUserStatus$userStatusOffline
 @end
 
-@implementation TLCodexUserStatusOfflineParser
+@implementation OGTLUserStatusOfflineParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLUserStatus$userStatusOffline *result = [[TLUserStatus$userStatusOffline alloc] init];
-    result.was_online = [is readInt32];
+    TLUserStatus$userStatusOffline *result = OGTLNewObject(TLUserStatus$userStatusOffline);
+    result.was_online = OGTLTakeInt32(is);
     return result;
 }
 
 @end
 
-@interface TLCodexUserStatusNoPayloadParser : TLUserStatus$userStatusRecently
+@interface OGTLUserStatusNoPayloadParser : TLUserStatus$userStatusRecently
 @end
 
-@implementation TLCodexUserStatusNoPayloadParser
+@implementation OGTLUserStatusNoPayloadParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused tlContext error:(__autoreleasing NSError **)__unused error
 {
     switch (signature)
     {
-        case 0x7b197dc8:
-        case 0x541a1d1a:
-        case 0x65899777:
+        case OGTLCtor(0x7b197dc8):
+        case OGTLCtor(0x541a1d1a):
+        case OGTLCtor(0x65899777):
         {
             [is readInt32];
-            return [[TLUserStatus$userStatusRecently alloc] init];
+            return OGTLNewObject(TLUserStatus$userStatusRecently);
         }
         default:
-            return [[TLUserStatus$userStatusRecently alloc] init];
+            return OGTLNewObject(TLUserStatus$userStatusRecently);
     }
 }
 
 @end
 
-@interface TLCodexModernContactStatusParser : TLContactStatus$contactStatus
+@interface OGTLModernContactStatusParser : TLContactStatus$contactStatus
 @end
 
-@implementation TLCodexModernContactStatusParser
+@implementation OGTLModernContactStatusParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLContactStatus$contactStatus *result = [[TLContactStatus$contactStatus alloc] init];
-    int64_t userId = [is readInt64];
-    int32_t statusSignature = [is readInt32];
+    TLContactStatus$contactStatus *result = OGTLNewObject(TLContactStatus$contactStatus);
+    int64_t userId = OGTLTakeInt64(is);
+    int32_t statusSignature = OGTLTakeInt32(is);
     result.user_id = userId;
-    result.status = (TLUserStatus *)TLMetaClassStore::constructObject(is, statusSignature, environment, nil, error);
+    [result setStatus:(TLUserStatus *)OGTLCoreBuildObject(is, statusSignature, environment, error)];
     return result;
 }
 
 @end
 
-@interface TLCodexModernKeyboardButtonStyleParser : NSObject <TLObject>
+@interface OGTLModernKeyboardButtonStyleParser : OGTLManualParser
 @end
 
-@implementation TLCodexModernKeyboardButtonStyleParser
+@implementation OGTLModernKeyboardButtonStyleParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     int32_t flags = [is readInt32];
-    if (flags & (1 << 3))
-        [is readInt64];
+    OGTLSkipFlagged(is, environment, error, flags, 3, 'l');
     return self;
 }
 
 @end
 
-@interface TLCodexModernReplyMarkupParser : TLReplyMarkup
+@interface OGTLModernReplyMarkupParser : TLReplyMarkup
 @end
 
-@implementation TLCodexModernReplyMarkupParser
+@implementation OGTLModernReplyMarkupParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xa03e5b85)
+    if (signature == OGTLCtor(0xa03e5b85))
     {
-        TLReplyMarkup$replyKeyboardHide *result = [[TLReplyMarkup$replyKeyboardHide alloc] init];
+        TLReplyMarkup$replyKeyboardHide *result = OGTLNewObject(TLReplyMarkup$replyKeyboardHide);
         result.flags = [is readInt32];
         return result;
     }
-    else if (signature == (int32_t)0x86b40b08 || signature == (int32_t)0xf4108aa0)
+    else if (signature == OGTLCtor(0x86b40b08) || signature == OGTLCtor(0xf4108aa0))
     {
-        TLReplyMarkup$replyKeyboardForceReply *result = [[TLReplyMarkup$replyKeyboardForceReply alloc] init];
+        TLReplyMarkup$replyKeyboardForceReply *result = OGTLNewObject(TLReplyMarkup$replyKeyboardForceReply);
         int32_t flags = [is readInt32];
         result.flags = flags;
-        if (flags & (1 << 3))
-            [is readString];
+        OGTLSkipFlagged(is, environment, error, flags, 3, 's');
         return result;
     }
-    else if (signature == (int32_t)0x85dd99d1 || signature == (int32_t)0x3502758c)
+    else if (signature == OGTLCtor(0x85dd99d1) || signature == OGTLCtor(0x3502758c))
     {
-        TLReplyMarkup$replyKeyboardMarkup *result = [[TLReplyMarkup$replyKeyboardMarkup alloc] init];
+        TLReplyMarkup$replyKeyboardMarkup *result = OGTLNewObject(TLReplyMarkup$replyKeyboardMarkup);
         int32_t flags = [is readInt32];
         result.flags = flags;
-        result.rows = CodexReadObjectVector(is, environment, error);
-        if (flags & (1 << 3))
-            [is readString];
+        result.rows = OGTLCoreReadObjectVector(is, environment, error);
+        OGTLSkipFlagged(is, environment, error, flags, 3, 's');
         return result;
     }
-    else if (signature == (int32_t)0x48a30254)
+    else if (signature == OGTLCtor(0x48a30254))
     {
-        TLReplyMarkup$replyInlineMarkup *result = [[TLReplyMarkup$replyInlineMarkup alloc] init];
-        result.rows = CodexReadObjectVector(is, environment, error);
+        TLReplyMarkup$replyInlineMarkup *result = OGTLNewObject(TLReplyMarkup$replyInlineMarkup);
+        result.rows = OGTLCoreReadObjectVector(is, environment, error);
+        return result;
+    }
+    else if (signature == (int32_t)0xb2b15770)
+    {
+        TLReplyMarkup$replyInlineMarkup *result = OGTLNewObject(TLReplyMarkup$replyInlineMarkup);
+        [is readInt32];
+        result.rows = OGTLCoreReadObjectVector(is, environment, error);
         return result;
     }
     
@@ -8902,186 +6319,305 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @end
 
-@interface TLCodexModernKeyboardButtonRowParser : TLKeyboardButtonRow
+@interface OGTLModernKeyboardButtonRowParser : TLKeyboardButtonRow
 @end
 
-@implementation TLCodexModernKeyboardButtonRowParser
+@implementation OGTLModernKeyboardButtonRowParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLKeyboardButtonRow$keyboardButtonRow *result = [[TLKeyboardButtonRow$keyboardButtonRow alloc] init];
-    result.buttons = CodexReadObjectVector(is, environment, error);
+    TLKeyboardButtonRow$keyboardButtonRow *result = OGTLNewObject(TLKeyboardButtonRow$keyboardButtonRow);
+    result.buttons = OGTLCoreReadObjectVector(is, environment, error);
     return result;
 }
 
 @end
 
-@interface TLCodexModernKeyboardButtonParser : TLKeyboardButton
+static TLKeyboardButton *OGTLKeyboardButtonWithType(NSInputStream *is, int32_t typeSignature, NSString *text, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    switch (typeSignature)
+    {
+        case (int32_t)0xdf3d36f9:
+        {
+            TLKeyboardButton$keyboardButtonRequestPhone *button = OGTLNewObject(TLKeyboardButton$keyboardButtonRequestPhone);
+            [button setText:text];
+            return button;
+        }
+        case (int32_t)0x9beee140:
+        {
+            TLKeyboardButton$keyboardButtonRequestGeoLocation *button = OGTLNewObject(TLKeyboardButton$keyboardButtonRequestGeoLocation);
+            [button setText:text];
+            return button;
+        }
+        case (int32_t)0xaacfff84:
+        {
+            int32_t flags = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 'i');
+            break;
+        }
+        case (int32_t)0x4f58a237:
+        case (int32_t)0x3fe268fe:
+            [is readInt32];
+            [is readInt32];
+            OGTLCoreReadObject(is, environment, error);
+            [is readInt32];
+            break;
+        case (int32_t)0xc01a597a:
+        case (int32_t)0xeca4f8d4:
+        case (int32_t)0x3bcab5b4:
+        {
+            TLKeyboardButton$keyboardButtonUrl *button = OGTLNewObject(TLKeyboardButton$keyboardButtonUrl);
+            [button setText:text];
+            button.url = OGTLTakeString(is);
+            return button;
+        }
+        case (int32_t)0xbfd02da2:
+        {
+            int32_t flags = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 0, 's');
+            TLKeyboardButton$keyboardButtonUrl *button = OGTLNewObject(TLKeyboardButton$keyboardButtonUrl);
+            [button setText:text];
+            button.url = OGTLTakeString(is);
+            [is readInt32];
+            return button;
+        }
+        case (int32_t)0x9961bcb4:
+        {
+            int32_t flags = [is readInt32];
+            OGTLSkipFlagged(is, environment, error, flags, 1, 's');
+            TLKeyboardButton$keyboardButtonUrl *button = OGTLNewObject(TLKeyboardButton$keyboardButtonUrl);
+            [button setText:text];
+            [button setUrl:[is readString]];
+            OGTLSkipFlagged(is, environment, error, flags, 2, 'o');
+            return button;
+        }
+        case (int32_t)0x2955bc38:
+        {
+            [is readInt32];
+            TLKeyboardButton$keyboardButtonCallback *button = OGTLNewObject(TLKeyboardButton$keyboardButtonCallback);
+            [button setText:text];
+            button.data = OGTLTakeBytes(is);
+            return button;
+        }
+        case (int32_t)0x5cd3709d:
+        {
+            TLKeyboardButton$keyboardButtonGame *button = OGTLNewObject(TLKeyboardButton$keyboardButtonGame);
+            [button setText:text];
+            return button;
+        }
+        case (int32_t)0x48bad7a5:
+        {
+            TLKeyboardButton$keyboardButtonBuy *button = OGTLNewObject(TLKeyboardButton$keyboardButtonBuy);
+            [button setText:text];
+            return button;
+        }
+        case (int32_t)0x93773ff5:
+        {
+            int32_t flags = [is readInt32];
+            TLKeyboardButton$keyboardButtonSwitchInline *button = OGTLNewObject(TLKeyboardButton$keyboardButtonSwitchInline);
+            button.flags = flags & (1 << 0);
+            [button setText:text];
+            button.query = OGTLTakeString(is);
+            OGTLSkipFlagged(is, environment, error, flags, 1, 'v');
+            return button;
+        }
+        case (int32_t)0x3fa33fcf:
+            OGTLTakeInt64(is);
+            break;
+        case (int32_t)0x53f3ce5a:
+            OGTLCoreReadObject(is, environment, error);
+            break;
+        case (int32_t)0xb41d3272:
+            OGTLTakeString(is);
+            break;
+        case (int32_t)0xc9dd90e9:
+        case (int32_t)0xa438619d:
+            break;
+        default:
+            OGTLCoreBuildObject(is, typeSignature, environment, error);
+            break;
+    }
+    TLKeyboardButton$keyboardButton *button = OGTLNewObject(TLKeyboardButton$keyboardButton);
+    [button setText:text];
+    return button;
+}
+
+@interface OGTLModernKeyboardButtonParser : TLKeyboardButton
 @end
 
-@implementation TLCodexModernKeyboardButtonParser
+@implementation OGTLModernKeyboardButtonParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
+    if (signature == (int32_t)0x2f67a72f || signature == (int32_t)0x11c1a322)
+    {
+        int32_t buttonFlags = [is readInt32];
+        if (buttonFlags & (1 << 10))
+            OGTLCoreReadObject(is, environment, error);
+        NSString *buttonText = [is readString];
+        int32_t typeSignature = [is readInt32];
+        return OGTLKeyboardButtonWithType(is, typeSignature, buttonText, environment, error);
+    }
+
     int32_t flags = 0;
-    bool hasFlags = signature == (int32_t)0x35bbdb6b || signature == (int32_t)0x0568a748 || signature == (int32_t)0x93b9fbb5 || signature == (int32_t)0x10b78d29 || signature == (int32_t)0xd02e7fd4 || signature == (int32_t)0xbbc7515d || signature == (int32_t)0xc9662d05 || signature == (int32_t)0x7d170cff || signature == (int32_t)0xd80c25ec || signature == (int32_t)0xe62bc960 || signature == (int32_t)0x417efd8f || signature == (int32_t)0xaa40f94d || signature == (int32_t)0x991399fc || signature == (int32_t)0x89c590f9 || signature == (int32_t)0x3fa53905 || signature == (int32_t)0xf51006f9 || signature == (int32_t)0x68013e72 || signature == (int32_t)0x7a11d782 || signature == (int32_t)0x7d5e07c7 || signature == (int32_t)0xc0fd5d09 || signature == (int32_t)0xe846b1a0 || signature == (int32_t)0xe15c4370 || signature == (int32_t)0x5b0f15f5 || signature == (int32_t)0x02b78156 || signature == (int32_t)0xbcc4af10;
-    bool hasButtonStyle = signature == (int32_t)0x7d170cff || signature == (int32_t)0xd80c25ec || signature == (int32_t)0xe62bc960 || signature == (int32_t)0x417efd8f || signature == (int32_t)0xaa40f94d || signature == (int32_t)0x991399fc || signature == (int32_t)0x89c590f9 || signature == (int32_t)0x3fa53905 || signature == (int32_t)0xf51006f9 || signature == (int32_t)0x68013e72 || signature == (int32_t)0x7a11d782 || signature == (int32_t)0x7d5e07c7 || signature == (int32_t)0xc0fd5d09 || signature == (int32_t)0xe846b1a0 || signature == (int32_t)0xe15c4370 || signature == (int32_t)0x5b0f15f5 || signature == (int32_t)0x02b78156 || signature == (int32_t)0xbcc4af10;
-    if (hasFlags)
+    bool carriesFlags = signature == OGTLCtor(0x35bbdb6b) || signature == OGTLCtor(0x0568a748) || signature == OGTLCtor(0x93b9fbb5) || signature == OGTLCtor(0x10b78d29) || signature == OGTLCtor(0xd02e7fd4) || signature == OGTLCtor(0xbbc7515d) || signature == OGTLCtor(0xc9662d05) || signature == OGTLCtor(0x7d170cff) || signature == OGTLCtor(0xd80c25ec) || signature == OGTLCtor(0xe62bc960) || signature == OGTLCtor(0x417efd8f) || signature == OGTLCtor(0xaa40f94d) || signature == OGTLCtor(0x991399fc) || signature == OGTLCtor(0x89c590f9) || signature == OGTLCtor(0x3fa53905) || signature == OGTLCtor(0xf51006f9) || signature == OGTLCtor(0x68013e72) || signature == OGTLCtor(0x7a11d782) || signature == OGTLCtor(0x7d5e07c7) || signature == OGTLCtor(0xc0fd5d09) || signature == OGTLCtor(0xe846b1a0) || signature == OGTLCtor(0xe15c4370) || signature == OGTLCtor(0x5b0f15f5) || signature == OGTLCtor(0x02b78156) || signature == OGTLCtor(0xbcc4af10);
+    bool hasButtonStyle = signature == OGTLCtor(0x7d170cff) || signature == OGTLCtor(0xd80c25ec) || signature == OGTLCtor(0xe62bc960) || signature == OGTLCtor(0x417efd8f) || signature == OGTLCtor(0xaa40f94d) || signature == OGTLCtor(0x991399fc) || signature == OGTLCtor(0x89c590f9) || signature == OGTLCtor(0x3fa53905) || signature == OGTLCtor(0xf51006f9) || signature == OGTLCtor(0x68013e72) || signature == OGTLCtor(0x7a11d782) || signature == OGTLCtor(0x7d5e07c7) || signature == OGTLCtor(0xc0fd5d09) || signature == OGTLCtor(0xe846b1a0) || signature == OGTLCtor(0xe15c4370) || signature == OGTLCtor(0x5b0f15f5) || signature == OGTLCtor(0x02b78156) || signature == OGTLCtor(0xbcc4af10);
+    if (carriesFlags)
     {
-        flags = [is readInt32];
-        if (hasButtonStyle && (flags & (1 << 10)))
-            CodexReadObject(is, environment, error);
+        flags = OGTLTakeInt32(is);
+        if (hasButtonStyle && (OGTLFlagSet(flags, 10)))
+            OGTLCoreReadObject(is, environment, error);
     }
     
-    if ((signature == (int32_t)0xbbc7515d || signature == (int32_t)0x7a11d782) && (flags & (1 << 0)))
-        CodexReadObject(is, environment, error);
-    NSString *text = [is readString];
-    TLKeyboardButton *result = nil;
+    if ((signature == (int32_t)0xbbc7515d || signature == (int32_t)0x7a11d782) && (OGTLFlagSet(flags, 0)))
+        OGTLCoreReadObject(is, environment, error);
+    NSString *text = OGTLTakeString(is);
+    TLKeyboardButton *built = nil;
     
-    if (signature == (int32_t)0x258aff05 || signature == (int32_t)0xd80c25ec || signature == (int32_t)0x13767230 || signature == (int32_t)0xa0c0505c || signature == (int32_t)0xe846b1a0 || signature == (int32_t)0xe15c4370)
+    if (signature == OGTLCtor(0x258aff05) || signature == OGTLCtor(0xd80c25ec) || signature == OGTLCtor(0x13767230) || signature == OGTLCtor(0xa0c0505c) || signature == OGTLCtor(0xe846b1a0) || signature == OGTLCtor(0xe15c4370))
     {
-        TLKeyboardButton$keyboardButtonUrl *button = [[TLKeyboardButton$keyboardButtonUrl alloc] init];
-        button.text = text;
-        button.url = [is readString];
-        result = button;
+        TLKeyboardButton$keyboardButtonUrl *button = OGTLNewObject(TLKeyboardButton$keyboardButtonUrl);
+        [button setText:text];
+        [button setUrl:[is readString]];
+        built = button;
     }
-    else if (signature == (int32_t)0x683a5e46 || signature == (int32_t)0x35bbdb6b || signature == (int32_t)0xe62bc960)
+    else if (signature == OGTLCtor(0x683a5e46) || signature == OGTLCtor(0x35bbdb6b) || signature == OGTLCtor(0xe62bc960))
     {
-        TLKeyboardButton$keyboardButtonCallback *button = [[TLKeyboardButton$keyboardButtonCallback alloc] init];
-        button.text = text;
-        button.data = [is readBytes];
-        result = button;
+        TLKeyboardButton$keyboardButtonCallback *button = OGTLNewObject(TLKeyboardButton$keyboardButtonCallback);
+        [button setText:text];
+        [button setData:[is readBytes]];
+        built = button;
     }
-    else if (signature == (int32_t)0xb16a6c29 || signature == (int32_t)0x417efd8f)
+    else if (signature == OGTLCtor(0xb16a6c29) || signature == OGTLCtor(0x417efd8f))
     {
-        TLKeyboardButton$keyboardButtonRequestPhone *button = [[TLKeyboardButton$keyboardButtonRequestPhone alloc] init];
-        button.text = text;
-        result = button;
+        TLKeyboardButton$keyboardButtonRequestPhone *button = OGTLNewObject(TLKeyboardButton$keyboardButtonRequestPhone);
+        [button setText:text];
+        built = button;
     }
-    else if (signature == (int32_t)0xfc796b3f || signature == (int32_t)0xaa40f94d)
+    else if (signature == OGTLCtor(0xfc796b3f) || signature == OGTLCtor(0xaa40f94d))
     {
-        TLKeyboardButton$keyboardButtonRequestGeoLocation *button = [[TLKeyboardButton$keyboardButtonRequestGeoLocation alloc] init];
-        button.text = text;
-        result = button;
+        TLKeyboardButton$keyboardButtonRequestGeoLocation *button = OGTLNewObject(TLKeyboardButton$keyboardButtonRequestGeoLocation);
+        [button setText:text];
+        built = button;
     }
-    else if (signature == (int32_t)0x0568a748 || signature == (int32_t)0x93b9fbb5 || signature == (int32_t)0x991399fc)
+    else if (signature == OGTLCtor(0x0568a748) || signature == OGTLCtor(0x93b9fbb5) || signature == OGTLCtor(0x991399fc))
     {
-        TLKeyboardButton$keyboardButtonSwitchInline *button = [[TLKeyboardButton$keyboardButtonSwitchInline alloc] init];
-        button.flags = flags;
-        button.text = text;
-        button.query = [is readString];
-        if ((flags & (1 << 1)) && (signature == (int32_t)0x93b9fbb5 || signature == (int32_t)0x991399fc))
-            CodexReadObjectVector(is, environment, error);
-        result = button;
+        TLKeyboardButton$keyboardButtonSwitchInline *button = OGTLNewObject(TLKeyboardButton$keyboardButtonSwitchInline);
+        [button setFlags:flags];
+        [button setText:text];
+        [button setQuery:[is readString]];
+        if ((OGTLFlagSet(flags, 1)) && (signature == (int32_t)0x93b9fbb5 || signature == (int32_t)0x991399fc))
+            OGTLCoreReadObjectVector(is, environment, error);
+        built = button;
     }
-    else if (signature == (int32_t)0x50f41ccf || signature == (int32_t)0x89c590f9)
+    else if (signature == OGTLCtor(0x50f41ccf) || signature == OGTLCtor(0x89c590f9))
     {
-        TLKeyboardButton$keyboardButtonGame *button = [[TLKeyboardButton$keyboardButtonGame alloc] init];
-        button.text = text;
-        result = button;
+        TLKeyboardButton$keyboardButtonGame *button = OGTLNewObject(TLKeyboardButton$keyboardButtonGame);
+        [button setText:text];
+        built = button;
     }
-    else if (signature == (int32_t)0xafd93fbb || signature == (int32_t)0x3fa53905)
+    else if (signature == OGTLCtor(0xafd93fbb) || signature == OGTLCtor(0x3fa53905))
     {
-        TLKeyboardButton$keyboardButtonBuy *button = [[TLKeyboardButton$keyboardButtonBuy alloc] init];
-        button.text = text;
-        result = button;
+        TLKeyboardButton$keyboardButtonBuy *button = OGTLNewObject(TLKeyboardButton$keyboardButtonBuy);
+        [button setText:text];
+        built = button;
     }
-    else if (signature == (int32_t)0x10b78d29 || signature == (int32_t)0xd02e7fd4 || signature == (int32_t)0xf51006f9 || signature == (int32_t)0x68013e72)
+    else if (signature == OGTLCtor(0x10b78d29) || signature == OGTLCtor(0xd02e7fd4) || signature == OGTLCtor(0xf51006f9) || signature == OGTLCtor(0x68013e72))
     {
-        bool isOutputUrlAuth = signature == (int32_t)0x10b78d29 || signature == (int32_t)0xf51006f9;
-        if ((isOutputUrlAuth && (flags & (1 << 0))) || (!isOutputUrlAuth && (flags & (1 << 1))))
-            [is readString];
-        TLKeyboardButton$keyboardButtonUrl *button = [[TLKeyboardButton$keyboardButtonUrl alloc] init];
-        button.text = text;
-        button.url = [is readString];
-        if (isOutputUrlAuth)
+        bool isUrlAuthOutput = signature == OGTLCtor(0x10b78d29) || signature == OGTLCtor(0xf51006f9);
+        if ((isUrlAuthOutput && (OGTLFlagSet(flags, 0))) || (!isUrlAuthOutput && (OGTLFlagSet(flags, 1))))
+            OGTLTakeString(is);
+        TLKeyboardButton$keyboardButtonUrl *button = OGTLNewObject(TLKeyboardButton$keyboardButtonUrl);
+        [button setText:text];
+        [button setUrl:[is readString]];
+        if (isUrlAuthOutput)
             [is readInt32];
         else
-            CodexReadObject(is, environment, error);
-        result = button;
+            OGTLCoreReadObject(is, environment, error);
+        built = button;
     }
-    else if (signature == (int32_t)0xbbc7515d || signature == (int32_t)0x7a11d782)
+    else if (signature == OGTLCtor(0xbbc7515d) || signature == OGTLCtor(0x7a11d782))
     {
     }
-    else if (signature == (int32_t)0xe988037b || signature == (int32_t)0x7d5e07c7)
+    else if (signature == OGTLCtor(0xe988037b) || signature == OGTLCtor(0x7d5e07c7))
     {
-        CodexReadObject(is, environment, error);
+        OGTLCoreReadObject(is, environment, error);
     }
-    else if (signature == (int32_t)0x308660c1 || signature == (int32_t)0xc0fd5d09)
+    else if (signature == OGTLCtor(0x308660c1) || signature == OGTLCtor(0xc0fd5d09))
     {
-        [is readInt64];
+        OGTLTakeInt64(is);
     }
-    else if (signature == (int32_t)0x53d7bfd8 || signature == (int32_t)0xc9662d05 || signature == (int32_t)0x5b0f15f5 || signature == (int32_t)0x02b78156)
+    else if (signature == OGTLCtor(0x53d7bfd8) || signature == OGTLCtor(0xc9662d05) || signature == OGTLCtor(0x5b0f15f5) || signature == OGTLCtor(0x02b78156))
     {
         [is readInt32];
-        CodexReadObject(is, environment, error);
+        OGTLCoreReadObject(is, environment, error);
         [is readInt32];
     }
-    else if (signature == (int32_t)0x75d2698e || signature == (int32_t)0xbcc4af10)
+    else if (signature == OGTLCtor(0x75d2698e) || signature == OGTLCtor(0xbcc4af10))
     {
-        [is readString];
+        OGTLTakeString(is);
     }
     
-    if (result == nil)
+    if (built == nil)
     {
-        TLKeyboardButton$keyboardButton *button = [[TLKeyboardButton$keyboardButton alloc] init];
-        button.text = text;
-        result = button;
+        TLKeyboardButton$keyboardButton *button = OGTLNewObject(TLKeyboardButton$keyboardButton);
+        [button setText:text];
+        built = button;
     }
     
-    return result;
+    return built;
 }
 
 @end
 
-@interface TLCodexModernUpdateUserParser : TLUpdate
+@interface OGTLModernUpdateUserParser : TLUpdate
 {
     int64_t _userId;
 }
 @property (nonatomic) int64_t userId;
 @end
 
-@implementation TLCodexModernUpdateUserParser
+@implementation OGTLModernUpdateUserParser
 
 @synthesize userId = _userId;
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernUpdateUserParser *result = [[TLCodexModernUpdateUserParser alloc] init];
+    OGTLModernUpdateUserParser *result = [[OGTLModernUpdateUserParser alloc] init];
     result.userId = [is readInt64];
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateUserStatusParser : TLUpdate$updateUserStatus
+@interface OGTLModernUpdateUserStatusParser : TLUpdate$updateUserStatus
 @end
 
-@implementation TLCodexModernUpdateUserStatusParser
+@implementation OGTLModernUpdateUserStatusParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLUpdate$updateUserStatus *result = [[TLUpdate$updateUserStatus alloc] init];
-    int64_t userId = [is readInt64];
-    int32_t statusSignature = [is readInt32];
+    TLUpdate$updateUserStatus *result = OGTLNewObject(TLUpdate$updateUserStatus);
+    int64_t userId = OGTLTakeInt64(is);
+    int32_t statusSignature = OGTLTakeInt32(is);
     result.user_id = userId;
-    result.status = (TLUserStatus *)TLMetaClassStore::constructObject(is, statusSignature, environment, nil, error);
+    [result setStatus:(TLUserStatus *)OGTLCoreBuildObject(is, statusSignature, environment, error)];
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateDeleteChannelMessagesParser : TLUpdate$updateDeleteChannelMessages
+@interface OGTLModernUpdateDeleteChannelMessagesParser : TLUpdate$updateDeleteChannelMessages
 @end
 
-@implementation TLCodexModernUpdateDeleteChannelMessagesParser
+@implementation OGTLModernUpdateDeleteChannelMessagesParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLUpdate$updateDeleteChannelMessages *result = [[TLUpdate$updateDeleteChannelMessages alloc] init];
-    int64_t channelId = [is readInt64];
+    TLUpdate$updateDeleteChannelMessages *result = OGTLNewObject(TLUpdate$updateDeleteChannelMessages);
+    int64_t channelId = OGTLTakeInt64(is);
     result.channel_id = channelId;
-    result.messages = CodexReadInt32Vector(is);
+    result.messages = OGTLCoreReadInt32Vector(is);
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
     return result;
@@ -9089,29 +6625,29 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @end
 
-@interface TLCodexModernUpdateChannelTooLongParser : TLUpdate$updateChannelTooLong
+@interface OGTLModernUpdateChannelTooLongParser : TLUpdate$updateChannelTooLong
 @end
 
-@implementation TLCodexModernUpdateChannelTooLongParser
+@implementation OGTLModernUpdateChannelTooLongParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLUpdate$updateChannelTooLong *result = [[TLUpdate$updateChannelTooLong alloc] init];
     int32_t flags = [is readInt32];
-    int64_t channelId = [is readInt64];
+    int64_t channelId = OGTLTakeInt64(is);
     result.flags = flags;
     result.channel_id = channelId;
-    if (flags & 1)
+    if (OGTLFlagSet(flags, 0))
         result.pts = [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateShortMessageParser : TLUpdates$modernUpdateShortMessage
+@interface OGTLModernUpdateShortMessageParser : TLUpdates$modernUpdateShortMessage
 @end
 
-@implementation TLCodexModernUpdateShortMessageParser
+@implementation OGTLModernUpdateShortMessageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -9123,25 +6659,25 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
     result.date = [is readInt32];
-    if (result.flags & (1 << 2))
-        result.fwd_header = (TLMessageFwdHeader *)CodexReadObject(is, environment, error);
-    if (result.flags & (1 << 11))
+    if (OGTLFlagSet(result.flags, 2))
+        result.fwd_header = (TLMessageFwdHeader *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(result.flags, 11))
         result.via_bot_id = [is readInt64];
-    if (result.flags & (1 << 3))
-        result.reply_to_msg_id = CodexReadReplyHeaderCompat(is, environment, error);
-    if (result.flags & (1 << 7))
-        result.entities = CodexReadObjectVector(is, environment, error);
-    if (result.flags & (1 << 25))
+    if (OGTLFlagSet(result.flags, 3))
+        result.reply_to_msg_id = OGTLCoreReadReplyHeaderCompat(is, environment, error);
+    if (OGTLFlagSet(result.flags, 7))
+        result.entities = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLFlagSet(result.flags, 25))
         [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateShortChatMessageParser : TLUpdates$modernUpdateShortChatMessage
+@interface OGTLModernUpdateShortChatMessageParser : TLUpdates$modernUpdateShortChatMessage
 @end
 
-@implementation TLCodexModernUpdateShortChatMessageParser
+@implementation OGTLModernUpdateShortChatMessageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -9154,25 +6690,25 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
     result.date = [is readInt32];
-    if (result.flags & (1 << 2))
-        result.fwd_header = (TLMessageFwdHeader *)CodexReadObject(is, environment, error);
-    if (result.flags & (1 << 11))
+    if (OGTLFlagSet(result.flags, 2))
+        result.fwd_header = (TLMessageFwdHeader *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(result.flags, 11))
         result.via_bot_id = [is readInt64];
-    if (result.flags & (1 << 3))
-        result.reply_to_msg_id = CodexReadReplyHeaderCompat(is, environment, error);
-    if (result.flags & (1 << 7))
-        result.entities = CodexReadObjectVector(is, environment, error);
-    if (result.flags & (1 << 25))
+    if (OGTLFlagSet(result.flags, 3))
+        result.reply_to_msg_id = OGTLCoreReadReplyHeaderCompat(is, environment, error);
+    if (OGTLFlagSet(result.flags, 7))
+        result.entities = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLFlagSet(result.flags, 25))
         [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexModernUpdateShortSentMessageParser : TLUpdates$updateShortSentMessage
+@interface OGTLModernUpdateShortSentMessageParser : TLUpdates$updateShortSentMessage
 @end
 
-@implementation TLCodexModernUpdateShortSentMessageParser
+@implementation OGTLModernUpdateShortSentMessageParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -9182,18 +6718,18 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
     result.date = [is readInt32];
-    if (result.flags & (1 << 9))
-        result.media = (TLMessageMedia *)CodexReadObject(is, environment, error);
-    if (result.flags & (1 << 7))
-        result.entities = CodexReadObjectVector(is, environment, error);
-    if (result.flags & (1 << 25))
+    if (OGTLFlagSet(result.flags, 9))
+        result.media = (TLMessageMedia *)OGTLCoreReadObject(is, environment, error);
+    if (OGTLFlagSet(result.flags, 7))
+        result.entities = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLFlagSet(result.flags, 25))
         [is readInt32];
     return result;
 }
 
 @end
 
-@interface TLCodexDialogFilterItem : NSObject <TLObject>
+@interface OGTLDialogFilterItem : OGTLManualParser
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t filterId;
 @property (nonatomic, strong) NSString *title;
@@ -9206,7 +6742,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 @property (nonatomic) bool chatlist;
 @end
 
-@implementation TLCodexDialogFilterItem
+@implementation OGTLDialogFilterItem
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -9214,7 +6750,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEntities, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSString *OGTLCoreReadDialogFilterTitle(NSInputStream *is, bool textWithEntities, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     if (!textWithEntities)
         return [is readString];
@@ -9231,15 +6767,15 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
         return @"";
     }
 
-    NSString *text = [is readString];
-    CodexReadObjectVector(is, environment, error);
+    NSString *text = OGTLTakeString(is);
+    OGTLCoreReadObjectVector(is, environment, error);
     return text == nil ? @"" : text;
 }
 
-@interface TLCodexDialogFilterParser : NSObject <TLObject>
+@interface OGTLDialogFilterParser : OGTLManualParser
 @end
 
-@implementation TLCodexDialogFilterParser
+@implementation OGTLDialogFilterParser
 - (int32_t)TLconstructorSignature { return 0; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -9248,12 +6784,13 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexDialogFilterItem *result = [[TLCodexDialogFilterItem alloc] init];
+    OGTLDialogFilterItem *result = [[OGTLDialogFilterItem alloc] init];
 
     if (signature == (int32_t)0x363293ae)
     {
         result.defaultFilter = true;
         result.filterId = 0;
+        result.color = -1;
         result.title = @"";
         result.pinnedPeers = @[];
         result.includePeers = @[];
@@ -9268,28 +6805,29 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
         return nil;
 
     result.chatlist = chatlist;
+    result.color = -1;
     result.flags = [is readInt32];
     result.filterId = [is readInt32];
-    result.title = CodexReadDialogFilterTitle(is, modernTitle, environment, error);
-    if (error != NULL && *error != nil)
+    result.title = OGTLCoreReadDialogFilterTitle(is, modernTitle, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
 
-    if (result.flags & (1 << 25))
+    if (OGTLFlagSet(result.flags, 25))
         result.emoticon = [is readString];
     if (!layer166 && (result.flags & (1 << 27)))
         result.color = [is readInt32];
 
-    result.pinnedPeers = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.pinnedPeers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.includePeers = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.includePeers = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
 
     if (!chatlist)
     {
-        result.excludePeers = CodexReadObjectVector(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.excludePeers = OGTLCoreReadObjectVector(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
     }
     else
@@ -9299,12 +6837,12 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
 }
 @end
 
-@interface TLCodexDialogFiltersResult : NSObject <TLObject>
+@interface OGTLDialogFiltersResult : OGTLManualParser
 @property (nonatomic) int32_t flags;
 @property (nonatomic, strong) NSArray *filters;
 @end
 
-@implementation TLCodexDialogFiltersResult
+@implementation OGTLDialogFiltersResult
 - (int32_t)TLconstructorSignature { return (int32_t)0x2ad93719; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -9312,10 +6850,10 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
 - (void)TLserialize:(NSOutputStream *)__unused os { }
 @end
 
-@interface TLCodexDialogFiltersParser : NSObject <TLObject>
+@interface OGTLDialogFiltersParser : OGTLManualParser
 @end
 
-@implementation TLCodexDialogFiltersParser
+@implementation OGTLDialogFiltersParser
 - (int32_t)TLconstructorSignature { return (int32_t)0x2ad93719; }
 - (int32_t)TLconstructorName { return -1; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -9324,31 +6862,27 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexDialogFiltersResult *result = [[TLCodexDialogFiltersResult alloc] init];
+    OGTLDialogFiltersResult *result = [[OGTLDialogFiltersResult alloc] init];
     result.flags = [is readInt32];
-    result.filters = CodexReadObjectVector(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.filters = OGTLCoreReadObjectVector(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 @end
 
-@interface TLCodexDialogFilterUpdateParser : TLUpdate
+@interface OGTLDialogFilterUpdateParser : TLUpdate
 @end
 
-@implementation TLCodexDialogFilterUpdateParser
+@implementation OGTLDialogFilterUpdateParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xa5d72105)
+    if (signature == OGTLCtor(0xa5d72105))
     {
-        int32_t vectorMarker = [is readInt32];
+        int32_t vectorMarker = OGTLTakeInt32(is);
         int32_t count = 0;
-        if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-            count = [is readInt32];
-        else if (vectorMarker >= 0 && vectorMarker <= 10000)
-            count = vectorMarker;
-        else
+        if (!OGTLCoreVectorCountForMarker(is, vectorMarker, &count))
         {
             if (error != NULL)
                 *error = nil;
@@ -9361,10 +6895,10 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
     {
         int32_t flags = [is readInt32];
         [is readInt32];
-        if (flags & (1 << 0))
+        if (OGTLFlagSet(flags, 0))
         {
-            CodexReadObject(is, environment, error);
-            if (error != NULL && *error != nil)
+            OGTLCoreReadObject(is, environment, error);
+            if (OGTLCoreFailed(error))
                 return nil;
         }
     }
@@ -9377,169 +6911,169 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
 
 @end
 
-@interface TLCodexModernUpdatesStateParser : TLupdates_State$updates_state
+@interface OGTLModernUpdatesStateParser : TLupdates_State$updates_state
 @end
 
-@implementation TLCodexModernUpdatesStateParser
+@implementation OGTLModernUpdatesStateParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLupdates_State$updates_state *result = [[TLupdates_State$updates_state alloc] init];
+    TLupdates_State$updates_state *result = OGTLNewObject(TLupdates_State$updates_state);
     result.pts = [is readInt32];
-    result.qts = [is readInt32];
+    result.qts = OGTLTakeInt32(is);
     result.date = [is readInt32];
-    result.seq = [is readInt32];
+    result.seq = OGTLTakeInt32(is);
     result.unread_count = [is readInt32];
-    CodexLastReadUpdatesState = result;
+    OGTLCoreLastReadUpdatesState = result;
     return result;
 }
 
 @end
 
-static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static TLupdates_State *OGTLCoreReadUpdatesStateCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    int32_t stateSignature = [is readInt32];
-    if (stateSignature == (int32_t)0xa56c2a3e)
+    int32_t stateSignature = OGTLTakeInt32(is);
+    if (stateSignature == OGTLCtor(0xa56c2a3e))
     {
-        TLupdates_State$updates_state *result = [[TLupdates_State$updates_state alloc] init];
+        TLupdates_State$updates_state *result = OGTLNewObject(TLupdates_State$updates_state);
         result.pts = [is readInt32];
-        result.qts = [is readInt32];
+        result.qts = OGTLTakeInt32(is);
         result.date = [is readInt32];
-        result.seq = [is readInt32];
+        result.seq = OGTLTakeInt32(is);
         result.unread_count = [is readInt32];
-        CodexLastReadUpdatesState = result;
+        OGTLCoreLastReadUpdatesState = result;
         return result;
     }
     
-    return (TLupdates_State *)TLMetaClassStore::constructObject(is, stateSignature, environment, nil, error);
+    return (TLupdates_State *)OGTLCoreBuildObject(is, stateSignature, environment, error);
 }
 
-@interface TLCodexModernUpdatesParser : TLUpdates$updates
+@interface OGTLModernUpdatesParser : TLUpdates$updates
 @end
 
-@implementation TLCodexModernUpdatesParser
+@implementation OGTLModernUpdatesParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0x78d4dec1)
+    if (signature == OGTLCtor(0x78d4dec1))
     {
-        TLUpdates$updateShort *result = [[TLUpdates$updateShort alloc] init];
-        result.update = (TLUpdate *)CodexReadObject(is, environment, error);
-        if (error != NULL && *error != nil)
+        TLUpdates$updateShort *result = OGTLNewObject(TLUpdates$updateShort);
+        result.update = (TLUpdate *)OGTLCoreReadObject(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         result.date = [is readInt32];
         return result;
     }
 
-    if (signature == (int32_t)0x725b04c3)
+    if (signature == OGTLCtor(0x725b04c3))
     {
-        TLUpdates$updatesCombined *result = [[TLUpdates$updatesCombined alloc] init];
-        result.updates = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.updates", environment, error);
-        if (error != NULL && *error != nil)
+        TLUpdates$updatesCombined *result = OGTLNewObject(TLUpdates$updatesCombined);
+        result.updates = OGTLCoreReadStrictObjectVectorWithRole(is, @"updatesCombined.updates", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.users = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.users", environment, error);
-        if (error != NULL && *error != nil)
+        result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"updatesCombined.users", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.chats = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.chats", environment, error);
-        if (error != NULL && *error != nil)
+        result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"updatesCombined.chats", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         result.date = [is readInt32];
-        result.seq_start = [is readInt32];
-        result.seq = [is readInt32];
+        result.seq_start = OGTLTakeInt32(is);
+        result.seq = OGTLTakeInt32(is);
         return result;
     }
 
-    TLUpdates$updates *result = [[TLUpdates$updates alloc] init];
-    result.updates = CodexReadStrictObjectVectorWithRole(is, @"updates.updates", environment, error);
-    if (error != NULL && *error != nil)
+    TLUpdates$updates *result = OGTLNewObject(TLUpdates$updates);
+    result.updates = OGTLCoreReadStrictObjectVectorWithRole(is, @"updates.updates", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"updates.users", environment, error);
-    if (error != NULL && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"updates.users", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"updates.chats", environment, error);
-    if (error != NULL && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"updates.chats", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     result.date = [is readInt32];
-    result.seq = [is readInt32];
+    result.seq = OGTLTakeInt32(is);
     return result;
 }
 
 @end
 
-@interface TLCodexModernDifferenceEmptyParser : TLupdates_Difference$updates_differenceEmpty
+@interface OGTLModernDifferenceEmptyParser : TLupdates_Difference$updates_differenceEmpty
 @end
 
-@implementation TLCodexModernDifferenceEmptyParser
+@implementation OGTLModernDifferenceEmptyParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLupdates_Difference$updates_differenceEmpty *result = [[TLupdates_Difference$updates_differenceEmpty alloc] init];
     result.date = [is readInt32];
-    result.seq = [is readInt32];
+    [result setSeq:[is readInt32]];
     return result;
 }
 
 @end
 
-@interface TLCodexModernDifferenceParser : TLupdates_Difference$updates_difference
+@interface OGTLModernDifferenceParser : TLupdates_Difference$updates_difference
 @end
 
-@implementation TLCodexModernDifferenceParser
+@implementation OGTLModernDifferenceParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    if (signature == (int32_t)0xa8fb1981)
+    if (signature == OGTLCtor(0xa8fb1981))
     {
-        TLupdates_Difference$updates_differenceSlice *result = [[TLupdates_Difference$updates_differenceSlice alloc] init];
-        result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.messages", environment, error);
-        if (error != NULL && *error != nil)
+        TLupdates_Difference$updates_differenceSlice *result = OGTLNewObject(TLupdates_Difference$updates_differenceSlice);
+        result.n_new_messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"differenceSlice.messages", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.n_new_encrypted_messages = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.encrypted", environment, error);
-        if (error != NULL && *error != nil)
+        result.n_new_encrypted_messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"differenceSlice.encrypted", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.updates", environment, error);
-        if (error != NULL && *error != nil)
+        result.other_updates = OGTLCoreReadStrictObjectVectorWithRole(is, @"differenceSlice.updates", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.chats = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.chats", environment, error);
-        if (error != NULL && *error != nil)
+        result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"differenceSlice.chats", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.users = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.users", environment, error);
-        if (error != NULL && *error != nil)
+        result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"differenceSlice.users", environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
-        result.intermediate_state = CodexReadUpdatesStateCompat(is, environment, error);
-        if (error != NULL && *error != nil)
+        result.intermediate_state = OGTLCoreReadUpdatesStateCompat(is, environment, error);
+        if (OGTLCoreFailed(error))
             return nil;
         return result;
     }
 
-    TLupdates_Difference$updates_difference *result = [[TLupdates_Difference$updates_difference alloc] init];
-    result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"difference.messages", environment, error);
-    if (error != NULL && *error != nil)
+    TLupdates_Difference$updates_difference *result = OGTLNewObject(TLupdates_Difference$updates_difference);
+    result.n_new_messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"difference.messages", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.n_new_encrypted_messages = CodexReadStrictObjectVectorWithRole(is, @"difference.encrypted", environment, error);
-    if (error != NULL && *error != nil)
+    result.n_new_encrypted_messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"difference.encrypted", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"difference.updates", environment, error);
-    if (error != NULL && *error != nil)
+    result.other_updates = OGTLCoreReadStrictObjectVectorWithRole(is, @"difference.updates", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"difference.chats", environment, error);
-    if (error != NULL && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"difference.chats", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"difference.users", environment, error);
-    if (error != NULL && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"difference.users", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.state = CodexReadUpdatesStateCompat(is, environment, error);
-    if (error != NULL && *error != nil)
+    result.state = OGTLCoreReadUpdatesStateCompat(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexModernChannelDifferenceParser : TLUpdates_ChannelDifference$channelDifference
+@interface OGTLModernChannelDifferenceParser : TLUpdates_ChannelDifference$channelDifference
 @end
 
-@implementation TLCodexModernChannelDifferenceParser
+@implementation OGTLModernChannelDifferenceParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
@@ -9547,59 +7081,59 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     int32_t flags = [is readInt32];
     result.flags = flags;
     result.pts = [is readInt32];
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         result.timeout = [is readInt32];
 
-    result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.messages", environment, error);
-    if (error != NULL && *error != nil)
+    result.n_new_messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifference.messages", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.updates", environment, error);
-    if (error != NULL && *error != nil)
+    result.other_updates = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifference.updates", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.chats", environment, error);
-    if (error != NULL && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifference.chats", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.users", environment, error);
-    if (error != NULL && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifference.users", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
 
 @end
 
-@interface TLCodexChannelDifferenceTooLongParser : TLchannelDifferenceTooLong
+@interface OGTLChannelDifferenceTooLongParser : TLchannelDifferenceTooLong
 @end
 
-@implementation TLCodexChannelDifferenceTooLongParser
+@implementation OGTLChannelDifferenceTooLongParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLchannelDifferenceTooLong *result = [[TLchannelDifferenceTooLong alloc] init];
     int32_t flags = [is readInt32];
     result.flags = flags;
-    if (flags & (1 << 1))
+    if (OGTLFlagSet(flags, 1))
         result.timeout = [is readInt32];
-    id dialog = CodexReadObject(is, environment, error);
-    if (error != NULL && *error != nil)
+    id dialog = OGTLCoreReadObject(is, environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    if ([dialog isKindOfClass:[TLDialog$dialogMeta class]])
+    if (OGTLCoreIsKind(dialog, [TLDialog$dialogMeta class]))
     {
-        TLDialog$dialogMeta *dialogMeta = (TLDialog$dialogMeta *)dialog;
-        result.pts = dialogMeta.pts;
-        result.top_message = dialogMeta.top_message;
-        result.unread_count = dialogMeta.unread_count;
-        result.unread_mentions_count = dialogMeta.unread_mentions_count;
-        result.read_inbox_max_id = dialogMeta.read_inbox_max_id;
-        result.read_outbox_max_id = dialogMeta.read_outbox_max_id;
+        TLDialog$dialogMeta *channelMeta = (TLDialog$dialogMeta *)dialog;
+        [result setPts:channelMeta.pts];
+        [result setTop_message:channelMeta.top_message];
+        [result setUnread_count:channelMeta.unread_count];
+        [result setUnread_mentions_count:channelMeta.unread_mentions_count];
+        [result setRead_inbox_max_id:channelMeta.read_inbox_max_id];
+        [result setRead_outbox_max_id:channelMeta.read_outbox_max_id];
     }
-    result.messages = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.messages", environment, error);
-    if (error != NULL && *error != nil)
+    result.messages = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.messages", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.chats", environment, error);
-    if (error != NULL && *error != nil)
+    result.chats = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.chats", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
-    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.users", environment, error);
-    if (error != NULL && *error != nil)
+    result.users = OGTLCoreReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.users", environment, error);
+    if (OGTLCoreFailed(error))
         return nil;
     return result;
 }
@@ -9651,41 +7185,41 @@ void TLMetaClassStore::registerVectorClass(id<TLVector> vectorClass)
 
 id<TLObject> TLMetaClassStore::getObjectClass(int32_t name)
 {
-    id<TLObject> result = nil;
+    id<TLObject> found = nil;
     bool registrationPending = false;
     {
         TGTLClassRegistryGuard guard;
         std::tr1::unordered_map<int32_t, id<TLObject> >::iterator it = objectClassesByConstructorNames.find(name);
         if (it != objectClassesByConstructorNames.end())
-            result = it->second;
+            found = it->second;
         registrationPending = TGTLObjectClassRegistrationPending;
     }
 
-    if (result == nil)
+    if (found == nil)
     {
         TLMetaClassTable const *table = TLgetMetaClassTable();
         id<TLObject> objectClass = TLMetaClassInstantiate(table->objectClasses, table->objectClassesCount, table->classNames, name);
         if (objectClass != nil)
         {
             TGTLClassRegistryGuard guard;
-            result = objectClassesByConstructorNames.insert(std::pair<int32_t, id<TLObject> >(name, objectClass)).first->second;
+            found = objectClassesByConstructorNames.insert(std::pair<int32_t, id<TLObject> >(name, objectClass)).first->second;
         }
     }
 
-    if (result == nil && registrationPending)
+    if (found == nil && registrationPending)
     {
         dispatch_group_wait(TGTLObjectClassRegistrationGroup(), DISPATCH_TIME_FOREVER);
         TGTLClassRegistryGuard guard;
         std::tr1::unordered_map<int32_t, id<TLObject> >::iterator it = objectClassesByConstructorNames.find(name);
         if (it != objectClassesByConstructorNames.end())
-            result = it->second;
+            found = it->second;
     }
 
-    if (result == nil)
+    if (found == nil)
     {
         return nil;
     }
-    return result;
+    return found;
 }
 
 id<TLVector> TLMetaClassStore::getVectorClass(int32_t signature)
@@ -10302,7 +7836,7 @@ static TLMetaSchemeLazyStore *TLMetaSchemeBuildLazyStore(TLMetaSchemeEntries &en
 
 void TLMetaClassStore::mergeScheme(TLScheme *scheme)
 {
-    if (![scheme isKindOfClass:[TLScheme$scheme class]])
+    if (!OGTLCoreIsKind(scheme, [TLScheme$scheme class]))
         return;
     
     @autoreleasepool
@@ -10393,6 +7927,12 @@ void TLMetaClassStore::materializeLazyScheme()
     delete store;
 }
 
+typedef struct
+{
+    int32_t signature;
+    NSString *name;
+} OGTLHashName;
+
 void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool materialize)
 {
     TGTLClassRegistryGuard guard;
@@ -10400,7 +7940,7 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     CFAbsoluteTime mergePhaseStart = mergeStart;
     
     size_t schemeMethodsCount = entries.methods.size();
-    TLCodexSkipObjectParser *sharedSkipObjectParser = [[TLCodexSkipObjectParser alloc] init];
+    OGTLSkipObjectParser *sharedSkipObjectParser = [[OGTLSkipObjectParser alloc] init];
     mergePhaseStart = CFAbsoluteTimeGetCurrent();
     
     {
@@ -10434,56 +7974,203 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd0a1d008, TLLazyManualObjectParser(TLUser$modernUser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd7c0ff9c, TLLazyManualObjectParser(TLUser$modernUser)));
     objectClassesByConstructorNames[(int32_t)0x6c3e5402] = [[TLMessageEntity$messageEntityTextUrl alloc] init];
-    objectClassesByConstructorNames[(int32_t)0x9fbde43f] = [[TLChat$channelMeta alloc] init];
-    addHashToString((int32_t)0x9fbde43f, @"channel");
-    objectClassesByConstructorNames[(int32_t)0xe2f65ce2] = [[TLUserFull$userFullMeta alloc] init];
-    addHashToString((int32_t)0xe2f65ce2, @"UserFull");
-    objectClassesByConstructorNames[(int32_t)0x8c5d990f] = [[TLupdates_ChannelDifference$updates_channelDifferenceMeta alloc] init];
-    addHashToString((int32_t)0x8c5d990f, @"updates.ChannelDifference");
+    objectClassesByConstructorNames[OGTLCtor(0x9fbde43f)] = [[TLChat$channelMeta alloc] init];
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x9fbde43f, @"channel"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    objectClassesByConstructorNames[OGTLCtor(0xe2f65ce2)] = [[TLUserFull$userFullMeta alloc] init];
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xe2f65ce2, @"UserFull"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    objectClassesByConstructorNames[OGTLCtor(0x8c5d990f)] = [[TLupdates_ChannelDifference$updates_channelDifferenceMeta alloc] init];
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x8c5d990f, @"updates.ChannelDifference"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x4ccda305] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x4ccda305, @"updatePinnedChannelMessages");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x4ccda305, @"updatePinnedChannelMessages"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xf9a7c6d9] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xf9a7c6d9, @"businessLocation");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xf9a7c6d9, @"businessLocation"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xae9f31e8] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xae9f31e8, @"pollAnswerVoters");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xae9f31e8, @"pollAnswerVoters"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xd5d4c7f5] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xd5d4c7f5, @"mediaAreaSuggestedReaction");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xd5d4c7f5, @"mediaAreaSuggestedReaction"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x377d3538] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x377d3538, @"webPageAttributeStickerSet");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x377d3538, @"webPageAttributeStickerSet"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x9ac0c0cc] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x9ac0c0cc, @"messageEntityFormattedDate");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x9ac0c0cc, @"messageEntityFormattedDate"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x1f1ea79e] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x1f1ea79e, @"PeerColor");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x1f1ea79e, @"PeerColor"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xa61d7ecc] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xa61d7ecc, @"botApp");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xa61d7ecc, @"botApp"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xd91a34ac] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xd91a34ac, @"storyViews");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xd91a34ac, @"storyViews"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x731eca73] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x731eca73, @"updatePinnedDialogs");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x731eca73, @"updatePinnedDialogs"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x8350972b] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x8350972b, @"recentStory");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x8350972b, @"recentStory"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xcba86ca2] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xcba86ca2, @"RequestPeerType");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xcba86ca2, @"RequestPeerType"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xf6781f7c] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xf6781f7c, @"modernOptionalFeature");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xf6781f7c, @"modernOptionalFeature"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x7f6b4284] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x7f6b4284, @"modernOptionalFeature");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x7f6b4284, @"modernOptionalFeature"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xd7bb4f53] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xd7bb4f53, @"modernOptionalFeature");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xd7bb4f53, @"modernOptionalFeature"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xc18fad86] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xc18fad86, @"modernOptionalFeature");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xc18fad86, @"modernOptionalFeature"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0xff68ab47] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xff68ab47, @"notificationSound");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xff68ab47, @"notificationSound"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     objectClassesByConstructorNames[(int32_t)0x7a557809] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x7a557809, @"modernReactionFeature");
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x09d05049, TLLazyManualObjectParser(TLCodexUserStatusEmptyParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedb93949, TLLazyManualObjectParser(TLCodexUserStatusOnlineParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x008c703f, TLLazyManualObjectParser(TLCodexUserStatusOfflineParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7b197dc8, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x541a1d1a, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65899777, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x16d9703b, TLLazyManualObjectParser(TLCodexModernContactStatusParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe5bdf8de, TLLazyManualObjectParser(TLCodexModernUpdateUserStatusParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x7a557809, @"modernReactionFeature"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x09d05049, TLLazyManualObjectParser(OGTLUserStatusEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedb93949, TLLazyManualObjectParser(OGTLUserStatusOnlineParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x008c703f, TLLazyManualObjectParser(OGTLUserStatusOfflineParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7b197dc8, TLLazyManualObjectParser(OGTLUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x541a1d1a, TLLazyManualObjectParser(OGTLUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65899777, TLLazyManualObjectParser(OGTLUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x16d9703b, TLLazyManualObjectParser(OGTLModernContactStatusParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe5bdf8de, TLLazyManualObjectParser(OGTLModernUpdateUserStatusParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x18b7a10d, TLLazyManualObjectParser(TLDcOption$modernDcOption)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x14b24500, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd597650c, sharedSkipObjectParser));
@@ -10494,58 +8181,83 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48e246c2, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdc58f31e, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xac072444, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x22c0f6d5, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x869fbe10, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3bd4b7c2, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5881323a, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69d66c45, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x22c0f6d5, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x869fbe10, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3bd4b7c2, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75c1ad70, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5881323a, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69d66c45, TLLazyManualObjectParser(OGTLModernInputReplyToParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c39793f, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc02d4007, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe46bcee4, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0933f5b, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
-    addHashToString((int32_t)0x22c0f6d5, @"inputReplyToMessage");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc02d4007, TLLazyManualObjectParser(OGTLModernChatParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe46bcee4, TLLazyManualObjectParser(OGTLModernChatParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0933f5b, TLLazyManualObjectParser(OGTLModernChatParticipantParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x22c0f6d5, @"inputReplyToMessage"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     addHashToString((int32_t)0x869fbe10, @"inputReplyToMessage");
     addHashToString((int32_t)0x3bd4b7c2, @"inputReplyToMessage");
+    addHashToString((int32_t)0x75c1ad70, @"inputReplyToMessage");
     addHashToString((int32_t)0x5881323a, @"inputReplyToStory");
     addHashToString((int32_t)0x69d66c45, @"inputReplyToMonoForum");
-    addHashToString((int32_t)0x8c39793f, @"help.promoData");
-    addHashToString((int32_t)0xc02d4007, @"chatParticipant");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x8c39793f, @"help.promoData"},
+            {(int32_t)0xc02d4007, @"chatParticipant"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x914FBF11, TLLazyManualObjectParser(TLUpdates$modernUpdateShortMessage)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x313bc7f8, TLLazyManualObjectParser(TLCodexModernUpdateShortMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x313bc7f8, TLLazyManualObjectParser(OGTLModernUpdateShortMessageParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x16812688, TLLazyManualObjectParser(TLUpdates$modernUpdateShortChatMessage)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4d6deea5, TLLazyManualObjectParser(TLCodexModernUpdateShortChatMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4d6deea5, TLLazyManualObjectParser(OGTLModernUpdateShortChatMessageParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xBC0F17BC, TLLazyManualObjectParser(TLmessages_Messages$modernChannelMessages)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x11f1331c, TLLazyManualObjectParser(TLUpdates$updateShortSentMessage)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9015e101, TLLazyManualObjectParser(TLCodexModernUpdateShortSentMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa56c2a3e, TLLazyManualObjectParser(TLCodexModernUpdatesStateParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x78d4dec1, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x725b04c3, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x74ae4240, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb5523b, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7438f7e8, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x363293ae, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fe28ea4, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa472651, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96537bd7, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2ad93719, TLLazyManualObjectParser(TLCodexDialogFiltersParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x26ffde7d, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa5d72105, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3504914f, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5d75a138, TLLazyManualObjectParser(TLCodexModernDifferenceEmptyParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x00f49ca0, TLLazyManualObjectParser(TLCodexModernDifferenceParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa8fb1981, TLLazyManualObjectParser(TLCodexModernDifferenceParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2064674E, TLLazyManualObjectParser(TLCodexModernChannelDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9015e101, TLLazyManualObjectParser(OGTLModernUpdateShortSentMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa56c2a3e, TLLazyManualObjectParser(OGTLModernUpdatesStateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x78d4dec1, TLLazyManualObjectParser(OGTLModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x725b04c3, TLLazyManualObjectParser(OGTLModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x74ae4240, TLLazyManualObjectParser(OGTLModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb5523b, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7438f7e8, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x363293ae, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fe28ea4, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa472651, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96537bd7, TLLazyManualObjectParser(OGTLDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2ad93719, TLLazyManualObjectParser(OGTLDialogFiltersParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x26ffde7d, TLLazyManualObjectParser(OGTLDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa5d72105, TLLazyManualObjectParser(OGTLDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3504914f, TLLazyManualObjectParser(OGTLDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5d75a138, TLLazyManualObjectParser(OGTLModernDifferenceEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x00f49ca0, TLLazyManualObjectParser(OGTLModernDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa8fb1981, TLLazyManualObjectParser(OGTLModernDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2064674E, TLLazyManualObjectParser(OGTLModernChannelDifferenceParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x3E11AFFB, TLLazyManualObjectParser(TLUpdates_ChannelDifference$empty)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xc88974ac, TLLazyManualObjectParser(TLChat$channel)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0aadfc8f, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c32b11c, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe00998b7, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe4478bd, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe685355, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd49f34c6, TLLazyManualObjectParser(TLCodexModernChannelParser)));
-    addHashToString((int32_t)0xfe4478bd, @"channel");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0aadfc8f, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c32b11c, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe00998b7, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe4478bd, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe685355, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd49f34c6, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7ad15240, TLLazyManualObjectParser(OGTLModernChannelParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xfe4478bd, @"channel"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     addHashToString((int32_t)0xfe685355, @"channel");
     addHashToString((int32_t)0xd49f34c6, @"channel");
+    addHashToString((int32_t)0x7ad15240, @"channel");
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65efe954, TLLazyManualObjectParser(TLChat$community)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfd3cdab8, TLLazyManualObjectParser(TLChat$communityForbidden)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xcbb7a507, TLLazyManualObjectParser(TLChatFull$communityFull)));
@@ -10557,6 +8269,7 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x56dbfcf8, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6c0d8e23, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd9c6dc1a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdd27bee9, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe376999, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2f65c8e4, sharedSkipObjectParser));
     addHashToString((int32_t)0x65efe954, @"community");
@@ -10570,18 +8283,20 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     addHashToString((int32_t)0x56dbfcf8, @"updateDeleteEphemeralMessages");
     addHashToString((int32_t)0x6c0d8e23, @"updateBotStarsSubscription");
     addHashToString((int32_t)0xd9c6dc1a, @"ephemeralMessage");
+    addHashToString((int32_t)0xdd27bee9, @"ephemeralMessage");
     addHashToString((int32_t)0xbe376999, @"notifyCommunity");
     addHashToString((int32_t)0x2f65c8e4, @"dialogPeerCommunity");
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x17d493d5, TLLazyManualObjectParser(TLCodexModernChannelForbiddenParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x17d493d5, TLLazyManualObjectParser(OGTLModernChannelForbiddenParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x76af5481, TLLazyManualObjectParser(TLChatFull$channelFull)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbab348d, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa04e8d3a, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe4e0b29d, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbab348d, TLLazyManualObjectParser(OGTLModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa04e8d3a, TLLazyManualObjectParser(OGTLModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe4e0b29d, TLLazyManualObjectParser(OGTLModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc4c4dd40, TLLazyManualObjectParser(OGTLModernChannelFullParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xFC900C2B, TLLazyManualObjectParser(TLChatParticipants$chatParticipantsForbidden)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xD91CDD54, TLLazyManualObjectParser(TLChat$chat)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41cbf256, TLLazyManualObjectParser(TLCodexModernChatParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6592a1a7, TLLazyManualObjectParser(TLCodexModernChatForbiddenParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c6e1c11, TLLazyManualObjectParser(TLCodexModernChatPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41cbf256, TLLazyManualObjectParser(OGTLModernChatParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6592a1a7, TLLazyManualObjectParser(OGTLModernChatForbiddenParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c6e1c11, TLLazyManualObjectParser(OGTLModernChatPhotoParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xB08FBB93, TLLazyManualObjectParser(TLWebPage$webPageExternal)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x947ca848, TLLazyManualObjectParser(TLMessages_BotResults$botResults)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe021f2f6, TLLazyManualObjectParser(TLMessages_BotResults$botResults)));
@@ -10593,13 +8308,14 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x18d1cdc2, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaContact)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x11965f3a, TLLazyManualObjectParser(TLBotInlineResult$botInlineResult)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9852F9C6, TLLazyManualObjectParser(TLDocumentAttribute$documentAttributeAudio)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x43c57c48, TLLazyManualObjectParser(TLCodexModernDocumentAttributeVideoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x43c57c48, TLLazyManualObjectParser(OGTLModernDocumentAttributeVideoParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x559ebe6d, TLLazyManualObjectParser(TLMessageFwdHeader$messageFwdHeader)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xf220f3f, TLLazyManualObjectParser(TLUserFull$userFull)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3b6d152e, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcc997720, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd2234ea0, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x06cbe645, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb90c2afd, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c92b098, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x120b1ab9, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5a0a066d, sharedSkipObjectParser));
@@ -10614,15 +8330,22 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc01e857f, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2a17bf5c, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83487af0, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc32d5b12, TLLazyManualObjectParser(TLCodexModernUpdateDeleteChannelMessagesParser)));
-    addHashToString((int32_t)0xc32d5b12, @"updateDeleteChannelMessages");
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5e1b3cb8, TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc32d5b12, TLLazyManualObjectParser(OGTLModernUpdateDeleteChannelMessagesParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xc32d5b12, @"updateDeleteChannelMessages"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5e1b3cb8, TLLazyManualObjectParser(OGTLUpdateMessageReactionsParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd6b19546, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x51e6ee4f, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xea29055d, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x922e6e10, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9c974fdf, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8951abef, TLLazyManualObjectParser(TLCodexModernUpdateNewAuthorizationParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8951abef, TLLazyManualObjectParser(OGTLModernUpdateNewAuthorizationParser)));
     addHashToString((int32_t)0x8951abef, @"updateNewAuthorization");
     manualObjectParsers[(int32_t)0xad01d61d] = TLLazyManualObjectParser(TGDeviceAuthorizationParser);
     manualObjectParsers[(int32_t)0x4bff8ea0] = TLLazyManualObjectParser(TGDeviceAuthorizationsParser);
@@ -10714,59 +8437,115 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0xdb33dad0] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xaef6abbc] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x46c6e36f] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0xdaad85b0] = TLLazyManualObjectParser(TLCodexMessageMediaGiveawayParser);
-    addHashToString((int32_t)0xdaad85b0, @"messageMediaGiveaway");
-    manualObjectParsers[(int32_t)0xc6991068] = TLLazyManualObjectParser(TLCodexMessageMediaGiveawayParser);
-    addHashToString((int32_t)0xc6991068, @"messageMediaGiveawayResults");
-    manualObjectParsers[(int32_t)0xbec268ef] = TLLazyManualObjectParser(TLCodexUpdateNotifySettingsParser);
-    addHashToString((int32_t)0xbec268ef, @"updateNotifySettings");
-    manualObjectParsers[(int32_t)0xcde0ec40] = TLLazyManualObjectParser(TLCodexChatInviteParser);
-    addHashToString((int32_t)0xcde0ec40, @"chatInvite");
+    manualObjectParsers[(int32_t)0xdaad85b0] = TLLazyManualObjectParser(OGTLMessageMediaGiveawayParser);
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xdaad85b0, @"messageMediaGiveaway"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers[(int32_t)0xc6991068] = TLLazyManualObjectParser(OGTLMessageMediaGiveawayParser);
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xc6991068, @"messageMediaGiveawayResults"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers[(int32_t)0xbec268ef] = TLLazyManualObjectParser(OGTLUpdateNotifySettingsParser);
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xbec268ef, @"updateNotifySettings"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers[(int32_t)0xcde0ec40] = TLLazyManualObjectParser(OGTLChatInviteParser);
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xcde0ec40, @"chatInvite"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers[(int32_t)0x4ba3a95a] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x4ba3a95a, @"messageReactor");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x4ba3a95a, @"messageReactor"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers[(int32_t)0xe16459c3] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xe16459c3, @"updateDialogUnreadMark");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xe16459c3, @"updateDialogUnreadMark"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers[(int32_t)0xe56dbf05] = sharedSkipObjectParser;
-    addHashToString((int32_t)0xe56dbf05, @"dialogPeer");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xe56dbf05, @"dialogPeer"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers[(int32_t)0x514519e2] = sharedSkipObjectParser;
-    addHashToString((int32_t)0x514519e2, @"dialogPeerFolder");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x514519e2, @"dialogPeerFolder"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf74e932b, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb05ac6b1, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xeb0467fb, TLLazyManualObjectParser(TLUpdate$updateChannelTooLong)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x108d941f, TLLazyManualObjectParser(TLCodexModernUpdateChannelTooLongParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa4bcc6fe, TLLazyManualObjectParser(TLCodexChannelDifferenceTooLongParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x108d941f, TLLazyManualObjectParser(OGTLModernUpdateChannelTooLongParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa4bcc6fe, TLLazyManualObjectParser(OGTLChannelDifferenceTooLongParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x38faab5f, TLLazyManualObjectParser(TLauth_SentCode$auth_sentCode)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x5e002502, TLLazyManualObjectParser(TLauth_SentCode$auth_sentCode)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x36585ea4, TLLazyManualObjectParser(TLmessages_BotCallbackAnswer$botCallbackAnswer)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x17db940b, TLLazyManualObjectParser(TLBotInlineResult$botInlineMediaResult)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xe4def5db, TLLazyManualObjectParser(TLCodexModernDialogParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd58a08c6, TLLazyManualObjectParser(TLCodexModernDialogParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x90a6ca84, TLLazyManualObjectParser(TLCodexModernMessageEmptyParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6c4f543, TLLazyManualObjectParser(TLCodexMessageViewsResultParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8c718e87, TLLazyManualObjectParser(TLCodexModernMessagesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1d73e7ea, TLLazyManualObjectParser(TLCodexModernMessagesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3a54685e, TLLazyManualObjectParser(TLCodexModernMessagesSliceParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5f206716, TLLazyManualObjectParser(TLCodexModernMessagesSliceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xe4def5db, TLLazyManualObjectParser(OGTLModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd58a08c6, TLLazyManualObjectParser(OGTLModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x90a6ca84, TLLazyManualObjectParser(OGTLModernMessageEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6c4f543, TLLazyManualObjectParser(OGTLMessageViewsResultParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8c718e87, TLLazyManualObjectParser(OGTLModernMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1d73e7ea, TLLazyManualObjectParser(OGTLModernMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3a54685e, TLLazyManualObjectParser(OGTLModernMessagesSliceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5f206716, TLLazyManualObjectParser(OGTLModernMessagesSliceParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e0b5b6a, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc776ba4e, TLLazyManualObjectParser(TLCodexModernChannelMessagesParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9ab0feaf, TLLazyManualObjectParser(TLCodexModernChannelsParticipantsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdfb80317, TLLazyManualObjectParser(TLCodexModernChannelParticipantResultParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc00c07c0, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1bd54456, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35a8bfa7, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa9478a1a, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2fe601d3, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x34c3bb53, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6df8014e, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd5f0ad91, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b03f006, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71701da9, TLLazyManualObjectParser(TLCodexForumTopicParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfcdad815, TLLazyManualObjectParser(TLCodexForumTopicParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x023f109b, TLLazyManualObjectParser(TLCodexForumTopicParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15ba6c40, TLLazyManualObjectParser(TLCodexDialogsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71e094f3, TLLazyManualObjectParser(TLCodexDialogsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf0e3e596, TLLazyManualObjectParser(TLCodexDialogsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0200185b, TLLazyManualObjectParser(TLCodexDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc776ba4e, TLLazyManualObjectParser(OGTLModernChannelMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9ab0feaf, TLLazyManualObjectParser(OGTLModernChannelsParticipantsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdfb80317, TLLazyManualObjectParser(OGTLModernChannelParticipantResultParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc00c07c0, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1bd54456, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35a8bfa7, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa9478a1a, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2fe601d3, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x34c3bb53, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6df8014e, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd5f0ad91, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b03f006, TLLazyManualObjectParser(OGTLModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71701da9, TLLazyManualObjectParser(OGTLForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfcdad815, TLLazyManualObjectParser(OGTLForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x023f109b, TLLazyManualObjectParser(OGTLForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15ba6c40, TLLazyManualObjectParser(OGTLDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71e094f3, TLLazyManualObjectParser(OGTLDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf0e3e596, TLLazyManualObjectParser(OGTLDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0200185b, TLLazyManualObjectParser(OGTLDialogsParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x94345242, TLLazyManualObjectParser(TLMessage$modernMessage)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96fdbbe9, TLLazyManualObjectParser(TLMessage$modernMessage)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7600b9d3, TLLazyManualObjectParser(TLMessage$modernMessage)));
@@ -10782,98 +8561,130 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6a4ced37, TLLazyManualObjectParser(TLMessage$modernMessage)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6236ae4a, TLLazyManualObjectParser(TLMessage$modernMessage)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd8a8d820, TLLazyManualObjectParser(TLMessage$modernMessage)));
-    addHashToString((int32_t)0x6a26cb37, @"message");
-    addHashToString((int32_t)0x96fdbbe9, @"message");
-    addHashToString((int32_t)0xd0bbd081, @"message");
-    addHashToString((int32_t)0x003e38e7, @"message");
-    addHashToString((int32_t)0xd9a7d88a, @"message");
-    addHashToString((int32_t)0xd18fd1bb, @"message");
-    addHashToString((int32_t)0xff86154d, @"message");
-    addHashToString((int32_t)0xbb294f27, @"message");
-    addHashToString((int32_t)0x65fdf943, @"message");
-    addHashToString((int32_t)0x6a4ced37, @"message");
-    addHashToString((int32_t)0x6236ae4a, @"message");
-    addHashToString((int32_t)0xd8a8d820, @"message");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x6a26cb37, @"message"},
+            {(int32_t)0x96fdbbe9, @"message"},
+            {(int32_t)0xd0bbd081, @"message"},
+            {(int32_t)0x003e38e7, @"message"},
+            {(int32_t)0xd9a7d88a, @"message"},
+            {(int32_t)0xd18fd1bb, @"message"},
+            {(int32_t)0xff86154d, @"message"},
+            {(int32_t)0xbb294f27, @"message"},
+            {(int32_t)0x65fdf943, @"message"},
+            {(int32_t)0x6a4ced37, @"message"},
+            {(int32_t)0x6236ae4a, @"message"},
+            {(int32_t)0xd8a8d820, @"message"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2b085862, TLLazyManualObjectParser(TLMessage$modernMessageService)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7063c3db, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd64c522b, TLLazyManualObjectParser(TLCodexUpdateMessagePollParser)));
-    addHashToString((int32_t)0xd64c522b, @"updateMessagePoll");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd64c522b, TLLazyManualObjectParser(OGTLUpdateMessagePollParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xd64c522b, @"updateMessagePoll"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xed85eab5, sharedSkipObjectParser));
-    addHashToString((int32_t)0xed85eab5, @"updatePinnedMessages");
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0xed85eab5, @"updatePinnedMessages"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a800e0a, TLLazyManualObjectParser(TLMessage$modernMessageService)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6a3ac8ea, TLLazyManualObjectParser(TLMessage$modernMessageService)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4fdd3430, TLLazyManualObjectParser(TLCodexModernKeyboardButtonStyleParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa03e5b85, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x86b40b08, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf4108aa0, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x85dd99d1, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3502758c, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x48a30254, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77608b83, TLLazyManualObjectParser(TLCodexModernKeyboardButtonRowParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4fdd3430, TLLazyManualObjectParser(OGTLModernKeyboardButtonStyleParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa03e5b85, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x86b40b08, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf4108aa0, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x85dd99d1, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3502758c, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x48a30254, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb2b15770, TLLazyManualObjectParser(OGTLModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77608b83, TLLazyManualObjectParser(OGTLModernKeyboardButtonRowParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x19420af6, TLLazyManualObjectParser(OGTLModernKeyboardButtonRowParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3081ed9d, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x833c0fac, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd766c50a, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5ec4be43, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6334ee9a, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0e3b2d0c, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2fa4880, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d170cff, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x258aff05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd80c25ec, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x683a5e46, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe62bc960, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb16a6c29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x417efd8f, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc796b3f, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa40f94d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0568a748, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x991399fc, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50f41ccf, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x89c590f9, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xafd93fbb, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fa53905, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf51006f9, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x68013e72, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a11d782, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d5e07c7, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0fd5d09, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe846b1a0, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe15c4370, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5b0f15f5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x02b78156, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75d2698e, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbcc4af10, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2fa4880, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d170cff, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2f67a72f, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x11c1a322, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x258aff05, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd80c25ec, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x683a5e46, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe62bc960, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb16a6c29, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x417efd8f, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc796b3f, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa40f94d, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0568a748, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x991399fc, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50f41ccf, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x89c590f9, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xafd93fbb, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fa53905, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf51006f9, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x68013e72, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a11d782, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d5e07c7, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0fd5d09, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe846b1a0, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe15c4370, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5b0f15f5, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x02b78156, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75d2698e, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbcc4af10, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5f3b8a00, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc9f06e1b, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x339bef6c, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e81e078, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71bd134c, TLLazyManualObjectParser(TLCodexDialogFolderParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69274bc6, TLLazyManualObjectParser(TLCodexModernDialogParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc89f7f3, TLLazyManualObjectParser(TLCodexModernDialogParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x59511722, TLLazyManualObjectParser(TLCodexModernPeerUserParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15752102, TLLazyManualObjectParser(TLCodexModernPeerUserParser)));
-    addHashToString((int32_t)0x15752102, @"peerUser");
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x36c6019a, TLLazyManualObjectParser(TLCodexModernPeerChatParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2a5371e, TLLazyManualObjectParser(TLCodexModernPeerChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71bd134c, TLLazyManualObjectParser(OGTLDialogFolderParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69274bc6, TLLazyManualObjectParser(OGTLModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc89f7f3, TLLazyManualObjectParser(OGTLModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x59511722, TLLazyManualObjectParser(OGTLModernPeerUserParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15752102, TLLazyManualObjectParser(OGTLModernPeerUserParser)));
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x15752102, @"peerUser"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x36c6019a, TLLazyManualObjectParser(OGTLModernPeerChatParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2a5371e, TLLazyManualObjectParser(OGTLModernPeerChannelParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb9c0639a, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5da674b7, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95fcd1d6, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x99622c0c, TLLazyManualObjectParser(TLCodexModernPeerNotifySettingsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc13e3c50, TLLazyManualObjectParser(TLCodexModernImportedContactParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x99622c0c, TLLazyManualObjectParser(OGTLModernPeerNotifySettingsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc13e3c50, TLLazyManualObjectParser(OGTLModernImportedContactParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5ce14175, TLLazyManualObjectParser(TLPopularContact$popularContact)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb224d5, TLLazyManualObjectParser(TLCodexModernChatAdminRightsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9f120418, TLLazyManualObjectParser(TLCodexModernChatBannedRightsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb224d5, TLLazyManualObjectParser(OGTLModernChatAdminRightsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9f120418, TLLazyManualObjectParser(OGTLModernChatBannedRightsParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd072acb4, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb4073647, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb54b5acf, sharedSkipObjectParser));
@@ -10891,7 +8702,7 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x770416af, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x37381085, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x49a6549c, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50a04e45, TLLazyManualObjectParser(TLCodexModernPrivacyRulesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50a04e45, TLLazyManualObjectParser(OGTLModernPrivacyRulesParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfffe1bac, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65427b82, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb8905fb2, sharedSkipObjectParser));
@@ -10930,13 +8741,13 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xeafc32bc, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x52928bca, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x661d4037, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe9baa668, TLLazyManualObjectParser(TLCodexFolderPeerParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x19360dc0, TLLazyManualObjectParser(TLCodexUpdateFolderPeersParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1e297bfa, TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe9baa668, TLLazyManualObjectParser(OGTLFolderPeerParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x19360dc0, TLLazyManualObjectParser(OGTLUpdateFolderPeersParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1e297bfa, TLLazyManualObjectParser(OGTLUpdateMessageReactionsParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x695c9e7c, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4f11bae1, TLLazyManualObjectParser(TLUserProfilePhoto$userProfilePhotoEmpty)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x82d1f706, TLLazyManualObjectParser(TLCodexModernUserProfilePhotoParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebd1c797, TLLazyManualObjectParser(TLCodexModernUserProfilePhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x82d1f706, TLLazyManualObjectParser(OGTLModernUserProfilePhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebd1c797, TLLazyManualObjectParser(OGTLModernUserProfilePhotoParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85dd99d1, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48a30254, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa03e5b85, sharedSkipObjectParser));
@@ -10944,45 +8755,45 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x77608b83, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa2fa4880, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x258aff05, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb16a6c29, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfc796b3f, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50f41ccf, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xafd93fbb, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(OGTLModernKeyboardButtonParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x36086d42, TLLazyManualObjectParser(TLDialog$dialogFeed)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xfd8e711f, TLLazyManualObjectParser(TLDraftMessage$draftMessage)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x60fe3294, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fccf7ef, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96eaa5eb, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2d65321f, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b49ec6d, TLLazyManualObjectParser(TLCodexModernUpdateDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedfc111e, TLLazyManualObjectParser(TLCodexModernUpdateDraftMessageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f300b57, TLLazyManualObjectParser(TLCodexModernBotInfoParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc27ac8c7, TLLazyManualObjectParser(TLCodexModernBotCommandParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9852d6d2, TLLazyManualObjectParser(TLCodexModernBotCommandParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x60fe3294, TLLazyManualObjectParser(OGTLModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fccf7ef, TLLazyManualObjectParser(OGTLModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96eaa5eb, TLLazyManualObjectParser(OGTLModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2d65321f, TLLazyManualObjectParser(OGTLModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b49ec6d, TLLazyManualObjectParser(OGTLModernUpdateDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedfc111e, TLLazyManualObjectParser(OGTLModernUpdateDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f300b57, TLLazyManualObjectParser(OGTLModernBotInfoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc27ac8c7, TLLazyManualObjectParser(OGTLModernBotCommandParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9852d6d2, TLLazyManualObjectParser(OGTLModernBotCommandParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7533a588, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4258c205, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc7b57ce6, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xdb74f558, TLLazyManualObjectParser(TLChatInvite$chatInvite)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x3213dbba, TLLazyManualObjectParser(TLConfig$config)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcc1a241e, TLLazyManualObjectParser(TLCodexModernConfigParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcc1a241e, TLLazyManualObjectParser(OGTLModernConfigParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcd050916, TLLazyManualObjectParser(TLauth_Authorization$auth_authorization)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2ea2c0d4, TLLazyManualObjectParser(TLauth_Authorization$auth_authorization)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6319d612, TLLazyManualObjectParser(TLDocumentAttributeSticker)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6c37c15c, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x11b58939, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17399fad, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15590068, TLLazyManualObjectParser(TLCodexModernDocumentAttributeFilenameParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15590068, TLLazyManualObjectParser(OGTLModernDocumentAttributeFilenameParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9801d2f7, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfd149899, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xbdf9653b, TLLazyManualObjectParser(TLGame$game)));
@@ -10995,62 +8806,62 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x22fd7181, TLLazyManualObjectParser(TLPhoneCall$phoneCallAccepted)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3ba5940c, TLLazyManualObjectParser(TLPhoneCall$phoneCall)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf9d25503, TLLazyManualObjectParser(TLPhoneCall$phoneCallDiscardedMeta)));
-    objectClassesByConstructorNames[(int32_t)0xdc7555ab] = [[TLPhoneCall$phoneCallWaitingMeta alloc] init];
-    objectClassesByConstructorNames[(int32_t)0x9627ce57] = [[TLPhoneCall$phoneCallRequested alloc] init];
-    objectClassesByConstructorNames[(int32_t)0xd149f2bd] = [[TLPhoneCall$phoneCallAccepted alloc] init];
-    objectClassesByConstructorNames[(int32_t)0xc9908a15] = [[TLPhoneCall$phoneCall alloc] init];
-    objectClassesByConstructorNames[(int32_t)0xf01017df] = [[TLPhoneCall$phoneCallDiscardedMeta alloc] init];
-    TLCodexPhoneConnectionParser *phoneConnectionParser = [[TLCodexPhoneConnectionParser alloc] init];
-    manualObjectParsers[(int32_t)0x9cc123c7] = phoneConnectionParser;
-    manualObjectParsers[(int32_t)0x635fe375] = phoneConnectionParser;
+    objectClassesByConstructorNames[OGTLCtor(0xdc7555ab)] = [[TLPhoneCall$phoneCallWaitingMeta alloc] init];
+    objectClassesByConstructorNames[OGTLCtor(0x9627ce57)] = [[TLPhoneCall$phoneCallRequested alloc] init];
+    objectClassesByConstructorNames[OGTLCtor(0xd149f2bd)] = [[TLPhoneCall$phoneCallAccepted alloc] init];
+    objectClassesByConstructorNames[OGTLCtor(0xc9908a15)] = [[TLPhoneCall$phoneCall alloc] init];
+    objectClassesByConstructorNames[OGTLCtor(0xf01017df)] = [[TLPhoneCall$phoneCallDiscardedMeta alloc] init];
+    OGTLPhoneConnectionParser *phoneConnectionParser = [[OGTLPhoneConnectionParser alloc] init];
+    manualObjectParsers[OGTLCtor(0x9cc123c7)] = phoneConnectionParser;
+    manualObjectParsers[OGTLCtor(0x635fe375)] = phoneConnectionParser;
     manualObjectParsers[(int32_t)0xeccaad39] = sharedSkipObjectParser;
     objectClassesByConstructorNames[(int32_t)0xeccaad39] = sharedSkipObjectParser;
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xea4cb65b, TLLazyManualObjectParser(TLUpdate$updatePinnedDialogs)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x80e11a7f, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6aef7b0, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbd47cbad, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb5a1ce5a, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7fcb13a8, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95e3fbef, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15cefd00, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa43f30cc, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x031224c3, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95d2ac92, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe1037f92, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xea3948e9, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x94bd38ed, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fbab604, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x92a72876, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3c134d7b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xcc02aa6d, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0d999256, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f31b327, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96163f56, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4792929b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfae69f56, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc516d679, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b287353, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd95c6154, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x98e0d697, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a0d7f42, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x502f92f7, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb3a07661, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa786345, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x47dd8079, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb4c38cb5, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc83d6aec, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0944820, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x57de635e, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x31518e9b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5060a3f4, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x678c2e09, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x332ba9ed, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2a9fadc5, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b31848, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41b3e202, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x45d5b021, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf3f25f76, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebbca3cb, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x80e11a7f, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6aef7b0, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbd47cbad, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb5a1ce5a, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7fcb13a8, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95e3fbef, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15cefd00, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa43f30cc, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x031224c3, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95d2ac92, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe1037f92, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xea3948e9, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x94bd38ed, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fbab604, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x92a72876, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3c134d7b, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xcc02aa6d, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0d999256, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f31b327, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96163f56, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4792929b, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfae69f56, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc516d679, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b287353, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd95c6154, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x98e0d697, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a0d7f42, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x502f92f7, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb3a07661, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa786345, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x47dd8079, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb4c38cb5, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc83d6aec, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0944820, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x57de635e, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x31518e9b, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5060a3f4, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x678c2e09, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x332ba9ed, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2a9fadc5, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b31848, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41b3e202, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x45d5b021, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf3f25f76, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebbca3cb, TLLazyManualObjectParser(OGTLModernMessageActionParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd7c0ff9c, TLLazyManualObjectParser(TLUser$modernUser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xc30aa358, TLLazyManualObjectParser(TLInvoice$invoice)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x84551347, TLLazyManualObjectParser(TLMessageMedia$messageMediaInvoice)));
@@ -11061,78 +8872,85 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xd1451883, TLLazyManualObjectParser(TLpayments_ValidatedRequestedInfo$payments_validatedRequestedInfo)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6c47ac9f, TLLazyManualObjectParser(TLLangPackStringPluralized)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x289da732, TLLazyManualObjectParser(TLChat$channelForbidden)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x695150d7, TLLazyManualObjectParser(TLCodexModernMessageMediaPhotoParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe216eb63, TLLazyManualObjectParser(TLCodexModernMessageMediaPhotoParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb940c666, TLLazyManualObjectParser(TLCodexModernMessageMediaGeoLiveParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xddf10c3b, TLLazyManualObjectParser(TLCodexModernMessageMediaWebPageParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3f7ee58b, TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x08cbec07, TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdc7b1140, TLLazyManualObjectParser(TLCodexModernMessageEntityMentionNameParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc8cf05f8, TLLazyManualObjectParser(TLCodexModernMessageEntityCustomEmojiParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x145ade0b, TLLazyManualObjectParser(TLCodexModernContactParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x695150d7, TLLazyManualObjectParser(OGTLModernMessageMediaPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe216eb63, TLLazyManualObjectParser(OGTLModernMessageMediaPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb940c666, TLLazyManualObjectParser(OGTLModernMessageMediaGeoLiveParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xddf10c3b, TLLazyManualObjectParser(OGTLModernMessageMediaWebPageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3f7ee58b, TLLazyManualObjectParser(OGTLModernMessageMediaDiceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x08cbec07, TLLazyManualObjectParser(OGTLModernMessageMediaDiceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdc7b1140, TLLazyManualObjectParser(OGTLModernMessageEntityMentionNameParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc8cf05f8, TLLazyManualObjectParser(OGTLModernMessageEntityCustomEmojiParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x145ade0b, TLLazyManualObjectParser(OGTLModernContactParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6a7e7366, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9cb070d7, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4cf4d72d, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x52d8ccd9, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfb197a65, TLLazyManualObjectParser(TLCodexModernPhotoParser)));
-    manualObjectParsers[(int32_t)0xdd570bd5] = TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser);
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75c78e60, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x021e1ad6, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe0b0bc2e, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfa3efb95, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd8214d41, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xde33b094, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf85c413c, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0da082fe, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77d01c3b, TLLazyManualObjectParser(TLCodexModernImportedContactsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9cb070d7, TLLazyManualObjectParser(OGTLModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4cf4d72d, TLLazyManualObjectParser(OGTLModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x52d8ccd9, TLLazyManualObjectParser(OGTLModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfb197a65, TLLazyManualObjectParser(OGTLModernPhotoParser)));
+    manualObjectParsers[(int32_t)0xdd570bd5] = TLLazyManualObjectParser(OGTLModernMessageMediaDocumentParser);
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75c78e60, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x021e1ad6, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe0b0bc2e, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfa3efb95, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd8214d41, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xde33b094, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf85c413c, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0da082fe, TLLazyManualObjectParser(OGTLModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77d01c3b, TLLazyManualObjectParser(OGTLModernImportedContactsParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83d60fc2, sharedSkipObjectParser));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8fd4c4d8, TLLazyManualObjectParser(TLCodexModernDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8fd4c4d8, TLLazyManualObjectParser(OGTLModernDocumentParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6a9d7b35, TLLazyManualObjectParser(TLchannelDifferenceTooLong)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x55c3a1b1, TLLazyManualObjectParser(TLmessages_FeedMessages$messages_feedMessages)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8e8bca3d, TLLazyManualObjectParser(TLchannels_FeedSources$channels_feedSources)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x31bc3d25, TLLazyManualObjectParser(TLInputSingleMedia$inputSingleMedia)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x5585a139, TLLazyManualObjectParser(TLStickerSet$stickerSet)));
-    manualObjectParsers[(int32_t)0x6410a5d2] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
-    manualObjectParsers[(int32_t)0x3407e51b] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
-    manualObjectParsers[(int32_t)0x40d13c0e] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
-    manualObjectParsers[(int32_t)0x77b15d1c] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
-    manualObjectParsers[(int32_t)0xcdbbcebb] = TLLazyManualObjectParser(TLCodexModernAllStickersParser);
-    manualObjectParsers[(int32_t)0x2cb51097] = TLLazyManualObjectParser(TLCodexModernFavedStickersParser);
-    manualObjectParsers[(int32_t)0xfcfeb29c] = TLLazyManualObjectParser(TLCodexModernStickerKeywordParser);
-    manualObjectParsers[(int32_t)0x12b299d4] = TLLazyManualObjectParser(TLCodexStickerPackParser);
-    manualObjectParsers[(int32_t)0x6e153f16] = TLLazyManualObjectParser(TLCodexModernStickerSetParser);
-    manualObjectParsers[(int32_t)0xe86602c3] = TLLazyManualObjectParser(TLCodexModernAllStickersParser);
-    manualObjectParsers[(int32_t)0x9e8fa6d3] = TLLazyManualObjectParser(TLCodexModernFavedStickersParser);
-    manualObjectParsers[(int32_t)0x88d37c56] = TLLazyManualObjectParser(TLCodexModernRecentStickersParser);
-    manualObjectParsers[(int32_t)0x0b17f890] = TLLazyManualObjectParser(TLCodexModernRecentStickersParser);
-    manualObjectParsers[(int32_t)0xbe382906] = TLLazyManualObjectParser(TLCodexModernFeaturedStickersParser);
-    manualObjectParsers[(int32_t)0xc6dc0c66] = TLLazyManualObjectParser(TLCodexModernFeaturedStickersParser);
-    manualObjectParsers[(int32_t)0x38641628] = TLLazyManualObjectParser(TLCodexModernStickerSetInstallResultParser);
-    manualObjectParsers[(int32_t)0x35e410a8] = TLLazyManualObjectParser(TLCodexModernStickerSetInstallResultParser);
-    manualObjectParsers[(int32_t)0x8af09dd2] = TLLazyManualObjectParser(TLCodexModernFoundStickerSetsParser);
-    manualObjectParsers[(int32_t)0x0d54b65d] = TLLazyManualObjectParser(TLCodexModernFoundStickerSetsParser);
-    manualObjectParsers[(int32_t)0x2dd14edc] = TLLazyManualObjectParser(TLCodexModernStickerSetMetaParser);
-    manualObjectParsers[(int32_t)0xd3f924eb] = TLLazyManualObjectParser(TLCodexModernStickerSetParser);
-    manualObjectParsers[(int32_t)0x6319d612] = TLLazyManualObjectParser(TLCodexModernDocumentAttributeStickerParser);
-    manualObjectParsers[(int32_t)0xffb62b95] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x9de7a269] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x861cc8a0] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x028703c8] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0xe67f520e] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0xcde3739] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0xc88b3b02] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x04c4d4ce] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x29d0f5ee] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x44c1f8e9] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x49748553] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
-    manualObjectParsers[(int32_t)0x1cf671a0] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x6410a5d2] = TLLazyManualObjectParser(OGTLModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x3407e51b] = TLLazyManualObjectParser(OGTLModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x40d13c0e] = TLLazyManualObjectParser(OGTLModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x77b15d1c] = TLLazyManualObjectParser(OGTLModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0xcdbbcebb] = TLLazyManualObjectParser(OGTLModernAllStickersParser);
+    manualObjectParsers[(int32_t)0x2cb51097] = TLLazyManualObjectParser(OGTLModernFavedStickersParser);
+    manualObjectParsers[(int32_t)0xfcfeb29c] = TLLazyManualObjectParser(OGTLModernStickerKeywordParser);
+    manualObjectParsers[(int32_t)0x12b299d4] = TLLazyManualObjectParser(OGTLStickerPackParser);
+    manualObjectParsers[(int32_t)0x6e153f16] = TLLazyManualObjectParser(OGTLModernStickerSetParser);
+    manualObjectParsers[(int32_t)0xe86602c3] = TLLazyManualObjectParser(OGTLModernAllStickersParser);
+    manualObjectParsers[(int32_t)0x9e8fa6d3] = TLLazyManualObjectParser(OGTLModernFavedStickersParser);
+    manualObjectParsers[(int32_t)0x88d37c56] = TLLazyManualObjectParser(OGTLModernRecentStickersParser);
+    manualObjectParsers[(int32_t)0x0b17f890] = TLLazyManualObjectParser(OGTLModernRecentStickersParser);
+    manualObjectParsers[(int32_t)0xbe382906] = TLLazyManualObjectParser(OGTLModernFeaturedStickersParser);
+    manualObjectParsers[(int32_t)0xc6dc0c66] = TLLazyManualObjectParser(OGTLModernFeaturedStickersParser);
+    manualObjectParsers[(int32_t)0x38641628] = TLLazyManualObjectParser(OGTLModernStickerSetInstallResultParser);
+    manualObjectParsers[(int32_t)0x35e410a8] = TLLazyManualObjectParser(OGTLModernStickerSetInstallResultParser);
+    manualObjectParsers[(int32_t)0x8af09dd2] = TLLazyManualObjectParser(OGTLModernFoundStickerSetsParser);
+    manualObjectParsers[(int32_t)0x0d54b65d] = TLLazyManualObjectParser(OGTLModernFoundStickerSetsParser);
+    manualObjectParsers[(int32_t)0x2dd14edc] = TLLazyManualObjectParser(OGTLModernStickerSetMetaParser);
+    manualObjectParsers[(int32_t)0xd3f924eb] = TLLazyManualObjectParser(OGTLModernStickerSetParser);
+    manualObjectParsers[(int32_t)0x6319d612] = TLLazyManualObjectParser(OGTLModernDocumentAttributeStickerParser);
+    manualObjectParsers[(int32_t)0xffb62b95] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x9de7a269] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x861cc8a0] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x028703c8] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xe67f520e] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xcde3739] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xc88b3b02] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x04c4d4ce] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x29d0f5ee] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x44c1f8e9] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x49748553] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x1cf671a0] = TLLazyManualObjectParser(OGTLModernInputStickerSetParser);
     addHashToString((int32_t)0x6cdf9cef, @"stickerPack");
-    addHashToString((int32_t)0x2dd14edc, @"stickerSet");
-    addHashToString((int32_t)0x88d37c56, @"messages.recentStickers");
-    addHashToString((int32_t)0xbe382906, @"messages.featuredStickers");
-    addHashToString((int32_t)0x8af09dd2, @"messages.foundStickerSets");
-    addHashToString((int32_t)0x6319d612, @"documentAttributeSticker");
-    manualObjectParsers[(int32_t)0xb434e2b8] = TLLazyManualObjectParser(TLCodexModernExportedAuthorizationParser);
+    {
+        static const OGTLHashName table[] =
+        {
+            {(int32_t)0x2dd14edc, @"stickerSet"},
+            {(int32_t)0x88d37c56, @"messages.recentStickers"},
+            {(int32_t)0xbe382906, @"messages.featuredStickers"},
+            {(int32_t)0x8af09dd2, @"messages.foundStickerSets"},
+            {(int32_t)0x6319d612, @"documentAttributeSticker"}
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            addHashToString(table[i].signature, table[i].name);
+    }
+    manualObjectParsers[(int32_t)0xb434e2b8] = TLLazyManualObjectParser(OGTLModernExportedAuthorizationParser);
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6fa68e41, TLLazyManualObjectParser(TLUpdate$updateReadFeed)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xe09e1fb8, TLLazyManualObjectParser(TLhelp_ProxyData$proxyDataEmpty)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2bf7ee23, TLLazyManualObjectParser(TLhelp_ProxyData$proxyDataPromo)));
@@ -11142,101 +8960,100 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xad2e1cd8, TLLazyManualObjectParser(TLaccount_AuthorizationForm$account_authorizationForm)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xaf509d20, TLLazyManualObjectParser(TLPeerNotifySettings$peerNotifySettings)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6a4ee832, TLLazyManualObjectParser(TLhelp_DeepLinkInfo$help_deepLinkInfo)));
-    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1b0c841a, TLLazyManualObjectParser(TLCodexModernDraftMessageEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1b0c841a, TLLazyManualObjectParser(OGTLModernDraftMessageEmptyParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1da7158f, TLLazyManualObjectParser(TLhelp_AppUpdate$help_appUpdate)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xad2641f8, TLLazyManualObjectParser(TLaccount_Password$account_password)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x957b50fb, TLLazyManualObjectParser(TLaccount_Password$account_password)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9a5c33e5, TLLazyManualObjectParser(TLaccount_PasswordSettings$account_passwordSettings)));
 
-    manualObjectParsers[(int32_t)0x80e11a7f] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xffa00ccc] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xc624b16e] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xb91bbd3a] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x48e91302] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x31c48347] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xa80f51e4] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x87e2f155] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xb00c47a2] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xea2c31d3] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xe6c31522] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xac1f1fcd] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x84b88578] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x2ffe2f7a] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xcc7c5c89] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xc7edbc83] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xee7a1596] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x95ddcf69] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x69f916f8] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xa8a3c699] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x2c8f2a25] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x774278d4] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x73ada76b] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xb07ed085] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xe188503b] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0xbf7d6572] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x3e2793ba] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x9da1cd6c] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x399674dc] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
-    manualObjectParsers[(int32_t)0x16605e3e] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x80e11a7f] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xffa00ccc] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xc624b16e] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb91bbd3a] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x48e91302] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x31c48347] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xa80f51e4] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x87e2f155] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb00c47a2] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xea2c31d3] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xe6c31522] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x7e1c1187] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x2ffe2f7a] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xcc7c5c89] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xc7edbc83] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xee7a1596] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x95ddcf69] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x69f916f8] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xa8a3c699] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x2c8f2a25] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x774278d4] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x73ada76b] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb07ed085] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xe188503b] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xbf7d6572] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x3e2793ba] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x9da1cd6c] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x399674dc] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x16605e3e] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
     manualObjectParsers[(int32_t)0xd7c0ff9c] = TLLazyManualObjectParser(TLUser$modernUser);
     manualObjectParsers[(int32_t)0x020b1422] = TLLazyManualObjectParser(TLUser$modernUser);
-    manualObjectParsers[(int32_t)0xd8aa840f] = TLLazyManualObjectParser(TLCodexInputGroupCallParser);
-    manualObjectParsers[(int32_t)0x6880b94d] = TLLazyManualObjectParser(TLCodexPeerSettingsContainerParser);
-    manualObjectParsers[(int32_t)0xacd66c5e] = TLLazyManualObjectParser(TLCodexModernPeerSettingsParser);
-    manualObjectParsers[(int32_t)0xcc02aa6d] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xd8aa840f] = TLLazyManualObjectParser(OGTLInputGroupCallParser);
+    manualObjectParsers[(int32_t)0x6880b94d] = TLLazyManualObjectParser(OGTLPeerSettingsContainerParser);
+    manualObjectParsers[(int32_t)0xacd66c5e] = TLLazyManualObjectParser(OGTLModernPeerSettingsParser);
+    manualObjectParsers[(int32_t)0xcc02aa6d] = TLLazyManualObjectParser(OGTLModernMessageActionParser);
     manualObjectParsers[(int32_t)0x83314fca] = TLLazyManualObjectParser(TLUser$modernUser);
     manualObjectParsers[(int32_t)0x2813e6db] = TLLazyManualObjectParser(TLUser$modernUser);
     manualObjectParsers[(int32_t)0x1afeb7ac] = TLLazyManualObjectParser(TLUser$modernUser);
     manualObjectParsers[(int32_t)0xd0a1d008] = TLLazyManualObjectParser(TLUser$modernUser);
-    manualObjectParsers[(int32_t)0x145ade0b] = TLLazyManualObjectParser(TLCodexModernContactParser);
-    manualObjectParsers[(int32_t)0xeae87e42] = TLLazyManualObjectParser(TLCodexModernContactsParser);
-    manualObjectParsers[(int32_t)0xf385c1f6] = TLLazyManualObjectParser(TLCodexLangPackDifferenceParser);
-    manualObjectParsers[(int32_t)0xcad181f6] = TLLazyManualObjectParser(TLCodexLangPackStringParser);
-    manualObjectParsers[(int32_t)0x2979eeb2] = TLLazyManualObjectParser(TLCodexLangPackStringParser);
-    manualObjectParsers[(int32_t)0x0ade1591] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
-    manualObjectParsers[(int32_t)0xe1664194] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
+    manualObjectParsers[(int32_t)0x145ade0b] = TLLazyManualObjectParser(OGTLModernContactParser);
+    manualObjectParsers[(int32_t)0xeae87e42] = TLLazyManualObjectParser(OGTLModernContactsParser);
+    manualObjectParsers[(int32_t)0xf385c1f6] = TLLazyManualObjectParser(OGTLLangPackDifferenceParser);
+    manualObjectParsers[(int32_t)0xcad181f6] = TLLazyManualObjectParser(OGTLLangPackStringParser);
+    manualObjectParsers[(int32_t)0x2979eeb2] = TLLazyManualObjectParser(OGTLLangPackStringParser);
+    manualObjectParsers[(int32_t)0x0ade1591] = TLLazyManualObjectParser(OGTLModernBlockedParser);
+    manualObjectParsers[(int32_t)0xe1664194] = TLLazyManualObjectParser(OGTLModernBlockedParser);
     manualObjectParsers[(int32_t)0xe8fd8014] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x211a1788] = TLLazyManualObjectParser(TLCodexModernWebPageEmptyParser);
-    manualObjectParsers[(int32_t)0xe89c45b2] = TLLazyManualObjectParser(TLCodexModernWebPageParser);
-    manualObjectParsers[(int32_t)0xddf10c3b] = TLLazyManualObjectParser(TLCodexModernMessageMediaWebPageParser);
+    manualObjectParsers[(int32_t)0x211a1788] = TLLazyManualObjectParser(OGTLModernWebPageEmptyParser);
+    manualObjectParsers[(int32_t)0xe89c45b2] = TLLazyManualObjectParser(OGTLModernWebPageParser);
+    manualObjectParsers[(int32_t)0xddf10c3b] = TLLazyManualObjectParser(OGTLModernMessageMediaWebPageParser);
     manualObjectParsers[(int32_t)0xb53e8b21] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x8c9a88ac] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x3f7ee58b] = TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser);
-    manualObjectParsers[(int32_t)0x08cbec07] = TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser);
-    manualObjectParsers[(int32_t)0x4bd6e798] = TLLazyManualObjectParser(TLCodexModernMessageMediaPollParser);
-    manualObjectParsers[(int32_t)0xb2a2f663] = TLLazyManualObjectParser(TLCodexModernGeoPointSkipParser);
-    manualObjectParsers[(int32_t)0x4e4df4bb] = TLLazyManualObjectParser(TLCodexModernMessageFwdHeaderParser);
-    manualObjectParsers[(int32_t)0xdc7b1140] = TLLazyManualObjectParser(TLCodexModernMessageEntityMentionNameParser);
-    manualObjectParsers[(int32_t)0xc8cf05f8] = TLLazyManualObjectParser(TLCodexModernMessageEntityCustomEmojiParser);
-    manualObjectParsers[(int32_t)0x9c4e7e8b] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0xbf0693d4] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x761e6af4] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x32ca960f] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0xf1ccaaac] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x904ac7c7] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x71777116] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0xc6c1e5a7] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x0652c1c5] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x6c622f67] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
-    manualObjectParsers[(int32_t)0x751f3146] = TLLazyManualObjectParser(TLCodexTextWithEntitiesParser);
+    manualObjectParsers[(int32_t)0x3f7ee58b] = TLLazyManualObjectParser(OGTLModernMessageMediaDiceParser);
+    manualObjectParsers[(int32_t)0x08cbec07] = TLLazyManualObjectParser(OGTLModernMessageMediaDiceParser);
+    manualObjectParsers[(int32_t)0x4bd6e798] = TLLazyManualObjectParser(OGTLModernMessageMediaPollParser);
+    manualObjectParsers[(int32_t)0xb2a2f663] = TLLazyManualObjectParser(OGTLModernGeoPointSkipParser);
+    manualObjectParsers[(int32_t)0x4e4df4bb] = TLLazyManualObjectParser(OGTLModernMessageFwdHeaderParser);
+    manualObjectParsers[(int32_t)0xdc7b1140] = TLLazyManualObjectParser(OGTLModernMessageEntityMentionNameParser);
+    manualObjectParsers[(int32_t)0xc8cf05f8] = TLLazyManualObjectParser(OGTLModernMessageEntityCustomEmojiParser);
+    manualObjectParsers[(int32_t)0x9c4e7e8b] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xbf0693d4] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x761e6af4] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x32ca960f] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xf1ccaaac] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x904ac7c7] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x71777116] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xc6c1e5a7] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x0652c1c5] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x6c622f67] = TLLazyManualObjectParser(OGTLModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x751f3146] = TLLazyManualObjectParser(OGTLTextWithEntitiesParser);
     manualObjectParsers[(int32_t)0x58747131] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xff16e2ca] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x7adf2420] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xf8227181] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xebe07752] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x20529438] = TLLazyManualObjectParser(TLCodexModernUpdateUserParser);
+    manualObjectParsers[(int32_t)0x20529438] = TLLazyManualObjectParser(OGTLModernUpdateUserParser);
     manualObjectParsers[(int32_t)0x635b4c09] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x6c8e1e06] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x3b6ddad2] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0xd38ff1c2] = TLLazyManualObjectParser(TLCodexModernDocumentAttributeVideoD38Parser);
-    manualObjectParsers[(int32_t)0xeeca5ce3] = TLLazyManualObjectParser(TLCodexModernLangPackLanguageParser);
+    manualObjectParsers[(int32_t)0xd38ff1c2] = TLLazyManualObjectParser(OGTLModernDocumentAttributeVideoD38Parser);
+    manualObjectParsers[(int32_t)0xeeca5ce3] = TLLazyManualObjectParser(OGTLModernLangPackLanguageParser);
     manualObjectParsers[(int32_t)0x17399fad] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xfd149899] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x6a7e7366] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x98657f0d] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0xde33b094] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
-    manualObjectParsers[(int32_t)0xf85c413c] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
-    manualObjectParsers[(int32_t)0x0da082fe] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0xde33b094] = TLLazyManualObjectParser(OGTLModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0xf85c413c] = TLLazyManualObjectParser(OGTLModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0x0da082fe] = TLLazyManualObjectParser(OGTLModernPhotoSizeParser);
     manualObjectParsers[(int32_t)0x1759c560] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x8c88c923] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x7c8fe7b6] = sharedSkipObjectParser;
@@ -11259,37 +9076,38 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0x5e068047] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x98dd8936] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x6f747657] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0xdc3d824f] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x744694e0] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x6724abc4] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0xd912a59c] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0xc12622c4] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x9bf8bb95] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x6c3f19b9] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x3c2884c1] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0xde5a0dd6] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x7e6260d7] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0xed6a8504] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0xc7fb5e01] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x034b8621] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x1ccb966a] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x081ccf4f] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
-    manualObjectParsers[(int32_t)0x35553762] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xdc3d824f] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x744694e0] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x6724abc4] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xd912a59c] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xc12622c4] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x9bf8bb95] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x6c3f19b9] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x3c2884c1] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xde5a0dd6] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x7e6260d7] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xed6a8504] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xc7fb5e01] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x034b8621] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x1ccb966a] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x081ccf4f] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x35553762] = TLLazyManualObjectParser(OGTLRichTextSkipParser);
 
-    manualObjectParsers[(int32_t)0x2633421b] = TLLazyManualObjectParser(TLCodexModernChannelFullParser);
-    manualObjectParsers[(int32_t)0x3ded6320] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x56e0d474] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x70322949] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x9f84f49e] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x2ec0533f] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0xfdb19008] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0xf6a548d3] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x773f4e66] = TLLazyManualObjectParser(TLCodexModernMessageMediaPollParser);
-    manualObjectParsers[(int32_t)0xaa073beb] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0xceaa3ea1] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0xa8852491] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0x8a53b014] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
-    manualObjectParsers[(int32_t)0xca5cab89] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x2633421b] = TLLazyManualObjectParser(OGTLModernChannelFullParser);
+    manualObjectParsers[(int32_t)0x3ded6320] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x2238f214] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x56e0d474] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x70322949] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x9f84f49e] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x2ec0533f] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xfdb19008] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xf6a548d3] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x773f4e66] = TLLazyManualObjectParser(OGTLModernMessageMediaPollParser);
+    manualObjectParsers[(int32_t)0xaa073beb] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xceaa3ea1] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xa8852491] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x8a53b014] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xca5cab89] = TLLazyManualObjectParser(OGTLModernMessageMediaUnsupportedParser);
     manualObjectParsers[(int32_t)0x904dd49c] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xac21d3ce] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x09cb7759] = sharedSkipObjectParser;
@@ -11413,6 +9231,7 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0x98d5ea1d] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xb4d5d859] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xf93cd45c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf72e0ed9] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x1e109708] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xe581e4e9] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xb4f67e93] = sharedSkipObjectParser;
@@ -11447,24 +9266,24 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0xffda656d] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x1839490f] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x31bd492d] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0xc077ec01] = TLLazyManualObjectParser(TLCodexAvailableReactionParser);
+    manualObjectParsers[(int32_t)0xc077ec01] = TLLazyManualObjectParser(OGTLAvailableReactionParser);
     manualObjectParsers[(int32_t)0x9f071957] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x768e3aad] = TLLazyManualObjectParser(TLCodexAvailableReactionsParser);
+    manualObjectParsers[(int32_t)0x768e3aad] = TLLazyManualObjectParser(OGTLAvailableReactionsParser);
     manualObjectParsers[(int32_t)0xd08ce645] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x90c467d1] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xb06fdbdf] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xeafdf716] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x5f2d1df2] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xb81c7034] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x367617d3] = TLLazyManualObjectParser(TLCodexForumTopicsParser);
-    manualObjectParsers[(int32_t)0x5fb5523b] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0x7438f7e8] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0x363293ae] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0x9fe28ea4] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0xaa472651] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0x96537bd7] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
-    manualObjectParsers[(int32_t)0x2ad93719] = TLLazyManualObjectParser(TLCodexDialogFiltersParser);
-    manualObjectParsers[(int32_t)0x26ffde7d] = TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser);
+    manualObjectParsers[(int32_t)0x367617d3] = TLLazyManualObjectParser(OGTLForumTopicsParser);
+    manualObjectParsers[(int32_t)0x5fb5523b] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0x7438f7e8] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0x363293ae] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0x9fe28ea4] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0xaa472651] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0x96537bd7] = TLLazyManualObjectParser(OGTLDialogFilterParser);
+    manualObjectParsers[(int32_t)0x2ad93719] = TLLazyManualObjectParser(OGTLDialogFiltersParser);
+    manualObjectParsers[(int32_t)0x26ffde7d] = TLLazyManualObjectParser(OGTLDialogFilterUpdateParser);
     manualObjectParsers[(int32_t)0x43b46b20] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x481eadfa] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x7a1e11d1] = sharedSkipObjectParser;
@@ -11480,23 +9299,23 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0x0bb2d201] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x31c24808] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xb23fc698] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x9d2216e0] = TLLazyManualObjectParser(TLCodexUpdateGroupCallParser);
+    manualObjectParsers[(int32_t)0x9d2216e0] = TLLazyManualObjectParser(OGTLUpdateGroupCallParser);
     manualObjectParsers[(int32_t)0xf2ebdb4e] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x2a3dc7ac] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xeba636fe] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x67753ac8] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xdcb118b7] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xbb9bb9a5] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x1e297bfa] = TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser);
+    manualObjectParsers[(int32_t)0x1e297bfa] = TLLazyManualObjectParser(OGTLUpdateMessageReactionsParser);
     manualObjectParsers[(int32_t)0xaca1657b] = sharedSkipObjectParser;
-    manualObjectParsers[(int32_t)0x86e18161] = TLLazyManualObjectParser(TLCodexPollParser);
-    manualObjectParsers[(int32_t)0xb8425be9] = TLLazyManualObjectParser(TLCodexPollParser);
-    manualObjectParsers[(int32_t)0x966e2dbf] = TLLazyManualObjectParser(TLCodexPollParser);
-    manualObjectParsers[(int32_t)0x6ca9c2e9] = TLLazyManualObjectParser(TLCodexPollAnswerParser);
-    manualObjectParsers[(int32_t)0x4b7d786a] = TLLazyManualObjectParser(TLCodexPollAnswerParser);
-    manualObjectParsers[(int32_t)0x3645230a] = TLLazyManualObjectParser(TLCodexPollAnswerVotersParser);
-    manualObjectParsers[(int32_t)0x7adf2420] = TLLazyManualObjectParser(TLCodexPollResultsParser);
-    manualObjectParsers[(int32_t)0xba7bb15e] = TLLazyManualObjectParser(TLCodexPollResultsParser);
+    manualObjectParsers[(int32_t)0x86e18161] = TLLazyManualObjectParser(OGTLPollParser);
+    manualObjectParsers[(int32_t)0xb8425be9] = TLLazyManualObjectParser(OGTLPollParser);
+    manualObjectParsers[(int32_t)0x966e2dbf] = TLLazyManualObjectParser(OGTLPollParser);
+    manualObjectParsers[(int32_t)0x6ca9c2e9] = TLLazyManualObjectParser(OGTLPollAnswerParser);
+    manualObjectParsers[(int32_t)0x4b7d786a] = TLLazyManualObjectParser(OGTLPollAnswerParser);
+    manualObjectParsers[(int32_t)0x3645230a] = TLLazyManualObjectParser(OGTLPollAnswerVotersParser);
+    manualObjectParsers[(int32_t)0x7adf2420] = TLLazyManualObjectParser(OGTLPollResultsParser);
+    manualObjectParsers[(int32_t)0xba7bb15e] = TLLazyManualObjectParser(OGTLPollResultsParser);
     manualObjectParsers[(int32_t)0xfa0f3ca2] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0xfb4c496c] = sharedSkipObjectParser;
     manualObjectParsers[(int32_t)0x28373599] = sharedSkipObjectParser;
@@ -11691,14 +9510,14 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
             else
             {
                 int32_t count = [is readInt32];
-                NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+                NSMutableArray *array = OGTLCoreMakeArray(count);
                 for (int32_t i = 0; i < count; i++)
                 {
-                    int32_t itemSignature = [is readInt32];
-                    id object = TLMetaClassStore::constructObject(is, itemSignature, environment, nil, error);
+                    int32_t itemSignature = OGTLTakeInt32(is);
+                    id object = OGTLCoreBuildObject(is, itemSignature, environment, error);
                     if (object != nil)
                         [array addObject:object];
-                    if (error != NULL && *error != nil)
+                    if (OGTLCoreFailed(error))
                     {
                         break;
                     }
@@ -11712,14 +9531,14 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         else
         {
             int32_t count = [is readInt32];
-            NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+            NSMutableArray *array = OGTLCoreMakeArray(count);
             for (int32_t i = 0; i < count; i++)
             {
-                int32_t itemSignature = [is readInt32];
-                id object = TLMetaClassStore::constructObject(is, itemSignature, environment, nil, error);
+                int32_t itemSignature = OGTLTakeInt32(is);
+                id object = OGTLCoreBuildObject(is, itemSignature, environment, error);
                 if (object != nil)
                     [array addObject:object];
-                if (error != NULL && *error != nil)
+                if (OGTLCoreFailed(error))
                 {
                     break;
                 }
@@ -11746,7 +9565,7 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
                                                                             environment,
                                                                             nil,
                                                                             error);
-        if (error != NULL && *error != nil)
+        if (OGTLCoreFailed(error))
             return TLConstructedValue();
 
         TLPhoneCall$phoneCallWaitingMeta *object = [[TLPhoneCall$phoneCallWaitingMeta alloc] init];
@@ -11781,57 +9600,55 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
     }
     if (hasManualParser)
     {
-        id<TLObject> result = nil;
-        int32_t previousManualSignature = CodexCurrentManualSignature;
-        NSString *previousManualParser = CodexCurrentManualParser;
-        CodexCurrentManualSignature = signature;
-        CodexCurrentManualParser = NSStringFromClass([parser class]);
+        id<TLObject> outcome = nil;
+        int32_t previousManualSignature = OGTLCoreCurrentManualSignature;
+        NSString *previousManualParser = OGTLCoreCurrentManualParser;
+        OGTLCoreCurrentManualSignature = signature;
+        OGTLCoreCurrentManualParser = NSStringFromClass([parser class]);
         @try
         {
-            result = [parser TLdeserialize:is signature:signature environment:environment context:nil error:error];
+            outcome = [parser TLdeserialize:is signature:signature environment:environment context:nil error:error];
         }
         @catch (NSException *exception)
         {
-            CodexCurrentManualSignature = previousManualSignature;
-            CodexCurrentManualParser = previousManualParser;
+            OGTLCoreCurrentManualSignature = previousManualSignature;
+            OGTLCoreCurrentManualParser = previousManualParser;
             if (error != NULL)
             {
-                NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
-                [userInfo setValue:[NSString stringWithFormat:@"Exception while parsing 0x%08x with %@: %@", signature, NSStringFromClass([parser class]), exception.reason] forKey:NSLocalizedDescriptionKey];
-                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:userInfo];
+                *error = OGTLCoreMessageError([NSString stringWithFormat:@"Exception while parsing 0x%08x with %@: %@", signature, NSStringFromClass([parser class]), exception.reason]);
             }
             return TLConstructedValue();
         }
         if (error && *error != nil)
         {
-            NSString *parserName = NSStringFromClass([parser class]);
+            NSString *failedParserName = NSStringFromClass([parser class]);
             NSString *underlyingDescription = (*error).localizedDescription ?: @"TL parse failed";
-            NSString *safeDescription = [NSString stringWithFormat:@"Manual parser %@ failed for constructor %08x: %@", parserName, signature, underlyingDescription];
-            NSError *safeError = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: safeDescription}];
-            *error = safeError;
-            CodexCurrentManualSignature = previousManualSignature;
-            CodexCurrentManualParser = previousManualParser;
+            NSString *safeDescription = [NSString stringWithFormat:@"Manual parser %@ failed for constructor %08x: %@", failedParserName, signature, underlyingDescription];
+            NSError *wrappedError = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: safeDescription}];
+            *error = wrappedError;
+            OGTLCoreCurrentManualSignature = previousManualSignature;
+            OGTLCoreCurrentManualParser = previousManualParser;
             return TLConstructedValue();
         }
-        if (result == nil && [parser isKindOfClass:[TLCodexSkipObjectParser class]])
+        if (outcome == nil && OGTLCoreIsKind(parser, [OGTLSkipObjectParser class]))
         {
             std::tr1::shared_ptr<TLMetaConstructor> constructor = getConstructorBySignature(signature);
             if (constructor && constructor->getResultType() && constructor->getResultType()->getName() == murMurHash32(@"Update"))
             {
-                TLCodexIgnoredUpdate *ignoredUpdate = [[TLCodexIgnoredUpdate alloc] init];
+                OGTLIgnoredUpdate *ignoredUpdate = [[OGTLIgnoredUpdate alloc] init];
                 ignoredUpdate.ignoredSignature = signature;
-                result = ignoredUpdate;
+                outcome = ignoredUpdate;
             }
         }
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = result;
+        value.nativeObject = outcome;
 
-        CodexLastCompletedManualSignature = signature;
-        CodexLastCompletedManualParser = NSStringFromClass([parser class]);
+        OGTLCoreLastCompletedManualSignature = signature;
+        OGTLCoreLastCompletedManualParser = NSStringFromClass([parser class]);
         
-        CodexCurrentManualSignature = previousManualSignature;
-        CodexCurrentManualParser = previousManualParser;
+        OGTLCoreCurrentManualSignature = previousManualSignature;
+        OGTLCoreCurrentManualParser = previousManualParser;
         return value;
     }
     
@@ -11873,7 +9690,7 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
                     itemSignature = vectorElementType.unboxedConstructorSignature;
                 
                 TLConstructedValue itemValue = constructValue(is, itemSignature, environment, nil, error);
-                if (error != nil && *error != nil)
+                if (OGTLCoreFailed(error))
                 {
                     return TLConstructedValue();
                 }
@@ -11935,19 +9752,20 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
     
     @try
     {
-        TLConstructedValue result = constructor->construct(is, environment, nil, error);
-        if (error != NULL && *error != nil)
+        TLConstructedValue built = constructor->construct(is, environment, nil, error);
+        if ((error == NULL || *error == nil) && built.type == TLConstructedValueTypeObject && built.nativeObject == nil && constructor->getResultType() && constructor->getResultType()->getName() == murMurHash32(@"Update"))
         {
+            OGTLIgnoredUpdate *ignoredUpdate = [[OGTLIgnoredUpdate alloc] init];
+            ignoredUpdate.ignoredSignature = signature;
+            built.nativeObject = ignoredUpdate;
         }
-        return result;
+        return built;
     }
     @catch (NSException *exception)
     {
         if (error != NULL)
         {
-            NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
-            [userInfo setValue:[NSString stringWithFormat:@"Exception while auto parsing 0x%08x: %@", signature, exception.reason] forKey:NSLocalizedDescriptionKey];
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:userInfo];
+            *error = OGTLCoreMessageError([NSString stringWithFormat:@"Exception while auto parsing 0x%08x: %@", signature, exception.reason]);
         }
         return TLConstructedValue();
     }
@@ -12014,13 +9832,13 @@ void TLMetaClassStore::serializeObject(NSOutputStream *os, id<TLObject> object, 
             }
             else
             {
-                if ([object isKindOfClass:[TLRPCphone_sendSignalingData class]])
+                if (OGTLCoreIsKind(object, [TLRPCphone_sendSignalingData class]))
                 {
-                    TLRPCphone_sendSignalingData *request = (TLRPCphone_sendSignalingData *)object;
+                    TLRPCphone_sendSignalingData *signaling = (TLRPCphone_sendSignalingData *)object;
                     if (boxed)
-                        [os writeInt32:(int32_t)0xff7a9383];
-                    TLMetaClassStore::serializeObject(os, request.peer, true);
-                    [os writeBytes:request.data];
+                        [os writeInt32:OGTLCtor(0xff7a9383)];
+                    TLMetaClassStore::serializeObject(os, signaling.peer, true);
+                    [os writeBytes:signaling.data];
                 }
                 else
                 {

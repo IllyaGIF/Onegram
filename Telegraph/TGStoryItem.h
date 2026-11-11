@@ -33,12 +33,17 @@ typedef enum {
 @property (nonatomic, strong, readonly) TGDocumentMediaAttachment *videoDocument;
 @property (nonatomic, readonly) int32_t viewsCount;
 @property (nonatomic, readonly) bool hasViewsCount;
+@property (nonatomic, readonly) int32_t reactionsCount;
+@property (nonatomic, readonly) bool hasViewers;
+@property (nonatomic, readonly) bool hasSentReaction;
+@property (nonatomic, strong, readonly) NSString *sentReaction;
 @property (nonatomic, readonly) NSTimeInterval videoDuration;
 
 + (TGStoryItem *)storyItemWithObject:(TGTLDynamicObject *)object peerId:(int64_t)peerId;
 
 - (bool)hasMedia;
 - (bool)isActiveAtTime:(NSTimeInterval)time;
+- (TGStoryItem *)storyItemWithSentReaction:(NSString *)reaction;
 
 @end
 
@@ -59,3 +64,4 @@ typedef enum {
 @end
 
 int64_t TGStoryPeerIdFromObject(TGTLDynamicObject *peer);
+NSString *TGStoryReactionEmoticon(TGTLDynamicObject *reaction);

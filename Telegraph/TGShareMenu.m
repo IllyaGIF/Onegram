@@ -21,6 +21,7 @@
 
 #import "TGPresentation.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "TGPaidMessagesConfirmation.h"
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 @interface TGDocumentInteractionControllerHandle : NSObject <UIDocumentInteractionControllerDelegate>
@@ -190,13 +191,17 @@
         if (strongController == nil || strongCollectionItem == nil || shareAction == nil)
             return;
         
-        if (shareAction != nil)
-            shareAction(strongCollectionItem.peerIds, caption);
-        
+        NSArray *peerIds = [strongCollectionItem.peerIds copy];
         [strongController dismissAnimated:true];
         
-        if ([strongCollectionItem.peerIds containsObject:@(TGTelegraphInstance.clientUserId)])
-            [TGAppDelegateInstance.rootController.dialogListController requestSavedMessagesTooltip];
+        [TGPaidMessagesConfirmation confirmSendingToPeerIds:peerIds messagesPerPeer:caption.length != 0 ? 2 : 1 controller:parentController completion:^(bool confirmed)
+        {
+            if (!confirmed)
+                return;
+            shareAction(peerIds, caption);
+            if ([peerIds containsObject:@(TGTelegraphInstance.clientUserId)])
+                [TGAppDelegateInstance.rootController.dialogListController requestSavedMessagesTooltip];
+        }];
     }];
     sendItem.presentation = TGPresentation.current;
     

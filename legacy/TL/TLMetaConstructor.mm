@@ -23,6 +23,12 @@ static bool TLMetaConstructorShouldReportUnsupportedSignature(int32_t signature)
     return inserted;
 }
 
+static bool OGCompatFlaggedFieldPresent(std::map<int32_t, int32_t> const &flagWords, TLMetaField const &field)
+{
+    std::map<int32_t, int32_t>::const_iterator word = flagWords.find(field.flagName);
+    return word != flagWords.end() && (word->second & (1 << field.flagBit)) != 0;
+}
+
 TLMetaConstructor::TLMetaConstructor(int32_t name_, int32_t signature_, std::tr1::shared_ptr<std::vector<TLMetaField> > fields_, std::tr1::shared_ptr<TLMetaType> resultType_) :
     name(name_), signature(signature_), fields(fields_), resultType(resultType_)
 {
@@ -49,26 +55,25 @@ TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializ
         return TLMetaClassStore::constructValue(is, signature, environment, nil, error);
 
     std::tr1::shared_ptr<std::vector<TLConstructedValue> > values(new std::vector<TLConstructedValue>());
-    std::map<int32_t, int32_t> flagValues;
+    std::map<int32_t, int32_t> flagWords;
     
     std::vector<TLMetaField>::iterator fieldsEnd = fields->end();
     for (std::vector<TLMetaField>::iterator it = fields->begin(); it != fieldsEnd; it++)
     {
         if (it->hasFlag)
         {
-            std::map<int32_t, int32_t>::iterator flagIt = flagValues.find(it->flagName);
-            if (flagIt == flagValues.end() || (flagIt->second & (1 << it->flagBit)) == 0)
+            TLConstructedValue skipped;
+            if (!OGCompatFlaggedFieldPresent(flagWords, *it))
             {
-                values->push_back(TLConstructedValue());
+                values->push_back(skipped);
                 continue;
             }
             
             if (it->flagOnly)
             {
-                TLConstructedValue flagValue;
-                flagValue.type = TLConstructedValueTypePrimitiveBool;
-                flagValue.primitive.boolValue = true;
-                values->push_back(flagValue);
+                skipped.type = TLConstructedValueTypePrimitiveBool;
+                skipped.primitive.boolValue = true;
+                values->push_back(skipped);
                 continue;
             }
         }
@@ -93,7 +98,7 @@ TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializ
             return TLConstructedValue();
         
         if (value.type == TLConstructedValueTypePrimitiveInt32)
-            flagValues[it->name] = value.primitive.int32Value;
+            flagWords[it->name] = value.primitive.int32Value;
         
         values->push_back(value);
     }

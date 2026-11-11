@@ -26,11 +26,11 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
 
-extern void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion)(NSString *thumbnailUri));
+#import "TGEmojiStatusView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernGalleryTransitionView.h"
 
-static const int64_t TGMarkedUserId = 314366525;
+static const CGFloat TGUserInfoEmojiStatusSize = 20.0f;
 
 @interface TGLetteredAvatarView (TGModernGalleryTransition) <TGModernGalleryTransitionView>
 
@@ -194,8 +194,7 @@ static UIImage *TGUserInfoStarsRatingBadgeImage(int32_t level, UIColor *color)
     
     UIImageView *_verifiedIcon;
     UIImageView *_premiumIcon;
-    TGRemoteImageView *_emojiStatusView;
-    UIImageView *_markedUserBadgeView;
+    TGEmojiStatusView *_emojiStatusView;
     UIImageView *_disclosureIndicator;
     
     TGModernButton *_callButton;
@@ -355,8 +354,8 @@ static UIImage *TGUserInfoStarsRatingBadgeImage(int32_t level, UIColor *color)
 {
     [super setPresentation:presentation];
 
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    bool classicDarkStyle = classicIOS6Style && presentation.pallete.isDark;
+    bool classicThemeStyle = [TGPresentation classicThemeStyle];
+    bool classicDarkStyle = classicThemeStyle && presentation.pallete.isDark;
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
     OGTheme *brandedTheme = [OGTheme brandedTheme];
     OGProfileAppearance *profileAppearance = brandedTheme.profileAppearance;
@@ -381,15 +380,15 @@ static UIImage *TGUserInfoStarsRatingBadgeImage(int32_t level, UIColor *color)
     _nameLabel.shadowColor = brandedIOS6Style ? profileAppearance.nameShadowColor : nil;
     _nameLabel.shadowOffset = brandedIOS6Style ? profileAppearance.nameShadowOffset : CGSizeZero;
     _statusLabel.font = TGSystemFontOfSize(brandedIOS6Style ? profileAppearance.statusFontSize : 15.0f);
-    _nameLabel.textColor = brandedIOS6Style ? profileAppearance.nameColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
-    _phoneLabel.textColor = brandedIOS6Style ? profileAppearance.phoneColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
-    _usernameLabel.textColor = brandedIOS6Style ? profileAppearance.usernameColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
+    _nameLabel.textColor = brandedIOS6Style ? profileAppearance.nameColor : (classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
+    _phoneLabel.textColor = brandedIOS6Style ? profileAppearance.phoneColor : (classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
+    _usernameLabel.textColor = brandedIOS6Style ? profileAppearance.usernameColor : (classicThemeStyle && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
     _verifiedIcon.image = presentation.images.profileVerifiedIcon;
     _premiumIcon.image = [TGPresentationAssets premiumBadgeIcon:16.0f];
     UIImage *disclosureImage = nil;
     if (brandedIOS6Style)
         disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:brandedTheme];
-    else if (classicIOS6Style)
+    else if (classicThemeStyle)
         disclosureImage = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
     else
         disclosureImage = presentation.images.collectionMenuDisclosureIcon;
@@ -596,7 +595,6 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
 - (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int64_t)uidForPlaceholderCalculation
 {
     _uidForPlaceholderCalculation = uidForPlaceholderCalculation;
-    [self updateMarkedUserBadge];
     
     _firstName = firstName;
     _lastName = lastName;
@@ -686,9 +684,8 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         _editing = editing;
         
         _verifiedIcon.hidden = _editing;
-        _emojiStatusView.hidden = _editing || _emojiStatusDocumentId == 0;
+        _emojiStatusView.suppressed = _editing;
         _premiumIcon.hidden = _editing || !_isPremium || _isVerified || _emojiStatusDocumentId != 0;
-        [self updateMarkedUserBadge];
         
         if (editing)
         {
@@ -942,10 +939,8 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         [badges addObject:_verifiedIcon];
     if (_premiumIcon.superview != nil && !_premiumIcon.hidden)
         [badges addObject:_premiumIcon];
-    if (_emojiStatusView.superview != nil && !_emojiStatusView.hidden)
+    if (_emojiStatusView.displaysStatus)
         [badges addObject:_emojiStatusView];
-    if (_markedUserBadgeView.superview != nil && !_markedUserBadgeView.hidden)
-        [badges addObject:_markedUserBadgeView];
     CGFloat badgesWidth = 0.0f;
     for (UIView *badge in badges)
         badgesWidth += 4.0f + badge.bounds.size.width;
@@ -1324,7 +1319,7 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     }
     _brandedAvatarOverlayView.hidden = true;
     _brandedStatusBackgroundView.hidden = true;
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     
     _avatarView.frame = CGRectMake(15.0f + classicInset + _avatarOffset.width + self.safeAreaInset.left, 16.0f + _avatarOffset.height, 66.0f, 66.0f);
     
@@ -1339,10 +1334,8 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         maxNameWidth -= _verifiedIcon.bounds.size.width + 5.0f;
     if (_premiumIcon.superview != nil && !_premiumIcon.hidden)
         maxNameWidth -= _premiumIcon.bounds.size.width + 5.0f;
-    if (_emojiStatusView.superview != nil && !_emojiStatusView.hidden)
-        maxNameWidth -= _emojiStatusView.bounds.size.width + 5.0f;
-    if (_markedUserBadgeView.superview != nil && !_markedUserBadgeView.hidden)
-        maxNameWidth -= 67.0f;
+    if (_emojiStatusView.displaysStatus)
+        maxNameWidth -= TGUserInfoEmojiStatusSize + 5.0f;
     if (!_callButton.hidden) {
         maxNameWidth -= 54.0f;
         maxStatusWidth -= 54.0f;
@@ -1417,21 +1410,10 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     if (_premiumIcon.superview != nil && !_premiumIcon.hidden) {
         _premiumIcon.frame = CGRectOffset(_premiumIcon.bounds, nameLabelFrame.origin.x + nameLabelFrame.size.width + 4.0f, nameLabelFrame.origin.y + 3.0f + TGScreenPixel);
     }
-    if (_emojiStatusView.superview != nil && !_emojiStatusView.hidden) {
-        CGFloat emojiX = nameLabelFrame.origin.x + nameLabelFrame.size.width + 4.0f;
-        if (_verifiedIcon.superview != nil && !_verifiedIcon.hidden)
-            emojiX = CGRectGetMaxX(_verifiedIcon.frame) + 3.0f;
-        _emojiStatusView.frame = CGRectMake(emojiX, nameLabelFrame.origin.y + 2.0f + TGScreenPixel, 20.0f, 20.0f);
-    }
-    if (_markedUserBadgeView.superview != nil && !_markedUserBadgeView.hidden) {
-        CGFloat badgeX = nameLabelFrame.origin.x + nameLabelFrame.size.width + 4.0f;
-        if (_verifiedIcon.superview != nil && !_verifiedIcon.hidden)
-            badgeX = CGRectGetMaxX(_verifiedIcon.frame) + 3.0f;
-        if (_premiumIcon.superview != nil && !_premiumIcon.hidden)
-            badgeX = CGRectGetMaxX(_premiumIcon.frame) + 3.0f;
-        if (_emojiStatusView.superview != nil && !_emojiStatusView.hidden)
-            badgeX = CGRectGetMaxX(_emojiStatusView.frame) + 3.0f;
-        _markedUserBadgeView.frame = CGRectMake(badgeX, nameLabelFrame.origin.y + 1.0f, 62.0f, 26.0f);
+    if (_emojiStatusView.displaysStatus) {
+        bool followsVerifiedIcon = _verifiedIcon.superview != nil && !_verifiedIcon.hidden;
+        CGFloat statusX = followsVerifiedIcon ? CGRectGetMaxX(_verifiedIcon.frame) + 3.0f : CGRectGetMaxX(nameLabelFrame) + 4.0f;
+        _emojiStatusView.frame = CGRectMake(statusX, nameLabelFrame.origin.y + 2.0f + TGScreenPixel, TGUserInfoEmojiStatusSize, TGUserInfoEmojiStatusSize);
     }
     
     if (_profileMusicButton != nil)
@@ -1445,33 +1427,6 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
 
     _avatarOverlay.frame = _avatarView.frame;
     _avatarIconView.center = CGPointMake(CGRectGetMidX(_avatarView.frame), CGRectGetMidY(_avatarView.frame));
-}
-
-- (void)updateMarkedUserBadge
-{
-    bool shouldShowBadge = _uidForPlaceholderCalculation == TGMarkedUserId && !_editing;
-    if (!shouldShowBadge)
-    {
-        [_markedUserBadgeView removeFromSuperview];
-        _markedUserBadgeView = nil;
-        [self setNeedsLayout];
-        return;
-    }
-
-    if (_markedUserBadgeView == nil)
-    {
-        UIImage *badgeImage = [UIImage imageNamed:@"ZikfolvStatusBadge"];
-        if (badgeImage == nil)
-            return;
-
-        _markedUserBadgeView = [[UIImageView alloc] initWithImage:badgeImage];
-        _markedUserBadgeView.contentMode = UIViewContentModeScaleAspectFit;
-        _markedUserBadgeView.userInteractionEnabled = false;
-        [self addSubview:_markedUserBadgeView];
-    }
-
-    _markedUserBadgeView.hidden = false;
-    [self setNeedsLayout];
 }
 
 #pragma mark -
@@ -1542,39 +1497,22 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         return;
 
     _emojiStatusDocumentId = emojiStatusDocumentId;
-    if (emojiStatusDocumentId == 0)
-    {
-        [_emojiStatusView cancelLoading];
-        [_emojiStatusView removeFromSuperview];
-        _emojiStatusView = nil;
-        if (_premiumIcon != nil)
-            _premiumIcon.hidden = _editing || !_isPremium || _isVerified;
-        [self setNeedsLayout];
-        return;
-    }
-
     if (_premiumIcon != nil)
-        _premiumIcon.hidden = true;
+        _premiumIcon.hidden = _editing || !_isPremium || _isVerified || _emojiStatusDocumentId != 0;
 
-    if (_emojiStatusView == nil)
+    if (_emojiStatusView == nil && emojiStatusDocumentId != 0)
     {
-        _emojiStatusView = [[TGRemoteImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 20.0f, 20.0f)];
-        _emojiStatusView.contentMode = UIViewContentModeScaleAspectFit;
+        _emojiStatusView = [[TGEmojiStatusView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, TGUserInfoEmojiStatusSize, TGUserInfoEmojiStatusSize)];
+        _emojiStatusView.suppressed = _editing;
+        __weak TGUserInfoCollectionItemView *weakSelf = self;
+        _emojiStatusView.displayChanged = ^
+        {
+            [weakSelf setNeedsLayout];
+        };
         [self.contentView addSubview:_emojiStatusView];
     }
-    [_emojiStatusView cancelLoading];
-    _emojiStatusView.hidden = true;
-
-    __weak TGUserInfoCollectionItemView *weakSelf = self;
-    TGIOS6LoadCustomEmojiThumbnail(emojiStatusDocumentId, ^(NSString *thumbnailUri)
-    {
-        TGUserInfoCollectionItemView *strongSelf = weakSelf;
-        if (strongSelf == nil || strongSelf->_emojiStatusDocumentId != emojiStatusDocumentId || thumbnailUri.length == 0)
-            return;
-        [strongSelf->_emojiStatusView loadImage:thumbnailUri filter:nil placeholder:nil];
-        strongSelf->_emojiStatusView.hidden = strongSelf->_editing;
-        [strongSelf setNeedsLayout];
-    });
+    _emojiStatusView.documentId = emojiStatusDocumentId;
+    [self setNeedsLayout];
 }
 
 - (void)setIsPremium:(bool)isPremium

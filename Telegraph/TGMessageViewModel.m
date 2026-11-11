@@ -505,7 +505,7 @@ static char TGMessageViewModelAvatarTapRecognizerPoolKey;
 
     TGPresentationPallete *pallete = _context.presentation.pallete;
     bool incoming = _incomingAppearance;
-    bool classic = [TGPresentation classicIOS6Style];
+    bool classic = [TGPresentation classicThemeStyle];
     bool paletteClassic = classic && [TGPresentation classicIOS6UsesPaletteAdaptedAssets];
 
     UIColor *fillColor = incoming ? pallete.chatIncomingBubbleColor : pallete.chatOutgoingBubbleColor;
@@ -651,7 +651,7 @@ static char TGMessageViewModelAvatarTapRecognizerPoolKey;
 
     UIFont *font = _ios6CommentsButtonModel.font;
     if (font == nil)
-        font = [TGPresentation classicIOS6Style] ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont boldSystemFontOfSize:13.0f];
+        font = [TGPresentation classicThemeStyle] ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont boldSystemFontOfSize:13.0f];
     NSString *title = TGIOS6CommentsTitleForCount(_ios6CommentsCount);
     CGSize titleSize = [title sizeWithFont:font];
     return MAX(132.0f, titleSize.width + 48.0f);

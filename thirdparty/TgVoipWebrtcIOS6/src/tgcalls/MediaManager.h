@@ -28,9 +28,7 @@ namespace tgcalls {
 
 class MediaManager : public std::enable_shared_from_this<MediaManager> {
 public:
-	static rtc::Thread *getWorkerThread() {
-		return nullptr;
-	}
+	static rtc::Thread *getWorkerThread() { return nullptr; }
 
 	MediaManager(
 		rtc::Thread *thread,
@@ -53,35 +51,21 @@ public:
 	void start();
 	void setIsConnected(bool isConnected);
 	void setNegotiatedMedia(const NegotiatedMedia &media, uint32_t localAudioSsrc, uint32_t localVideoSsrc);
-	void notifyPacketSent(const rtc::SentPacket &) {
-	}
-	void setSendVideo(std::shared_ptr<VideoCaptureInterface>) {
-	}
-	void sendVideoDeviceUpdated() {
-	}
-	void setRequestedVideoAspect(float) {
-	}
+	void notifyPacketSent(const rtc::SentPacket &sentPacket) {}
+	void setSendVideo(std::shared_ptr<VideoCaptureInterface> capture) {}
+	void sendVideoDeviceUpdated() {}
+	void setRequestedVideoAspect(float aspect) {}
 	void setMuteOutgoingAudio(bool mute);
-	void setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>>) {
-	}
-	void receiveMessage(DecryptedMessage &&) {
-	}
-	void remoteVideoStateUpdated(VideoState) {
-	}
-	void setNetworkParameters(bool, bool) {
-	}
-	void fillCallStats(CallStats &) {
-	}
-	void setAudioInputDevice(std::string) {
-	}
-	void setAudioOutputDevice(std::string) {
-	}
-	void setInputVolume(float) {
-	}
-	void setOutputVolume(float) {
-	}
-	void addExternalAudioSamples(std::vector<uint8_t> &&) {
-	}
+	void setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {}
+	void receiveMessage(DecryptedMessage &&message) {}
+	void remoteVideoStateUpdated(VideoState state) {}
+	void setNetworkParameters(bool isLowCost, bool isLowDataRequested) {}
+	void fillCallStats(CallStats &stats) {}
+	void setAudioInputDevice(std::string id) {}
+	void setAudioOutputDevice(std::string id) {}
+	void setInputVolume(float level) {}
+	void setOutputVolume(float level) {}
+	void addExternalAudioSamples(std::vector<uint8_t> &&samples) {}
 
 private:
 	class Router;

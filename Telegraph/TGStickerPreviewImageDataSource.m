@@ -28,6 +28,11 @@ static bool TGStickerPreviewIsAnimatedFile(NSDictionary *args)
     return [mimeType isEqualToString:@"video/webm"] || [mimeType isEqualToString:@"application/x-tgsticker"] || [extension isEqualToString:@"webm"] || [extension isEqualToString:@"tgs"];
 }
 
+static NSString *TGStickerPreviewThumbnailFileName(bool highQuality)
+{
+    return highQuality ? @"thumbnail-high-v2" : @"thumbnail";
+}
+
 static ASQueue *taskManagementQueue()
 {
     static ASQueue *queue = nil;
@@ -38,6 +43,37 @@ static ASQueue *taskManagementQueue()
     });
     
     return queue;
+}
+
+static NSDictionary *OGCompatStickerArguments(NSString *uri);
+
+static bool OGCompatStickerIsString(id value)
+{
+    return [value respondsToSelector:@selector(characterAtIndex:)];
+}
+
+static NSString *OGCompatStickerDocumentPath(NSString *directory, NSDictionary *arguments)
+{
+    return [directory stringByAppendingPathComponent:[arguments objectForKey:@"fileName"]];
+}
+
+static bool OGCompatStickerHasDocumentId(NSDictionary *args)
+{
+    return [args[@"documentId"] respondsToSelector:@selector(longLongValue)] || [args[@"localDocumentId"] respondsToSelector:@selector(longLongValue)];
+}
+
+static NSString *OGCompatStickerDirectory(NSDictionary *args)
+{
+    static NSString *root = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        root = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
+    });
+
+    int64_t remoteId = [args[@"documentId"] longLongValue];
+    NSString *name = remoteId != 0 ? [NSString stringWithFormat:@"%" PRIx64 "", remoteId] : [NSString stringWithFormat:@"local%" PRIx64 "", (int64_t)[args[@"localDocumentId"] longLongValue]];
+    return [root stringByAppendingPathComponent:name];
 }
 
 @implementation TGStickerPreviewImageDataSource
@@ -85,121 +121,87 @@ static ASQueue *taskManagementQueue()
                  completion(result != nil ? result : [TGStickerPreviewImageDataSource resultForUnavailableImage]);
          }];
          
+         void (^reportMissing)(void) = ^
+         {
+             if (completion != nil)
+                 completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
+         };
+
          if ([TGStickerPreviewImageDataSource _isDataLocallyAvailableForUri:uri])
          {
              [previewTask executeWithWorkerTask:workerTask threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
          }
-         else if ([[TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]][@"cacheOnly"] boolValue])
+         else if ([OGCompatStickerArguments(uri)[@"cacheOnly"] boolValue])
          {
-             if (completion != nil)
-                 completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
+             reportMissing();
          }
          else
          {
-             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]];
+             NSDictionary *args = OGCompatStickerArguments(uri);
              
-             bool hasLegacyThumbnailUri = [args[@"legacyThumbnailUri"] respondsToSelector:@selector(characterAtIndex:)];
-             bool hasFullDocumentFallback = [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)];
+             bool hasLegacyThumbnailUri = OGCompatStickerIsString(args[@"legacyThumbnailUri"]);
+             bool hasFullDocumentFallback = OGCompatStickerIsString(args[@"fileName"]);
              
-             if ((![args[@"documentId"] respondsToSelector:@selector(longLongValue)] && ![args[@"localDocumentId"] respondsToSelector:@selector(longLongValue)]) || (!hasLegacyThumbnailUri && !hasFullDocumentFallback) || (![args[@"accessHash"] respondsToSelector:@selector(longLongValue)]) || (![args[@"datacenterId"] respondsToSelector:@selector(intValue)]))
+             if (!OGCompatStickerHasDocumentId(args) || (!hasLegacyThumbnailUri && !hasFullDocumentFallback) || (![args[@"accessHash"] respondsToSelector:@selector(longLongValue)]) || (![args[@"datacenterId"] respondsToSelector:@selector(intValue)]))
              {
-                 if (completion != nil)
-                     completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
+                 reportMissing();
              }
              else
              {
-                 static NSString *filesDirectory = nil;
-                 static dispatch_once_t onceToken;
-                 dispatch_once(&onceToken, ^
-                 {
-                     filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-                 });
-                 
-                 NSString *fileDirectoryName = nil;
-                 if ([args[@"documentId"] longLongValue] != 0)
-                 {
-                     fileDirectoryName = [[NSString alloc] initWithFormat:@"%" PRIx64 "", (int64_t)[args[@"documentId"] longLongValue]];
-                 }
-                 else
-                 {
-                     fileDirectoryName = [[NSString alloc] initWithFormat:@"local%" PRIx64 "", (int64_t)[args[@"localDocumentId"] longLongValue]];
-                 }
-                 NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
+                 NSString *fileDirectory = OGCompatStickerDirectory(args);
                  
                  [[NSFileManager defaultManager] createDirectoryAtPath:fileDirectory withIntermediateDirectories:true attributes:nil error:nil];
                  
                  bool highQuality = [args[@"highQuality"] boolValue];
                  
-                 NSString *filePath = [fileDirectory stringByAppendingPathComponent:highQuality ? @"thumbnail-high-v2" :  @"thumbnail"];
+                 NSString *filePath = [fileDirectory stringByAppendingPathComponent:TGStickerPreviewThumbnailFileName(highQuality)];
                  
                  int64_t identifier = [args[@"documentId"] longLongValue];
                  __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
-                 void (^fetchFullDocument)(void) = ^
+                 void (^reportProgress)(float) = ^(float value)
                  {
-                     __strong TGMediaPreviewTask *strongPreviewTask = weakPreviewTask;
+                     if (progress)
+                         progress(value);
+                 };
+                 void (^reportUnavailable)(void) = reportMissing;
+                 void (^decodeDownloadedFile)(void) = ^
+                 {
+                     [weakPreviewTask executeWithWorkerTask:workerTask threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
+                 };
+                 void (^downloadDocument)(void) = ^
+                 {
+                     TGMediaPreviewTask *strongPreviewTask = weakPreviewTask;
                      if (strongPreviewTask == nil)
                          return;
                      if (!hasFullDocumentFallback)
                      {
-                         if (completion != nil)
-                             completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
+                         reportUnavailable();
                          return;
                      }
 
-                     NSString *documentFilePath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
-                     NSMutableArray *attributes = [[NSMutableArray alloc] init];
-                     [attributes addObject:[[TGDocumentAttributeFilename alloc] initWithFilename:args[@"fileName"]]];
-
-                     TGDocumentMediaAttachment *documentAttachment = [[TGDocumentMediaAttachment alloc] init];
-                     documentAttachment.documentId = [args[@"documentId"] longLongValue];
-                     documentAttachment.localDocumentId = [args[@"localDocumentId"] longLongValue];
-                     documentAttachment.accessHash = [args[@"accessHash"] longLongValue];
-                     documentAttachment.datacenterId = [args[@"datacenterId"] intValue];
-                     documentAttachment.attributes = attributes;
-                     documentAttachment.size = [args[@"size"] intValue];
-                     documentAttachment.mimeType = args[@"mimeType"];
-                     documentAttachment.originInfo = [TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]];
-
-                     [strongPreviewTask executeWithTargetFilePath:documentFilePath document:documentAttachment progress:^(float value)
+                     NSString *documentFilePath = OGCompatStickerDocumentPath(fileDirectory, args);
+                     [strongPreviewTask executeWithTargetFilePath:documentFilePath document:[TGStickerPreviewImageDataSource documentForPreviewArguments:args] progress:reportProgress completion:^(bool success)
                      {
-                         if (progress)
-                             progress(value);
-                     } completion:^(bool success)
-                     {
-                         __strong TGMediaPreviewTask *completedPreviewTask = weakPreviewTask;
-                         if (success && completedPreviewTask != nil)
-                         {
-                             [completedPreviewTask executeWithWorkerTask:workerTask threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
-                         }
-                         else if (completion != nil)
-                         {
-                             completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
-                         }
+                         if (success)
+                             decodeDownloadedFile();
+                         else
+                             reportUnavailable();
                      } workerTask:nil];
                  };
 
                  if (hasLegacyThumbnailUri)
                  {
-                     [previewTask executeMultipartWithImageUri:args[@"legacyThumbnailUri"] identifier:identifier originInfo:[TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]] targetFilePath:filePath progress:^(float value)
+                     [previewTask executeMultipartWithImageUri:args[@"legacyThumbnailUri"] identifier:identifier originInfo:[TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]] targetFilePath:filePath progress:reportProgress completion:^(bool success)
                      {
-                         if (progress)
-                             progress(value);
-                     } completion:^(bool success)
-                     {
-                         __strong TGMediaPreviewTask *strongPreviewTask = weakPreviewTask;
-                         if (success && strongPreviewTask != nil)
-                         {
-                             [strongPreviewTask executeWithWorkerTask:workerTask threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
-                         }
+                         if (success)
+                             decodeDownloadedFile();
                          else
-                         {
-                             fetchFullDocument();
-                         }
+                             downloadDocument();
                      }];
                  }
                  else
                  {
-                     fetchFullDocument();
+                     downloadDocument();
                  }
 
              }
@@ -209,39 +211,40 @@ static ASQueue *taskManagementQueue()
     return previewTask;
 }
 
++ (TGDocumentMediaAttachment *)documentForPreviewArguments:(NSDictionary *)args
+{
+    TGDocumentMediaAttachment *documentAttachment = [[TGDocumentMediaAttachment alloc] init];
+    documentAttachment.attributes = [NSMutableArray arrayWithObject:[[TGDocumentAttributeFilename alloc] initWithFilename:args[@"fileName"]]];
+    documentAttachment.documentId = [args[@"documentId"] longLongValue];
+    documentAttachment.localDocumentId = [args[@"localDocumentId"] longLongValue];
+    documentAttachment.accessHash = [args[@"accessHash"] longLongValue];
+    documentAttachment.datacenterId = [args[@"datacenterId"] intValue];
+    documentAttachment.size = [args[@"size"] intValue];
+    documentAttachment.mimeType = args[@"mimeType"];
+    documentAttachment.originInfo = [TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]];
+    return documentAttachment;
+}
+
 + (bool)_isDataLocallyAvailableForUri:(NSString *)uri
 {
-    NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]];
+    NSDictionary *args = OGCompatStickerArguments(uri);
     
-    if ((![args[@"documentId"] respondsToSelector:@selector(longLongValue)] && ![args[@"localDocumentId"] respondsToSelector:@selector(longLongValue)]))
+    if (!OGCompatStickerHasDocumentId(args))
     {
         return false;
     }
     
-    static NSString *filesDirectory = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-    });
-    
-    NSString *fileDirectoryName = nil;
-    if ([args[@"documentId"] longLongValue] != 0)
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"%" PRIx64 "", (int64_t)[args[@"documentId"] longLongValue]];
-    else
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"local%" PRIx64 "", (int64_t)[args[@"localDocumentId"] longLongValue]];
-    NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
+    NSString *fileDirectory = OGCompatStickerDirectory(args);
     
     bool highQuality = [args[@"highQuality"] boolValue];
     
-    NSString *filePath = [fileDirectory stringByAppendingPathComponent:highQuality ? @"thumbnail-high-v2" :  @"thumbnail"];
+    NSString *filePath = [fileDirectory stringByAppendingPathComponent:TGStickerPreviewThumbnailFileName(highQuality)];
     if ([[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] || [[NSFileManager defaultManager] fileExistsAtPath:[filePath stringByAppendingString:@".cached.bin"] isDirectory:NULL])
         return true;
 
-    if ([args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)])
+    if (OGCompatStickerIsString(args[@"fileName"]))
     {
-        NSString *documentFilePath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:documentFilePath isDirectory:NULL])
+        if ([[NSFileManager defaultManager] fileExistsAtPath:OGCompatStickerDocumentPath(fileDirectory, args) isDirectory:NULL])
             return true;
     }
     
@@ -295,35 +298,23 @@ static ASQueue *taskManagementQueue()
     if (isCancelled && isCancelled())
         return nil;
     
-    NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]];
+    NSDictionary *args = OGCompatStickerArguments(uri);
     
-    if ((![args[@"documentId"] respondsToSelector:@selector(longLongValue)] && ![args[@"localDocumentId"] respondsToSelector:@selector(longLongValue)]))
+    if (!OGCompatStickerHasDocumentId(args))
     {
         return false;
     }
     
-    static NSString *filesDirectory = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        filesDirectory = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"files"];
-    });
-
-    NSString *fileDirectoryName = nil;
-    if ([args[@"documentId"] longLongValue] != 0)
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"%" PRIx64 "", (int64_t)[args[@"documentId"] longLongValue]];
-    else
-        fileDirectoryName = [[NSString alloc] initWithFormat:@"local%" PRIx64 "", (int64_t)[args[@"localDocumentId"] longLongValue]];
-    NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
+    NSString *fileDirectory = OGCompatStickerDirectory(args);
     
     CGSize size = CGSizeMake([args[@"width"] intValue], [args[@"height"] intValue]);
     
     bool highQuality = [args[@"highQuality"] boolValue];
     
-    NSString *filePath = [fileDirectory stringByAppendingPathComponent:highQuality ? @"thumbnail-high-v2" :  @"thumbnail"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] && ![[NSFileManager defaultManager] fileExistsAtPath:[filePath stringByAppendingString:@".cached.bin"] isDirectory:NULL] && [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)])
+    NSString *filePath = [fileDirectory stringByAppendingPathComponent:TGStickerPreviewThumbnailFileName(highQuality)];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] && ![[NSFileManager defaultManager] fileExistsAtPath:[filePath stringByAppendingString:@".cached.bin"] isDirectory:NULL] && OGCompatStickerIsString(args[@"fileName"]))
     {
-        NSString *documentFilePath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
+        NSString *documentFilePath = OGCompatStickerDocumentPath(fileDirectory, args);
         if ([[NSFileManager defaultManager] fileExistsAtPath:documentFilePath isDirectory:NULL])
             filePath = documentFilePath;
     }
@@ -353,7 +344,7 @@ static ASQueue *taskManagementQueue()
         }
     }
 
-    if (image == nil && TGStickerPreviewIsAnimatedFile(args) && [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)] && !(isCancelled && isCancelled()))
+    if (image == nil && TGStickerPreviewIsAnimatedFile(args) && OGCompatStickerIsString(args[@"fileName"]) && !(isCancelled && isCancelled()))
     {
         NSString *documentPath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
         if ([[NSFileManager defaultManager] fileExistsAtPath:documentPath] && ![NSThread isMainThread])
@@ -406,3 +397,9 @@ static ASQueue *taskManagementQueue()
 }
 
 @end
+
+static NSDictionary *OGCompatStickerArguments(NSString *uri)
+{
+    return [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]];
+}
+

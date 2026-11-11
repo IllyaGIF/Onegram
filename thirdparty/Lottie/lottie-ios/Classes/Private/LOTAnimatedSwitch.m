@@ -1,4 +1,4 @@
-#import "../LOTXcode46Compat.h"
+#import "../OGLottieCompat.h"
 //
 //  LOTAnimatedSwitch.m
 //  Lottie
@@ -23,12 +23,12 @@
 }
 
 /// Convenience method to initialize a control from the Main Bundle by name
-+ (instancetype )switchNamed:(NSString * )toggleName {
++ (instancetype _Nonnull)switchNamed:(NSString * _Nonnull)toggleName {
   return [self switchNamed:toggleName inBundle:[NSBundle mainBundle]];
 }
 
 /// Convenience method to initialize a control from the specified bundle by name
-+ (instancetype )switchNamed:(NSString * )toggleName inBundle:(NSBundle * )bundle {
++ (instancetype _Nonnull)switchNamed:(NSString * _Nonnull)toggleName inBundle:(NSBundle * _Nonnull)bundle {
   LOTComposition *composition = [LOTComposition animationNamed:toggleName inBundle:bundle];
   LOTAnimatedSwitch *animatedControl = [[self alloc] initWithFrame:CGRectZero];
   if (composition) {
@@ -143,11 +143,11 @@
     // The touch has moved enough to register as its own gesture. Suppress the touch up toggle.
     _suppressToggle = YES;
   }
-#ifdef __IPHONE_9_0
-  if ([UIView respondsToSelector:@selector(userInterfaceLayoutDirectionForSemanticContentAttribute:)]) {
-    if ([UIView userInterfaceLayoutDirectionForSemanticContentAttribute:self.semanticContentAttribute] == UIUserInterfaceLayoutDirectionRightToLeft) {
-      diff = diff * -1;
-    }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
+  BOOL isRightToLeft = [UIView respondsToSelector:@selector(userInterfaceLayoutDirectionForSemanticContentAttribute:)] &&
+    [UIView userInterfaceLayoutDirectionForSemanticContentAttribute:self.semanticContentAttribute] == UIUserInterfaceLayoutDirectionRightToLeft;
+  if (isRightToLeft) {
+    diff = diff * -1;
   }
 #endif
   if (_on) {

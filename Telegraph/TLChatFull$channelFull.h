@@ -9,6 +9,7 @@
 @interface TLChatFull$channelFull : TLChatFull
 
 @property (nonatomic) int32_t flags;
+@property (nonatomic) int32_t flags2;
 
 @property (nonatomic) bool canViewParticipants;
 @property (nonatomic) bool can_set_username;

@@ -102,11 +102,11 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
 
 + (bool)isHexString:(NSString *)string
 {
-    if (![string isKindOfClass:[NSString class]] || string.length == 0 || string.length % 2 != 0)
+    if (![string isKindOfClass:[NSString class]] || (string.length & 1) != 0 || string.length == 0)
         return false;
     
-    NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
-    return [string rangeOfCharacterFromSet:[hexSet invertedSet]].location == NSNotFound;
+    NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"] invertedSet];
+    return [string rangeOfCharacterFromSet:nonHex].location == NSNotFound;
 }
 
 + (NSData *)dataWithHexString:(NSString *)hex
@@ -208,8 +208,8 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                         if (socksProxyData != nil) {
                             NSDictionary *socksProxyDict = [NSKeyedUnarchiver unarchiveObjectWithData:socksProxyData];
                             if (socksProxyDict[@"ip"] != nil && socksProxyDict[@"port"] != nil && ![socksProxyDict[@"inactive"] boolValue]) {
-                                NSString *secretString = socksProxyDict[@"secret"];
-                                NSData *secret = [TGShareContextSignal isHexString:secretString] ? [TGShareContextSignal dataWithHexString:secretString] : nil;
+                                NSString *secretText = socksProxyDict[@"secret"];
+                                NSData *secret = [TGShareContextSignal isHexString:secretText] ? [TGShareContextSignal dataWithHexString:secretText] : nil;
                                 apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:socksProxyDict[@"ip"] port:(uint16_t)[socksProxyDict[@"port"] intValue] username:socksProxyDict[@"username"] password:socksProxyDict[@"password"] secret:secret]];
                             }
                         }

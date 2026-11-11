@@ -58,6 +58,10 @@
 - (NSDictionary *)_optionsForMessageActions;
 - (void)_setupOutgoingMessage:(TGMessage *)message;
 - (void)_setupPreparedMessage:(TGPreparedMessage *)message;
+- (int64_t)paidMessageStars;
+- (void)setPaidMessageStars:(int64_t)paidMessageStars;
+- (int64_t)paidMessagesPricePeerId;
+- (void)paidMessagesPriceChanged:(int64_t)stars;
 - (TGMessage *)_replyMessageForMessageId:(int32_t)messageId;
 - (bool)_messagesNeedRandomId;
 - (bool)canSendStickers;

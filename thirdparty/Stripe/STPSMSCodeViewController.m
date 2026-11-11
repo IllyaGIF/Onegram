@@ -7,6 +7,7 @@
 //
 
 #import "STPSMSCodeViewController.h"
+#import "OGStripeCompat.h"
 #import "STPSMSCodeTextField.h"
 #import "STPCheckoutAPIClient.h"
 #import "STPTheme.h"
@@ -89,7 +90,7 @@
     [self.scrollView addSubview:bottomLabel];
     self.bottomLabel = bottomLabel;
     
-    UIButton *cancelButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    UIButton *cancelButton = [UIButton buttonWithType:OG_COMPAT_STRIPE_BUTTON_TYPE];
     cancelButton.titleLabel.textAlignment = NSTextAlignmentCenter;
     [cancelButton setTitle:STPLocalizedString(@"Fill in your card details manually", 
                                               @"Cancel button for Remember Me SMS verification screen.") 
@@ -117,7 +118,7 @@
     [self.scrollView addSubview:smsSentLabel];
     self.smsSentLabel = smsSentLabel;
     
-    UIButton *pasteFromClipboardButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    UIButton *pasteFromClipboardButton = [UIButton buttonWithType:OG_COMPAT_STRIPE_BUTTON_TYPE];
     pasteFromClipboardButton.titleLabel.textAlignment = NSTextAlignmentCenter;
     [pasteFromClipboardButton setTitle:STPLocalizedString(@"Paste copied code?", 
                                                           @"Button to paste a copied SMS code into the verification field.") 
@@ -145,8 +146,11 @@
         NSString *pasteboardString = [UIPasteboard generalPasteboard].string;
         BOOL clipboardIsCode = NO;
         if (pasteboardString.length == 6) {
-            NSCharacterSet *invalidCharacterset = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet];
-            clipboardIsCode = [pasteboardString rangeOfCharacterFromSet:invalidCharacterset].location == NSNotFound;
+            clipboardIsCode = YES;
+            for (NSUInteger i = 0; i < pasteboardString.length && clipboardIsCode; i++) {
+                unichar character = [pasteboardString characterAtIndex:i];
+                clipboardIsCode = character >= '0' && character <= '9';
+            }
         }
 
         [self setPasteFromClipboardButtonVisible:clipboardIsCode];
@@ -240,7 +244,7 @@
     [super viewDidAppear:animated];
     WEAK(self);
     [self stp_beginObservingKeyboardAndInsettingScrollView:self.scrollView
-                                             onChangeBlock:^(__unused CGRect keyboardFrame, __unused UIView * currentlyEditedField) {
+                                             onChangeBlock:^(__unused CGRect keyboardFrame, __unused UIView * _Nullable currentlyEditedField) {
                                                  STRONG(self);
                                                  CGFloat scrollOffsetY = self.scrollView.contentOffset.y + self.scrollView.contentInset.top;
                                                  CGFloat topLabelDistanceFromOffset = CGRectGetMinY(self.topLabel.frame) - scrollOffsetY;

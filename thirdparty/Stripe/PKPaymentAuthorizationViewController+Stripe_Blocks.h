@@ -6,7 +6,8 @@
 //  Copyright © 2016 Stripe, Inc. All rights reserved.
 //
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import "OGStripeCompat.h"
+#if OG_COMPAT_STRIPE_HAS_PASSKIT
 #import <PassKit/PassKit.h>
 #import "STPAPIClient.h"
 #import "STPPaymentContext.h"

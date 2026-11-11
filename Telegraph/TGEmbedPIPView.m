@@ -28,7 +28,7 @@ const CGFloat TGEmbedPIPSlipSize = 40.0f;
     
     TGEmbedPIPScrubber *_scrubber;
     
-    UIView *_overlayBlurView;
+    UIView *_dimmingOverlayView;
     TGEmbedPIPPullArrowView *_arrowView;
     
     SMetaDisposable *_stateDisposable;
@@ -91,15 +91,15 @@ const CGFloat TGEmbedPIPSlipSize = 40.0f;
         _scrubber = [[TGEmbedPIPScrubber alloc] initWithFrame:CGRectMake(0, 0, 0, 3)];
         [_controlsView addSubview:_scrubber];
         
-        _overlayBlurView = [[UIView alloc] initWithFrame:_wrapperView.bounds];
-        _overlayBlurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        _overlayBlurView.backgroundColor = UIColorRGBA(0x000000, 0.25f);
-        _overlayBlurView.hidden = true;
-        [_wrapperView addSubview:_overlayBlurView];
+        _dimmingOverlayView = [[UIView alloc] initWithFrame:_wrapperView.bounds];
+        _dimmingOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _dimmingOverlayView.backgroundColor = UIColorRGBA(0x000000, 0.25f);
+        _dimmingOverlayView.hidden = true;
+        [_wrapperView addSubview:_dimmingOverlayView];
         
         _arrowView = [[TGEmbedPIPPullArrowView alloc] initWithFrame:CGRectMake(0, 0, 8, 38)];
         _arrowView.alpha = 0.0f;
-        [_overlayBlurView addSubview:_arrowView];
+        [_dimmingOverlayView addSubview:_arrowView];
         
         _gestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap:)];
         [self addGestureRecognizer:_gestureRecognizer];
@@ -290,28 +290,28 @@ const CGFloat TGEmbedPIPSlipSize = 40.0f;
 
 - (void)setBlurred:(bool)blurred animated:(bool)animated
 {
-    if ((blurred && !_overlayBlurView.hidden) || (!blurred && _overlayBlurView.hidden))
+    if ((blurred && !_dimmingOverlayView.hidden) || (!blurred && _dimmingOverlayView.hidden))
         return;
     
     if (animated)
     {
         if (blurred)
-            _overlayBlurView.hidden = false;
+            _dimmingOverlayView.hidden = false;
         
         [UIView animateWithDuration:0.35 animations:^
         {
-            _overlayBlurView.alpha = blurred ? 1.0f : 0.0f;
+            _dimmingOverlayView.alpha = blurred ? 1.0f : 0.0f;
             _arrowView.alpha = blurred ? 1.0f : 0.0f;
         } completion:^(BOOL finished)
         {
             if (finished && !blurred)
-                _overlayBlurView.hidden = true;
+                _dimmingOverlayView.hidden = true;
         }];
     }
     else
     {
-        _overlayBlurView.alpha = blurred ? 1.0f : 0.0f;
-        _overlayBlurView.hidden = !blurred;
+        _dimmingOverlayView.alpha = blurred ? 1.0f : 0.0f;
+        _dimmingOverlayView.hidden = !blurred;
         _arrowView.alpha = blurred ? 1.0f : 0.0f;
     }
 }

@@ -44,49 +44,68 @@ static ASQueue *taskManagementQueue()
     return queue;
 }
 
-static NSString *TGPeerAvatarTrimmedLegacyUrl(NSString *url)
+static NSString *OGAvatarLegacyCacheKey(NSString *url)
 {
-    NSString *trimmedUrl = url;
-    NSArray *components = [trimmedUrl componentsSeparatedByString:@"_"];
-    if (components.count >= 5)
-        trimmedUrl = [NSString stringWithFormat:@"%@_%@_%@_%@", components[0], components[1], components[2], components[3]];
-    return trimmedUrl;
+    NSArray *segments = [url componentsSeparatedByString:@"_"];
+    if (segments.count < 5)
+        return url;
+    return [[segments subarrayWithRange:NSMakeRange(0, 4)] componentsJoinedByString:@"_"];
 }
 
-static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSize size)
+static CGSize OGAvatarRequestedSize(NSDictionary *args)
+{
+    return CGSizeMake([args[@"width"] intValue], [args[@"height"] intValue]);
+}
+
+static UIImage *OGAvatarNonDegenerateImage(UIImage *image)
+{
+    if (image == nil)
+        return nil;
+    CGSize extent = image.size;
+    return (extent.width < FLT_EPSILON || extent.height < FLT_EPSILON) ? nil : image;
+}
+
+static bool OGAvatarPathIsThumbnail(NSString *path)
+{
+    NSString *name = [path lastPathComponent];
+    return [name hasPrefix:@"thumbnail-"] || [name isEqualToString:@"image-thumb.jpg"];
+}
+
+static NSString *OGAvatarBestModernImagePath(NSString *photoDirectoryPath, CGSize size)
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     
-    NSString *imagePath = [photoDirectoryPath stringByAppendingPathComponent:@"image.jpg"];
-    if ([fileManager fileExistsAtPath:imagePath isDirectory:NULL])
-        return imagePath;
-    
-    NSString *thumbnailPath = [photoDirectoryPath stringByAppendingPathComponent:@"image-thumb.jpg"];
-    if ([fileManager fileExistsAtPath:thumbnailPath isDirectory:NULL])
-        return thumbnailPath;
-    
-    NSArray *items = [fileManager contentsOfDirectoryAtPath:photoDirectoryPath error:nil];
-    NSString *bestPath = nil;
-    int bestScore = INT_MAX;
-    for (NSString *item in items)
+    for (NSString *preferredName in @[@"image.jpg", @"image-thumb.jpg"])
     {
-        if (![item hasPrefix:@"thumbnail-"] || ![item hasSuffix:@".jpg"])
+        NSString *preferredPath = [photoDirectoryPath stringByAppendingPathComponent:preferredName];
+        if ([fileManager fileExistsAtPath:preferredPath isDirectory:NULL])
+            return preferredPath;
+    }
+    
+    NSString *closestPath = nil;
+    int closestDistance = INT_MAX;
+    for (NSString *item in [fileManager contentsOfDirectoryAtPath:photoDirectoryPath error:nil])
+    {
+        bool isThumbnailFile = [item hasPrefix:@"thumbnail-"] && [item hasSuffix:@".jpg"];
+        if (!isThumbnailFile)
             continue;
         
-        NSString *path = [photoDirectoryPath stringByAppendingPathComponent:item];
-        UIImage *image = [[UIImage alloc] initWithContentsOfFile:path];
-        if (image == nil || image.size.width < FLT_EPSILON || image.size.height < FLT_EPSILON)
+        NSString *candidatePath = [photoDirectoryPath stringByAppendingPathComponent:item];
+        UIImage *candidate = [[UIImage alloc] initWithContentsOfFile:candidatePath];
+        if (OGAvatarNonDegenerateImage(candidate) == nil)
             continue;
         
-        int score = (int)ABS((int)image.size.width - (int)size.width) + (int)ABS((int)image.size.height - (int)size.height);
-        if (bestPath == nil || score < bestScore)
+        int widthGap = (int)candidate.size.width - (int)size.width;
+        int heightGap = (int)candidate.size.height - (int)size.height;
+        int distance = ABS(widthGap) + ABS(heightGap);
+        if (closestPath == nil || distance < closestDistance)
         {
-            bestPath = path;
-            bestScore = score;
+            closestPath = candidatePath;
+            closestDistance = distance;
         }
     }
     
-    return bestPath;
+    return closestPath;
 }
 
 @interface TGPeerAvatarImageDataSource ()
@@ -169,94 +188,77 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
         if (!completed)
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[[NSString alloc] initWithFormat:@"%@://?", [TGPeerAvatarImageDataSource uriPrefix]].length]];
-            NSString *legacyUrl = args[@"legacy-cache-url"];
-            NSString *thumbnailUrl = args[@"legacy-thumbnail-cache-url"];
             TGMediaOriginInfo *originInfo = [TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]];
+            NSString *legacyUrl = [args objectForKey:@"legacy-cache-url"];
+            NSString *thumbnailUrl = [args objectForKey:@"legacy-thumbnail-cache-url"];
             
             void (^completeWithUnavailable)(void) = ^
             {
-                TGDataResource *thumbnailResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
+                TGDataResource *fallbackResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
                 if (completion != nil)
-                    completion(thumbnailResult != nil ? thumbnailResult : [TGPeerAvatarImageDataSource resultForUnavailableImage]);
+                    completion(fallbackResult ?: [TGPeerAvatarImageDataSource resultForUnavailableImage]);
             };
             
-            void (^completeFromSettledCacheOrFallback)(NSString *, void (^)(void)) = ^(NSString *stage, void (^fallback)(void))
+            void (^renderOnDiskQueue)(void) = ^
             {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), [TGCache diskCacheQueue], ^
+                dispatch_async([TGCache diskCacheQueue], ^
                 {
-                    TGDataResource *settledResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
-                    if (settledResult != nil)
-                    {
-                        [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-                    }
-                    else if (fallback != nil)
-                    {
-                        fallback();
-                    }
+                    [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                 });
+            };
+            
+            void (^recheckAfterDelay)(void (^)(void)) = ^(void (^onMiss)(void))
+            {
+                const int64_t recheckDelay = (int64_t)(0.35 * NSEC_PER_SEC);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, recheckDelay), [TGCache diskCacheQueue], ^
+                {
+                    if ([TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil] != nil)
+                        [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                    else if (onMiss != nil)
+                        onMiss();
+                });
+            };
+            
+            void (^fetchThenRender)(NSString *, void (^)(float), void (^)(void)) = ^(NSString *remoteUrl, void (^fetchProgress)(float), void (^onMiss)(void))
+            {
+                NSDictionary *fetchOptions = originInfo == nil ? nil : @{@"originInfo": originInfo};
+                [previewTask executeWithTargetFilePath:nil uri:remoteUrl options:fetchOptions progress:fetchProgress completion:^(bool __unused fetched)
+                {
+                    if ([TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil] != nil)
+                        renderOnDiskQueue();
+                    else
+                        recheckAfterDelay(onMiss);
+                } workerTask:workerTask];
+            };
+            
+            bool (^isUsableUrl)(id) = ^bool(id candidate)
+            {
+                return [candidate respondsToSelector:@selector(characterAtIndex:)] && [candidate length] != 0;
             };
             
             void (^fetchThumbnail)(void) = ^
             {
-                if ([thumbnailUrl respondsToSelector:@selector(characterAtIndex:)] && thumbnailUrl.length != 0)
-                {
-                    NSDictionary *thumbnailOptions = originInfo == nil ? nil : @{@"originInfo": originInfo};
-                    [previewTask executeWithTargetFilePath:nil uri:thumbnailUrl options:thumbnailOptions progress:nil completion:^(bool thumbnailSuccess)
-                    {
-                        TGDataResource *thumbnailResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
-                        if (thumbnailResult != nil)
-                        {
-                            dispatch_async([TGCache diskCacheQueue], ^
-                            {
-                                [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-                            });
-                        }
-                        else
-                        {
-                            completeFromSettledCacheOrFallback(@"thumb_late_cache", ^
-                            {
-                                completeWithUnavailable();
-                            });
-                        }
-                    } workerTask:workerTask];
-                }
-                else
+                if (!isUsableUrl(thumbnailUrl))
                 {
                     completeWithUnavailable();
+                    return;
                 }
+                fetchThenRender(thumbnailUrl, nil, completeWithUnavailable);
             };
             
-            if ([legacyUrl respondsToSelector:@selector(characterAtIndex:)] && legacyUrl.length != 0)
+            if (!isUsableUrl(legacyUrl))
             {
-                if (progress)
-                    progress(0.0);
-                NSDictionary *fullOptions = originInfo == nil ? nil : @{@"originInfo": originInfo};
-                [previewTask executeWithTargetFilePath:nil uri:legacyUrl options:fullOptions progress:^(float value)
-                {
-                    if (progress)
-                        progress(value);
-                } completion:^(bool success)
-                {
-                    TGDataResource *fullResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
-                    if (fullResult != nil)
-                    {
-                        dispatch_async([TGCache diskCacheQueue], ^
-                        {
-                            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-                        });
-                    }
-                    else
-                    {
-                        completeFromSettledCacheOrFallback(@"full_late_cache", ^
-                        {
-                            fetchThumbnail();
-                        });
-                    }
-                } workerTask:workerTask];
+                fetchThumbnail();
             }
             else
             {
-                fetchThumbnail();
+                if (progress)
+                    progress(0.0);
+                fetchThenRender(legacyUrl, ^(float value)
+                {
+                    if (progress)
+                        progress(value);
+                }, fetchThumbnail);
             }
         }
     }];
@@ -347,7 +349,7 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     
     if ([args[@"legacy-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
     {
-        NSString *trimmedUrl = TGPeerAvatarTrimmedLegacyUrl(args[@"legacy-cache-url"]);
+        NSString *trimmedUrl = OGAvatarLegacyCacheKey(args[@"legacy-cache-url"]);
         NSString *legacyCacheFilePath = [[TGRemoteImageView sharedCache] pathForCachedData:trimmedUrl];
         if ([[NSFileManager defaultManager] fileExistsAtPath:legacyCacheFilePath isDirectory:NULL])
             return true;
@@ -355,7 +357,7 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     
     if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
     {
-        NSString *trimmedUrl = TGPeerAvatarTrimmedLegacyUrl(args[@"legacy-thumbnail-cache-url"]);
+        NSString *trimmedUrl = OGAvatarLegacyCacheKey(args[@"legacy-thumbnail-cache-url"]);
         NSString *legacyThumbnailFilePath = [[TGRemoteImageView sharedCache] pathForCachedData:trimmedUrl];
         if ([[NSFileManager defaultManager] fileExistsAtPath:legacyThumbnailFilePath isDirectory:NULL])
         {
@@ -368,13 +370,13 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     if ([args[@"imageId"] respondsToSelector:@selector(longLongValue)])
     {
         int64_t imageId = [args[@"imageId"] longLongValue];
-        CGSize size = CGSizeMake([args[@"width"] intValue], [args[@"height"] intValue]);
+        CGSize size = OGAvatarRequestedSize(args);
         NSString *photoDirectoryPath = [self pathForModernPhotoDirectory:imageId];
-        NSString *modernPath = TGPeerAvatarModernImagePath(photoDirectoryPath, size);
+        NSString *modernPath = OGAvatarBestModernImagePath(photoDirectoryPath, size);
         if (modernPath != nil)
         {
             if (outIsThumbnail)
-                *outIsThumbnail = [[modernPath lastPathComponent] hasPrefix:@"thumbnail-"] || [[modernPath lastPathComponent] isEqualToString:@"image-thumb.jpg"];
+                *outIsThumbnail = OGAvatarPathIsThumbnail(modernPath);
             return true;
         }
     }
@@ -407,11 +409,9 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
         return nil;
     }
     
-    CGSize size = CGSizeMake([args[@"width"] intValue], [args[@"height"] intValue]);
+    CGSize size = OGAvatarRequestedSize(args);
     if (size.width < FLT_EPSILON || size.height < FLT_EPSILON)
-    {
         return nil;
-    }
     
     UIImage *image = nil;
     bool lowQualityThumbnail = false;
@@ -419,17 +419,13 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     
     if ([args[@"legacy-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
     {
-        NSString *trimmedUrl = TGPeerAvatarTrimmedLegacyUrl(args[@"legacy-cache-url"]);
-        image = [[TGRemoteImageView sharedCache] cachedImage:trimmedUrl availability:TGCacheDisk];
-        if (image != nil && (image.size.width < FLT_EPSILON || image.size.height < FLT_EPSILON))
-            image = nil;
+        NSString *trimmedUrl = OGAvatarLegacyCacheKey(args[@"legacy-cache-url"]);
+        image = OGAvatarNonDegenerateImage([[TGRemoteImageView sharedCache] cachedImage:trimmedUrl availability:TGCacheDisk]);
     }
     if (image == nil && [args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
     {
-        NSString *trimmedUrl = TGPeerAvatarTrimmedLegacyUrl(args[@"legacy-thumbnail-cache-url"]);
-        image = [[TGRemoteImageView sharedCache] cachedImage:trimmedUrl availability:TGCacheDisk];
-        if (image != nil && (image.size.width < FLT_EPSILON || image.size.height < FLT_EPSILON))
-            image = nil;
+        NSString *trimmedUrl = OGAvatarLegacyCacheKey(args[@"legacy-thumbnail-cache-url"]);
+        image = OGAvatarNonDegenerateImage([[TGRemoteImageView sharedCache] cachedImage:trimmedUrl availability:TGCacheDisk]);
         lowQualityThumbnail = true;
     }
     
@@ -437,12 +433,10 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     {
         int64_t imageId = [args[@"imageId"] longLongValue];
         NSString *photoDirectoryPath = [self pathForModernPhotoDirectory:imageId];
-        NSString *modernPath = TGPeerAvatarModernImagePath(photoDirectoryPath, size);
+        NSString *modernPath = OGAvatarBestModernImagePath(photoDirectoryPath, size);
         
-        image = modernPath == nil ? nil : [[UIImage alloc] initWithContentsOfFile:modernPath];
-        if (image != nil && (image.size.width < FLT_EPSILON || image.size.height < FLT_EPSILON))
-            image = nil;
-        lowQualityThumbnail = modernPath != nil && ([[modernPath lastPathComponent] hasPrefix:@"thumbnail-"] || [[modernPath lastPathComponent] isEqualToString:@"image-thumb.jpg"]);
+        image = OGAvatarNonDegenerateImage(modernPath == nil ? nil : [[UIImage alloc] initWithContentsOfFile:modernPath]);
+        lowQualityThumbnail = modernPath != nil && OGAvatarPathIsThumbnail(modernPath);
     }
     
     if (image != nil)
@@ -453,11 +447,11 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
         
         if (lowQualityThumbnail)
         {
-            UIImage *blurredImage = TGBlurredFileImage(image, size, needsAverageColor ? &averageColorValue : NULL, 0);
-            if (blurredImage != nil)
+            UIImage *softened = TGBlurredFileImage(image, size, needsAverageColor ? &averageColorValue : NULL, 0);
+            if (softened != nil)
             {
-                image = blurredImage;
                 decoded = true;
+                image = softened;
             }
         }
         

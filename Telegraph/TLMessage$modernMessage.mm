@@ -2,211 +2,254 @@
 
 #import "TLMetaClassStore.h"
 #import "TLPeer.h"
-#import "IOS6FeatureProbe.h"
+#import "OGFeatureProbe.h"
 #import "TLUser$modernUser.h"
 #import "TGRichMessageTLParser.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
-static id<TLObject> TGModernReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static const int32_t OGModernVectorSignature = (int32_t)0x1cb5c415;
+
+static inline bool OGModernFailed(__autoreleasing NSError **error)
 {
-    int32_t signature = [is readInt32];
-    id<TLObject> object = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    if (error != nil && *error != nil)
+    return error != nil && *error != nil;
+}
+
+static inline bool OGModernIsFlagsWord(int32_t word)
+{
+    return word > 0 && word < 0x10000;
+}
+
+static inline id<TLObject> OGModernConstructQuiet(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    return TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+}
+
+static inline void OGModernDiscardInt32(NSInputStream *is)
+{
+    (void)[is readInt32];
+}
+
+static inline void OGModernDiscardInt64(NSInputStream *is)
+{
+    (void)[is readInt64];
+}
+
+static inline void OGModernDiscardString(NSInputStream *is)
+{
+    (void)[is readString];
+}
+
+static inline void OGModernDiscardBytes(NSInputStream *is)
+{
+    (void)[is readBytes];
+}
+
+static id<TLObject> OGModernConstructLogged(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    id<TLObject> object = OGModernConstructQuiet(is, signature, environment, error);
+    if (OGModernFailed(error))
         TGLog(@"MSG readObject failed signature=0x%08x error=%@", signature, *error);
     return object;
 }
 
-static NSArray *TGModernReadObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static id<TLObject> OGModernReadBoxed(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    int32_t vectorSignature = [is readInt32];
-    if (vectorSignature != (int32_t)0x1cb5c415)
-    {
-        if (error != nil)
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [[NSString alloc] initWithFormat:@"Expected vector, got 0x%08x", vectorSignature]}];
-        return nil;
-    }
-    
-    int32_t count = [is readInt32];
-    NSMutableArray *objects = [[NSMutableArray alloc] init];
-    for (int32_t i = 0; i < count; i++)
-    {
-        id object = TGModernReadObject(is, environment, error);
-        if (error != nil && *error != nil)
-            return nil;
-        if (object != nil)
-            [objects addObject:object];
-    }
-    return objects;
+    int32_t signature = [is readInt32];
+    return OGModernConstructLogged(is, signature, environment, error);
 }
 
-static NSString *TGModernReadReactionSummary(NSInputStream *is, id<TLSerializationEnvironment> environment, NSString **chosenReaction, __autoreleasing NSError **error)
+static bool OGModernOpenVector(NSInputStream *is, NSString *fixedFailureText, int32_t *count, __autoreleasing NSError **error)
 {
-    if (chosenReaction != NULL)
-        *chosenReaction = nil;
-    int32_t signature = [is readInt32];
-    if (signature != (int32_t)0x0a339f0b && signature != (int32_t)0x4f2b9479)
+    int32_t marker = [is readInt32];
+    if (marker != OGModernVectorSignature)
     {
-        TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+        if (error != nil)
+        {
+            NSString *text = fixedFailureText ?: [[NSString alloc] initWithFormat:@"Expected vector, got 0x%08x", marker];
+            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: text}];
+        }
+        return false;
+    }
+    *count = [is readInt32];
+    return true;
+}
+
+static NSArray *OGModernReadBoxedVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t count = 0;
+    if (!OGModernOpenVector(is, nil, &count, error))
+        return nil;
+    
+    NSMutableArray *collected = [NSMutableArray arrayWithCapacity:0];
+    for (int32_t index = 0; index < count; index++)
+    {
+        id element = OGModernReadBoxed(is, environment, error);
+        if (OGModernFailed(error))
+            return nil;
+        if (element == nil)
+            continue;
+        [collected addObject:element];
+    }
+    return collected;
+}
+
+static NSString *OGModernReactionLabel(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t kind = [is readInt32];
+    switch ((uint32_t)kind)
+    {
+        case 0x1b2286b8:
+            return [is readString];
+        case 0x8935fc73:
+            return [NSString stringWithFormat:@"◆%lld", [is readInt64]];
+        case 0x523da4eb:
+            return @"★";
+        case 0x79f5d419:
+            return nil;
+        default:
+            OGModernConstructQuiet(is, kind, environment, error);
+            return nil;
+    }
+}
+
+static NSString *OGModernReadReactionSummary(NSInputStream *is, id<TLSerializationEnvironment> environment, NSString **chosenReaction, __autoreleasing NSError **error)
+{
+    NSString *selected = nil;
+    if (chosenReaction != NULL)
+        *chosenReaction = selected;
+    int32_t signature = [is readInt32];
+    const bool isShortForm = signature == (int32_t)0x4f2b9479;
+    if (signature != (int32_t)0x0a339f0b && !isShortForm)
+    {
+        OGModernConstructQuiet(is, signature, environment, error);
         return nil;
     }
 
     int32_t flags = [is readInt32];
-    int32_t vectorSignature = [is readInt32];
-    if (vectorSignature != (int32_t)0x1cb5c415)
-    {
-        if (error != nil)
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid reaction results vector"}];
+    int32_t count = 0;
+    if (!OGModernOpenVector(is, @"Invalid reaction results vector", &count, error))
         return nil;
-    }
 
-    int32_t count = [is readInt32];
-    NSMutableArray *parts = [[NSMutableArray alloc] init];
-    for (int32_t i = 0; i < count; i++)
+    NSMutableArray *parts = [NSMutableArray arrayWithCapacity:0];
+    for (int32_t index = 0; index < count; index++)
     {
-        int32_t countSignature = [is readInt32];
-        if (countSignature != (int32_t)0xa3d1cb80)
+        int32_t entrySignature = [is readInt32];
+        if (entrySignature != (int32_t)0xa3d1cb80)
         {
-            TLMetaClassStore::constructObject(is, countSignature, environment, nil, error);
-            if (error != nil && *error != nil)
+            OGModernConstructQuiet(is, entrySignature, environment, error);
+            if (OGModernFailed(error))
                 return nil;
             continue;
         }
 
-        int32_t countFlags = [is readInt32];
-        bool chosen = (countFlags & (1 << 0)) != 0;
+        const bool chosen = ([is readInt32] & 1) != 0;
         if (chosen)
-            [is readInt32];
+            OGModernDiscardInt32(is);
 
-        int32_t reactionSignature = [is readInt32];
-        NSString *reaction = nil;
-        if (reactionSignature == (int32_t)0x1b2286b8)
-            reaction = [is readString];
-        else if (reactionSignature == (int32_t)0x8935fc73)
-            reaction = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
-        else if (reactionSignature == (int32_t)0x523da4eb)
-            reaction = @"★";
-        else if (reactionSignature != (int32_t)0x79f5d419)
-            TLMetaClassStore::constructObject(is, reactionSignature, environment, nil, error);
-
-        int32_t reactionCount = [is readInt32];
-        if (chosen && reaction.length != 0 && chosenReaction != NULL)
+        NSString *reaction = OGModernReactionLabel(is, environment, error);
+        const int32_t reactionCount = [is readInt32];
+        const bool labelled = reaction.length != 0;
+        if (labelled && chosen && chosenReaction != NULL)
             *chosenReaction = reaction;
-        if (reaction.length != 0 && reactionCount > 0)
+        if (labelled && reactionCount > 0)
             [parts addObject:[NSString stringWithFormat:@"%@ %d", reaction, reactionCount]];
     }
 
     if (flags & (1 << 1))
-        TGModernReadObjectVector(is, environment, error);
-    if (signature != (int32_t)0x4f2b9479 && (flags & (1 << 4)))
-        TGModernReadObjectVector(is, environment, error);
+        OGModernReadBoxedVector(is, environment, error);
+    if (!isShortForm && (flags & (1 << 4)))
+        OGModernReadBoxedVector(is, environment, error);
 
-    return parts.count == 0 ? nil : [parts componentsJoinedByString:@"  "];
-}
-
-static id<TLObject> TGModernReadObjectWithFirstSignature(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
-{
-    id<TLObject> object = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    if (error != nil && *error != nil)
-        TGLog(@"MSG readObject failed signature=0x%08x error=%@", signature, *error);
-    return object;
-}
-
-static void TGModernReadFactCheckCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
-{
-    int32_t signatureOrFlags = [is readInt32];
-    if (signatureOrFlags > 0 && signatureOrFlags < 0x10000)
-    {
-        int32_t flags = signatureOrFlags;
-        if (flags & (1 << 1))
-        {
-            [is readString];
-            TGModernReadObject(is, environment, error);
-        }
-        [is readInt64];
-        return;
-    }
-    TGModernReadObjectWithFirstSignature(is, signatureOrFlags, environment, error);
-}
-
-static void TGModernReadSuggestedPostCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
-{
-    int32_t signatureOrFlags = [is readInt32];
-    if (signatureOrFlags > 0 && signatureOrFlags < 0x10000)
-    {
-        int32_t flags = signatureOrFlags;
-        if (flags & (1 << 3))
-            TGModernReadObject(is, environment, error);
-        if (error != nil && *error != nil)
-            return;
-        if (flags & (1 << 0))
-            [is readInt32];
-        return;
-    }
-    TGModernReadObjectWithFirstSignature(is, signatureOrFlags, environment, error);
-}
-
-static TLPeer *TGModernReadPeerCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
-static int64_t TGModernPeerLegacyId(TLPeer *peer);
-
-static NSArray *TGModernReadPeerIdVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
-{
-    int32_t vectorSignature = [is readInt32];
-    if (vectorSignature != (int32_t)0x1cb5c415)
-    {
-        if (error != nil)
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [[NSString alloc] initWithFormat:@"Expected vector, got 0x%08x", vectorSignature]}];
+    if (parts.count == 0)
         return nil;
-    }
-
-    int32_t count = [is readInt32];
-    NSMutableArray *peerIds = [[NSMutableArray alloc] init];
-    for (int32_t i = 0; i < count; i++)
-    {
-        TLPeer *peer = TGModernReadPeerCompat(is, environment, error);
-        if (error != nil && *error != nil)
-            return nil;
-        int64_t peerId = TGModernPeerLegacyId(peer);
-        if (peerId != 0)
-            [peerIds addObject:@(peerId)];
-    }
-    return peerIds;
+    return [parts componentsJoinedByString:@"  "];
 }
 
-static NSDictionary *TGModernReadMessageRepliesCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static void OGModernSkipFactCheck(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    int32_t signatureOrFlags = [is readInt32];
+    int32_t word = [is readInt32];
+    if (!OGModernIsFlagsWord(word))
+    {
+        OGModernConstructLogged(is, word, environment, error);
+        return;
+    }
+    
+    if (word & (1 << 1))
+    {
+        OGModernDiscardString(is);
+        OGModernReadBoxed(is, environment, error);
+    }
+    OGModernDiscardInt64(is);
+}
+
+static void OGModernSkipSuggestedPost(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t word = [is readInt32];
+    if (!OGModernIsFlagsWord(word))
+    {
+        OGModernConstructLogged(is, word, environment, error);
+        return;
+    }
+    
+    if (word & (1 << 3))
+        OGModernReadBoxed(is, environment, error);
+    if (OGModernFailed(error))
+        return;
+    if (word & (1 << 0))
+        OGModernDiscardInt32(is);
+}
+
+static TLPeer *OGModernReadPeer(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error);
+static int64_t OGModernPeerKey(TLPeer *peer);
+
+static NSArray *OGModernReadPeerKeys(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t count = 0;
+    if (!OGModernOpenVector(is, nil, &count, error))
+        return nil;
+
+    NSMutableArray *peerKeys = [[NSMutableArray alloc] init];
+    for (int32_t index = 0; index < count; index++)
+    {
+        TLPeer *peer = OGModernReadPeer(is, environment, error);
+        if (OGModernFailed(error))
+            return nil;
+        int64_t key = OGModernPeerKey(peer);
+        if (key != 0)
+            [peerKeys addObject:@(key)];
+    }
+    return peerKeys;
+}
+
+static NSDictionary *OGModernReadReplies(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t word = [is readInt32];
     int32_t flags = 0;
 
-    if (signatureOrFlags == (int32_t)0x83d60fc2)
+    if (word == (int32_t)0x83d60fc2)
         flags = [is readInt32];
-    else if (signatureOrFlags >= 0 && signatureOrFlags < 0x10000)
-        flags = signatureOrFlags;
+    else if (word >= 0 && word < 0x10000)
+        flags = word;
     else
     {
-        TGModernReadObjectWithFirstSignature(is, signatureOrFlags, environment, error);
+        OGModernConstructLogged(is, word, environment, error);
         return nil;
     }
 
     int32_t replies = [is readInt32];
-    __unused int32_t repliesPts = [is readInt32];
+    OGModernDiscardInt32(is);
 
     NSArray *recentRepliers = @[];
     if (flags & (1 << 1))
     {
-        recentRepliers = TGModernReadPeerIdVector(is, environment, error);
-        if (error != nil && *error != nil)
+        recentRepliers = OGModernReadPeerKeys(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
     }
 
-    int64_t channelId = 0;
-    int32_t maxId = 0;
-    int32_t readMaxId = 0;
-    if (flags & (1 << 0))
-        channelId = [is readInt64];
-    if (flags & (1 << 2))
-        maxId = [is readInt32];
-    if (flags & (1 << 3))
-        readMaxId = [is readInt32];
+    int64_t channelId = (flags & (1 << 0)) ? [is readInt64] : 0;
+    int32_t maxId = (flags & (1 << 2)) ? [is readInt32] : 0;
+    int32_t readMaxId = (flags & (1 << 3)) ? [is readInt32] : 0;
 
     return @{
         @"comments": @((flags & (1 << 0)) != 0),
@@ -218,124 +261,154 @@ static NSDictionary *TGModernReadMessageRepliesCompat(NSInputStream *is, id<TLSe
     };
 }
 
-static int64_t TGModernPeerLegacyId(TLPeer *peer)
+static int64_t OGModernPeerKey(TLPeer *peer)
 {
-    if ([peer isKindOfClass:[TLPeer$peerUser class]])
-        return ((TLPeer$peerUser *)peer).user_id;
-    if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    int64_t key = 0;
     if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
-    return 0;
+        key = TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
+    else if ([peer isKindOfClass:[TLPeer$peerChat class]])
+        key = TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
+    else if ([peer isKindOfClass:[TLPeer$peerUser class]])
+        key = ((TLPeer$peerUser *)peer).user_id;
+    return key;
 }
 
-static TLPeer *TGModernReadPeerCompat(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static TLPeer$peerUser *OGModernUserPeer(int64_t userId)
+{
+    TLPeer$peerUser *created = [TLPeer$peerUser new];
+    created.user_id = userId;
+    return created;
+}
+
+static TLPeer$peerChannel *OGModernChannelPeer(int64_t channelId)
+{
+    TLPeer$peerChannel *created = [TLPeer$peerChannel new];
+    created.channel_id = channelId;
+    return created;
+}
+
+static TLPeer *OGModernReadPeer(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t signature = [is readInt32];
-    if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102 || signature == (int32_t)0x36c6019a || signature == (int32_t)0xa2a5371e)
+    switch ((uint32_t)signature)
     {
-        int64_t modernPeerId = [is readInt64];
-        if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102)
+        case 0x59511722:
+        case 0x15752102:
+            return OGModernUserPeer([is readInt64]);
+        case 0x36c6019a:
         {
-            TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-            peer.user_id = modernPeerId;
-            return peer;
+            TLPeer$peerChat *chatPeer = [TLPeer$peerChat new];
+            chatPeer.chat_id = [is readInt64];
+            return chatPeer;
         }
-        else if (signature == (int32_t)0x36c6019a)
-        {
-            TLPeer$peerChat *peer = [[TLPeer$peerChat alloc] init];
-            peer.chat_id = modernPeerId;
-            return peer;
-        }
-        else
-        {
-            TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-            peer.channel_id = modernPeerId;
-            return peer;
-        }
-    }
-    else if (signature == (int32_t)0x9db1bc6d || signature == (int32_t)0xbad0e5bb || signature == (int32_t)0xbddde532)
-    {
-        return (TLPeer *)TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+        case 0xa2a5371e:
+            return OGModernChannelPeer([is readInt64]);
+        case 0x9db1bc6d:
+        case 0xbad0e5bb:
+        case 0xbddde532:
+            return (TLPeer *)OGModernConstructQuiet(is, signature, environment, error);
+        default:
+            break;
     }
     
-    int32_t highPeerId = [is readInt32];
-    int64_t rawPeerId = (((int64_t)highPeerId) << 32) | ((uint32_t)signature);
-    if (rawPeerId < 0)
-    {
-        TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-        peer.channel_id = -rawPeerId;
-        return peer;
-    }
-    else
-    {
-        TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-        peer.user_id = rawPeerId;
-        return peer;
-    }
+    int32_t highWord = [is readInt32];
+    int64_t rawPeerId = (((int64_t)highWord) << 32) | ((uint32_t)signature);
+    return rawPeerId < 0 ? (TLPeer *)OGModernChannelPeer(-rawPeerId) : (TLPeer *)OGModernUserPeer(rawPeerId);
 }
 
-static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvironment> environment, int32_t *replyToTopId, bool *forumTopic, __autoreleasing NSError **error)
+static int32_t OGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvironment> environment, int32_t *replyToTopId, bool *forumTopic, int64_t *storyPeerId, int32_t *storyId, __autoreleasing NSError **error)
 {
     if (replyToTopId != NULL)
         *replyToTopId = 0;
     if (forumTopic != NULL)
         *forumTopic = false;
+    if (storyPeerId != NULL)
+        *storyPeerId = 0;
+    if (storyId != NULL)
+        *storyId = 0;
 
     int32_t signature = [is readInt32];
     
-    if (signature == (int32_t)0xafbc09db || signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b)
+    switch ((uint32_t)signature)
     {
-        int32_t flags = [is readInt32];
-        if (forumTopic != NULL)
-            *forumTopic = (flags & (1 << 3)) != 0;
-        int32_t replyToMessageId = 0;
-        if (flags & (1 << 4))
-            replyToMessageId = [is readInt32];
-        if (flags & (1 << 0))
-            TGModernReadObject(is, environment, error);
-        if (flags & (1 << 5))
-            TGModernReadObject(is, environment, error);
-        if (flags & (1 << 8))
-            TGModernReadObject(is, environment, error);
-        if (flags & (1 << 1))
+        case 0xafbc09db:
+        case 0x1b97dd66:
+        case 0x6917560b:
+        case 0xddb5ab75:
         {
-            int32_t topMessageId = [is readInt32];
-            if (replyToTopId != NULL)
-                *replyToTopId = topMessageId;
+            const bool hasQuoteOffset = signature != (int32_t)0xafbc09db;
+            const bool hasQuoteBytes = signature == (int32_t)0x1b97dd66 || signature == (int32_t)0xddb5ab75;
+            int32_t flags = [is readInt32];
+            if (forumTopic != NULL)
+                *forumTopic = (flags & (1 << 3)) != 0;
+            int32_t replyToMessageId = (flags & (1 << 4)) ? [is readInt32] : 0;
+            if (flags & (1 << 0))
+                OGModernReadBoxed(is, environment, error);
+            if (flags & (1 << 5))
+                OGModernReadBoxed(is, environment, error);
+            if (flags & (1 << 8))
+                OGModernReadBoxed(is, environment, error);
+            if (flags & (1 << 1))
+            {
+                int32_t topMessageId = [is readInt32];
+                if (replyToTopId != NULL)
+                    *replyToTopId = topMessageId;
+            }
+            if (flags & (1 << 6))
+                OGModernDiscardString(is);
+            if (flags & (1 << 7))
+                OGModernReadBoxedVector(is, environment, error);
+            if (flags & (1 << 10))
+                OGModernDiscardInt32(is);
+            if (hasQuoteOffset && (flags & (1 << 11)))
+                OGModernDiscardInt32(is);
+            if (hasQuoteBytes && (flags & (1 << 12)))
+                OGModernDiscardBytes(is);
+            if (signature == (int32_t)0xddb5ab75 && (flags & (1 << 14)))
+                OGModernReadBoxedVector(is, environment, error);
+            return replyToMessageId;
         }
-        if (flags & (1 << 6))
-            [is readString];
-        if (flags & (1 << 7))
-            TGModernReadObjectVector(is, environment, error);
-        if (flags & (1 << 10))
-            [is readInt32];
-        if ((signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b) && (flags & (1 << 11)))
-            [is readInt32];
-        if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 12)))
-            [is readBytes];
-        return replyToMessageId;
-    }
-    else if (signature == (int32_t)0x0e5af939)
-    {
-        TGModernReadObject(is, environment, error);
-        [is readInt32];
-        return 0;
-    }
-    else if (signature > 0 && signature < 10000000)
-    {
-        return signature;
+        case 0x0e5af939:
+        {
+            TLPeer *peer = OGModernReadPeer(is, environment, error);
+            int32_t replyStoryId = [is readInt32];
+            if (storyPeerId != NULL)
+                *storyPeerId = OGModernPeerKey(peer);
+            if (storyId != NULL)
+                *storyId = replyStoryId;
+            return 0;
+        }
+        default:
+            break;
     }
     
-    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-    return 0;
+    if (signature <= 0 || signature >= 10000000)
+    {
+        OGModernConstructQuiet(is, signature, environment, error);
+        return 0;
+    }
+    return signature;
+}
+
+static bool OGModernMessageHasSecondFlags(int32_t signature)
+{
+    static const uint32_t knownSignatures[] = {
+        0x94345242, 0x96fdbbe9, 0x7600b9d3, 0x95ef6f2b, 0x6a26cb37, 0xd0bbd081, 0x003e38e7, 0xd9a7d88a,
+        0xd18fd1bb, 0xff86154d, 0xbb294f27, 0x65fdf943, 0x6a4ced37, 0x6236ae4a, 0xd8a8d820, 0x9815cec8
+    };
+    for (size_t index = 0; index < sizeof(knownSignatures) / sizeof(knownSignatures[0]); index++)
+    {
+        if ((int32_t)knownSignatures[index] == signature)
+            return true;
+    }
+    return false;
 }
 
 @implementation TLMessage$modernMessage
 
 + (NSDictionary *)readMessageRepliesFromStream:(NSInputStream *)is error:(__autoreleasing NSError **)error
 {
-    return TGModernReadMessageRepliesCompat(is, nil, error);
+    return OGModernReadReplies(is, nil, error);
 }
 
 - (void)TLserialize:(NSOutputStream *)__unused os
@@ -348,101 +421,94 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     TLMessage$modernMessage *result = [[TLMessage$modernMessage alloc] init];
     
     int32_t flags = [is readInt32];
-    int32_t flags2 = 0;
-    bool hasModernFlags2 = signature == (int32_t)0x94345242 || signature == (int32_t)0x96fdbbe9 || signature == (int32_t)0x7600b9d3 || signature == (int32_t)0x95ef6f2b || signature == (int32_t)0x6a26cb37 || signature == (int32_t)0xd0bbd081 || signature == (int32_t)0x003e38e7 || signature == (int32_t)0xd9a7d88a || signature == (int32_t)0xd18fd1bb || signature == (int32_t)0xff86154d || signature == (int32_t)0xbb294f27 || signature == (int32_t)0x65fdf943 || signature == (int32_t)0x6a4ced37 || signature == (int32_t)0x6236ae4a || signature == (int32_t)0xd8a8d820 || signature == (int32_t)0x9815cec8;
-    bool isLayer181Message = signature == (int32_t)0x94345242;
-    bool usesModernPeerObjects = hasModernFlags2;
-    if (hasModernFlags2)
-        flags2 = [is readInt32];
+    const bool modern = OGModernMessageHasSecondFlags(signature);
+    const bool extended = modern && signature != (int32_t)0x94345242;
+    int32_t flags2 = modern ? [is readInt32] : 0;
     
     result.flags = flags;
     result.n_id = [is readInt32];
     
     if (flags & (1 << 8))
     {
-        if (usesModernPeerObjects)
+        if (modern)
         {
-            TLPeer *fromPeer = TGModernReadPeerCompat(is, environment, error);
-            if (error != nil && *error != nil)
+            TLPeer *fromPeer = OGModernReadPeer(is, environment, error);
+            if (OGModernFailed(error))
                 return nil;
-            result.senderPeerId = TGModernPeerLegacyId(fromPeer);
+            result.senderPeerId = OGModernPeerKey(fromPeer);
             result.from_id = TGPeerIdIsUser(result.senderPeerId) ? result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
     }
     
-    if (hasModernFlags2 && (flags & (1 << 29)))
-        [is readInt32];
+    if (modern && (flags & (1 << 29)))
+        OGModernDiscardInt32(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 12)))
-        [is readString];
+    if (extended && (flags2 & (1 << 12)))
+        OGModernDiscardString(is);
     
-    result.to_id = TGModernReadPeerCompat(is, environment, error);
-    if (error != nil && *error != nil) {
+    result.to_id = OGModernReadPeer(is, environment, error);
+    if (OGModernFailed(error))
         return nil;
-    }
     
-    if (hasModernFlags2 && (flags & (1 << 28)))
+    if (modern && (flags & (1 << 28)))
     {
-        TLPeer *savedPeer = TGModernReadPeerCompat(is, environment, error);
-        if (error != nil && *error != nil)
+        TLPeer *savedPeer = OGModernReadPeer(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
-        result.saved_peer_id = TGModernPeerLegacyId(savedPeer);
+        result.saved_peer_id = OGModernPeerKey(savedPeer);
     }
     
     if (flags & (1 << 2))
     {
-        result.fwd_from = (TLMessageFwdHeader *)TGModernReadObject(is, environment, error);
-        if (error != nil && *error != nil) {
+        result.fwd_from = (TLMessageFwdHeader *)OGModernReadBoxed(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
-        }
     }
     
     if (flags & (1 << 11))
-    {
-        result.via_bot_id = hasModernFlags2 ? [is readInt64] : [is readInt32];
-    }
+        result.via_bot_id = modern ? [is readInt64] : [is readInt32];
     
-    if (hasModernFlags2 && (flags2 & (1 << 0)))
-    {
-        [is readInt64];
-    }
+    if (modern && (flags2 & (1 << 0)))
+        OGModernDiscardInt64(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 19)))
+    if (extended && (flags2 & (1 << 19)))
     {
-        TGModernReadObject(is, environment, error);
-        if (error != nil && *error != nil)
+        OGModernReadBoxed(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
     }
     
     if (flags & (1 << 3))
     {
-        if (hasModernFlags2)
+        if (modern)
         {
-            int32_t replyToTopId = 0;
-            bool forumTopic = false;
-            result.reply_to_msg_id = TGModernReadReplyHeader(is, environment, &replyToTopId, &forumTopic, error);
-            result.reply_to_top_id = replyToTopId;
-            result.forum_topic = forumTopic;
+            int32_t topId = 0;
+            bool forum = false;
+            int64_t storyPeer = 0;
+            int32_t storyId = 0;
+            result.reply_to_msg_id = OGModernReadReplyHeader(is, environment, &topId, &forum, &storyPeer, &storyId, error);
+            result.reply_to_top_id = topId;
+            result.forum_topic = forum;
+            result.reply_to_story_peer_id = storyPeer;
+            result.reply_to_story_id = storyId;
         }
         else
-        {
             result.reply_to_msg_id = [is readInt32];
-        }
-        if (error != nil && *error != nil)
+        if (OGModernFailed(error))
             return nil;
     }
     
     result.date = [is readInt32];
-
     result.message = [is readString];
     
     if (flags & (1 << 9))
     {
         int32_t mediaSignature = [is readInt32];
         result.media = TLMetaClassStore::constructObject(is, mediaSignature, environment, nil, error);
-        if (error != nil && *error != nil) {
+        if (OGModernFailed(error))
+        {
             TGLog(@"MSG id=%d media failed signature=0x%08x error=%@", result.n_id, mediaSignature, *error);
             return nil;
         }
@@ -450,31 +516,30 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     
     if (flags & (1 << 6))
     {
-        int32_t replyMarkupSignature = [is readInt32];
-        result.reply_markup = TLMetaClassStore::constructObject(is, replyMarkupSignature, environment, nil, error);
-        if (error != nil && *error != nil) {
+        int32_t markupSignature = [is readInt32];
+        result.reply_markup = TLMetaClassStore::constructObject(is, markupSignature, environment, nil, error);
+        if (OGModernFailed(error))
             return nil;
-        }
     }
     
     if (flags & (1 << 7))
     {
-        result.entities = TGModernReadObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
+        result.entities = OGModernReadBoxedVector(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
     }
     
-    if (flags & (1 << 10)) {
+    if (flags & (1 << 10))
+    {
         result.views = [is readInt32];
-        if (hasModernFlags2)
-        {
-            int32_t forwards = [is readInt32];
-        }
+        if (modern)
+            OGModernDiscardInt32(is);
     }
     
-    if (hasModernFlags2 && (flags & (1 << 23))) {
-        NSDictionary *discussion = TGModernReadMessageRepliesCompat(is, environment, error);
-        if (error != nil && *error != nil)
+    if (modern && (flags & (1 << 23)))
+    {
+        NSDictionary *discussion = OGModernReadReplies(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
         if ([discussion isKindOfClass:[NSDictionary class]])
         {
@@ -487,72 +552,68 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
         }
     }
     
-    if (flags & (1 << 15)) {
+    if (flags & (1 << 15))
         result.edit_date = [is readInt32];
-    }
     
-    if (flags & (1 << 16)) {
+    if (flags & (1 << 16))
         result.post_author = [is readString];
-    }
     
-    if (flags & (1 << 17)) {
+    if (flags & (1 << 17))
         result.grouped_id = [is readInt64];
-    }
     
-    if (hasModernFlags2 && (flags & (1 << 20))) {
+    if (modern && (flags & (1 << 20)))
+    {
         NSString *chosenReaction = nil;
-        result.reactionSummary = TGModernReadReactionSummary(is, environment, &chosenReaction, error);
+        result.reactionSummary = OGModernReadReactionSummary(is, environment, &chosenReaction, error);
         result.chosenReaction = chosenReaction;
-        if (error != nil && *error != nil)
+        if (OGModernFailed(error))
             return nil;
     }
     
-    if (hasModernFlags2 && (flags & (1 << 22))) {
-        TGModernReadObjectVector(is, environment, error);
-        if (error != nil && *error != nil)
-            return nil;
-    }
-    
-    if (hasModernFlags2 && (flags & (1 << 25)))
+    if (modern && (flags & (1 << 22)))
     {
-        int32_t ttl = [is readInt32];
-    }
-    
-    if (hasModernFlags2 && (flags & (1 << 30)))
-    {
-        int32_t quickReply = [is readInt32];
-    }
-    
-    if (hasModernFlags2 && (flags2 & (1 << 2)))
-    {
-        int64_t effect = [is readInt64];
-    }
-    
-    if (hasModernFlags2 && (flags2 & (1 << 3))) {
-        TGModernReadFactCheckCompat(is, environment, error);
-        if (error != nil && *error != nil)
+        OGModernReadBoxedVector(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
     }
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 5)))
-        [is readInt32];
+    if (modern && (flags & (1 << 25)))
+        OGModernDiscardInt32(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 6)))
-        [is readInt64];
+    if (modern && (flags & (1 << 30)))
+        OGModernDiscardInt32(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 7))) {
-        TGModernReadSuggestedPostCompat(is, environment, error);
-        if (error != nil && *error != nil)
+    if (modern && (flags2 & (1 << 2)))
+        OGModernDiscardInt64(is);
+    
+    if (modern && (flags2 & (1 << 3)))
+    {
+        OGModernSkipFactCheck(is, environment, error);
+        if (OGModernFailed(error))
             return nil;
     }
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 10)))
-        [is readInt32];
+    if (extended && (flags2 & (1 << 5)))
+        OGModernDiscardInt32(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 11)))
-        [is readString];
+    if (extended && (flags2 & (1 << 6)))
+        OGModernDiscardInt64(is);
     
-    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 13))) {
+    if (extended && (flags2 & (1 << 7)))
+    {
+        OGModernSkipSuggestedPost(is, environment, error);
+        if (OGModernFailed(error))
+            return nil;
+    }
+    
+    if (extended && (flags2 & (1 << 10)))
+        OGModernDiscardInt32(is);
+    
+    if (extended && (flags2 & (1 << 11)))
+        OGModernDiscardString(is);
+    
+    if (extended && (flags2 & (1 << 13)))
+    {
         NSArray *richMessagePhotos = nil;
         NSArray *richMessageDocuments = nil;
         NSError *richMessageError = nil;

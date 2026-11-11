@@ -178,9 +178,11 @@ static bool TGModernConversationCompletedGroupsCompatible(const std::vector<int6
 
 @implementation TGModernConversationViewLayout
 
-static bool TGIOS6ValidConversationIndexPath(NSIndexPath *indexPath)
+static bool OGCompatIsConversationItemPath(NSIndexPath *indexPath)
 {
-    return indexPath != nil && indexPath.length >= 2 && indexPath.section == 0 && indexPath.item != NSNotFound;
+    if (indexPath == nil || indexPath.length < 2)
+        return false;
+    return indexPath.section == 0 && indexPath.item != NSNotFound;
 }
 
 static inline bool TGModernConversationLayoutIsMessageItem(__unsafe_unretained id item, Class messageItemClass)
@@ -246,12 +248,12 @@ static void TGModernConversationLayoutAppendMessages(NSArray *items, NSUInteger 
     {
         if (update.updateAction == PSTCollectionUpdateActionDelete)
         {
-            if (TGIOS6ValidConversationIndexPath(update.indexPathBeforeUpdate))
+            if (OGCompatIsConversationItemPath(update.indexPathBeforeUpdate))
                 [_deleteIndexPaths addObject:update.indexPathBeforeUpdate];
         }
         else if (update.updateAction == PSTCollectionUpdateActionInsert)
         {
-            if (TGIOS6ValidConversationIndexPath(update.indexPathAfterUpdate))
+            if (OGCompatIsConversationItemPath(update.indexPathAfterUpdate))
                 [_insertIndexPaths addObject:update.indexPathAfterUpdate];
         }
     }
@@ -266,7 +268,7 @@ static void TGModernConversationLayoutAppendMessages(NSArray *items, NSUInteger 
 
 - (PSUICollectionViewLayoutAttributes *)initialLayoutAttributesForAppearingItemAtIndexPath:(NSIndexPath *)itemIndexPath
 {
-    if (!TGIOS6ValidConversationIndexPath(itemIndexPath))
+    if (!OGCompatIsConversationItemPath(itemIndexPath))
         return nil;
 
     PSUICollectionViewLayoutAttributes *attributes = [super initialLayoutAttributesForAppearingItemAtIndexPath:itemIndexPath];
@@ -296,7 +298,7 @@ static void TGModernConversationLayoutAppendMessages(NSArray *items, NSUInteger 
 
 - (PSUICollectionViewLayoutAttributes *)finalLayoutAttributesForDisappearingItemAtIndexPath:(NSIndexPath *)itemIndexPath
 {
-    if (!TGIOS6ValidConversationIndexPath(itemIndexPath))
+    if (!OGCompatIsConversationItemPath(itemIndexPath))
         return nil;
 
     PSUICollectionViewLayoutAttributes *attributes = [super finalLayoutAttributesForDisappearingItemAtIndexPath:itemIndexPath];
@@ -602,25 +604,22 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                         if (TGModernConversationGroupedLayoutMatchesMessages(itemGroupedLayout, groupedMessages))
                             cachedGroupedLayout = itemGroupedLayout;
                     }
-                    if (cachedGroupedLayout == nil || cachedGroupedLayout.count != groupedMessages.count || [cachedGroupedLayout positionForMessageId:messageItem->_message.mid] == 0)
+                    bool reusesCachedLayout = cachedGroupedLayout != nil && cachedGroupedLayout.count == groupedMessages.count && [cachedGroupedLayout positionForMessageId:messageItem->_message.mid] != 0;
+                    TGMessageGroupedLayout *adoptedLayout = cachedGroupedLayout;
+                    if (!reusesCachedLayout)
                     {
-                        
                         bool larger = !messageItem.isFeedItem && ((TGPeerIdIsUser(messageItem->_message.cid) || [messageItem.currentAuthorPeer isKindOfClass:[TGConversation class]]) && messageItem->_message.cid != TGTelegraphInstance.clientUserId);
-                        TGMessageGroupedLayout *calculatedGroupedLayout = [[TGMessageGroupedLayout alloc] initWithMessages:groupedMessages larger:larger];
-                        if (calculatedGroupedLayout.count == groupedMessages.count)
+                        adoptedLayout = [[TGMessageGroupedLayout alloc] initWithMessages:groupedMessages larger:larger];
+                        if (adoptedLayout.count != groupedMessages.count)
                         {
-                            groupedLayout = calculatedGroupedLayout;
-                            groupedLayouts[@(groupedId)] = groupedLayout;
-                            cachedGroupedLayouts[@(groupedId)] = groupedLayout;
-                        }
-                        else
-                        {
+                            adoptedLayout = nil;
                             [cachedGroupedLayouts removeObjectForKey:@(groupedId)];
                         }
                     }
-                    else
+                    
+                    if (adoptedLayout != nil)
                     {
-                        groupedLayout = cachedGroupedLayout;
+                        groupedLayout = adoptedLayout;
                         groupedLayouts[@(groupedId)] = groupedLayout;
                         cachedGroupedLayouts[@(groupedId)] = groupedLayout;
                     }
@@ -652,7 +651,8 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                     primaryGroupItem.collapseFlags = groupCollapseFlags;
                     [primaryGroupItem updateGroupedLayout:groupedLayout];
                     itemSize = [primaryGroupItem sizeForContainerSize:CGSizeMake(containerWidth, 0.0f) viewStorage:viewStorage];
-                    groupHeight = MAX(groupHeight, itemSize.height);
+                    if (itemSize.height > groupHeight)
+                        groupHeight = itemSize.height;
                     if (journal != NULL)
                     {
                         NSInteger primaryIndex = [indexes[@(primaryGroupItem->_message.mid)] integerValue];
@@ -674,7 +674,8 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                     groupItem.collapseFlags = groupCollapseFlags;
                     [groupItem updateGroupedLayout:groupedLayout];
                     itemSize = [groupItem sizeForContainerSize:CGSizeMake(containerWidth, 0.0f) viewStorage:viewStorage];
-                    groupHeight = MAX(groupHeight, itemSize.height);
+                    if (itemSize.height > groupHeight)
+                        groupHeight = itemSize.height;
                     if (journal != NULL)
                     {
                         NSInteger groupItemIndex = [indexes[@(groupItem->_message.mid)] integerValue];
@@ -704,9 +705,10 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                         TGMessageGroupPositionFlags position = [groupedLayout positionForMessageId:groupItem->_message.mid];
 
                         PSUICollectionViewLayoutAttributes *attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(groupIndex)];
-                        attributes.frame = CGRectMake(0, currentHeight, containerWidth, groupHeight);
-                        bool isPrimaryGroupItem = (position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft);
-                        attributes.zIndex = isPrimaryGroupItem ? (NSIntegerMax - indexes.count - groupIndex) : (NSIntegerMax - groupIndex);
+                        attributes.frame = CGRectMake(0.0f, currentHeight, containerWidth, groupHeight);
+                        int leadingCorner = TGMessageGroupPositionTop | TGMessageGroupPositionLeft;
+                        NSInteger leadingLift = (position & leadingCorner) == leadingCorner ? (NSInteger)indexes.count : 0;
+                        attributes.zIndex = NSIntegerMax - groupIndex - leadingLift;
                         [layoutAttributes addObject:attributes];
                     }
                 }
@@ -1275,7 +1277,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
             break;
         
         NSIndexPath *indexPath = attributes.indexPath;
-        if (TGIOS6ValidConversationIndexPath(indexPath))
+        if (OGCompatIsConversationItemPath(indexPath))
             block((NSUInteger)indexPath.row, frame);
     }
 }
@@ -1315,7 +1317,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
         if (CGRectGetMinY(attributes.frame) > maxY)
             break;
 
-        if (TGIOS6ValidConversationIndexPath(attributes.indexPath) && CGRectIntersectsRect(rect, attributes.frame))
+        if (OGCompatIsConversationItemPath(attributes.indexPath) && CGRectIntersectsRect(rect, attributes.frame))
             [array addObject:attributes];
     }
 
@@ -1342,7 +1344,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     {
         PSUICollectionViewLayoutAttributes *attributes = _layoutAttributes[index];
         NSIndexPath *indexPath = attributes.indexPath;
-        if (TGIOS6ValidConversationIndexPath(indexPath) && (NSUInteger)indexPath.row == index)
+        if (OGCompatIsConversationItemPath(indexPath) && (NSUInteger)indexPath.row == index)
         {
             if (frame != NULL)
                 *frame = attributes.frame;
@@ -1353,7 +1355,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     for (PSUICollectionViewLayoutAttributes *attributes in _layoutAttributes)
     {
         NSIndexPath *indexPath = attributes.indexPath;
-        if (TGIOS6ValidConversationIndexPath(indexPath) && (NSUInteger)indexPath.row == index)
+        if (OGCompatIsConversationItemPath(indexPath) && (NSUInteger)indexPath.row == index)
         {
             if (frame != NULL)
                 *frame = attributes.frame;
@@ -1367,11 +1369,11 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
 {
     if (_preparedLayout != nil)
     {
-        if (!TGIOS6ValidConversationIndexPath(indexPath))
+        if (!OGCompatIsConversationItemPath(indexPath))
             return nil;
         return [self _preparedAttributesAtIndex:(NSUInteger)indexPath.row];
     }
-    if (!TGIOS6ValidConversationIndexPath(indexPath) || indexPath.row >= (int)_layoutAttributes.count)
+    if (!OGCompatIsConversationItemPath(indexPath) || indexPath.row >= (int)_layoutAttributes.count)
     {
         return nil;
     }

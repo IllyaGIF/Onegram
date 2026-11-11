@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTPathAnimator.h
 //  Pods
@@ -12,7 +12,7 @@
 
 @interface LOTPathAnimator : LOTAnimatorNode
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode *)inputNode
-                                  shapePath:(LOTShapePath *)shapePath;
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode *_Nullable)inputNode
+                                  shapePath:(LOTShapePath *_Nonnull)shapePath;
 
 @end

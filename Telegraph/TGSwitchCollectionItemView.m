@@ -19,8 +19,8 @@
     UILabel *_titleLabel;
     UILabel *_descriptionLabel;
     UIControl<TGSwitchControl> *_switchView;
-    bool _isEnabled;
-    bool _isLocked;
+    bool _switchEnabled;
+    bool _switchLocked;
     UIImageView *_iconView;
     bool _brandedUserInfoStyle;
     NSString *_iconName;
@@ -119,16 +119,20 @@
 }
 
 - (void)setIsEnabled:(bool)isEnabled {
-    _isEnabled = isEnabled;
-    _titleLabel.alpha = isEnabled && !_isLocked ? 1.0f : 0.5f;
+    _switchEnabled = isEnabled;
     _switchView.userInteractionEnabled = isEnabled;
-    _switchView.alpha = isEnabled && !_isLocked ? 1.0f : 0.5f;
+    [self og_compat_refreshDimming];
 }
 
 - (void)setIsLocked:(bool)isLocked {
-    _isLocked = isLocked;
-    _titleLabel.alpha = _isEnabled && !_isLocked ? 1.0f : 0.5f;
-    _switchView.alpha = _isEnabled && !_isLocked ? 1.0f : 0.5f;
+    _switchLocked = isLocked;
+    [self og_compat_refreshDimming];
+}
+
+- (void)og_compat_refreshDimming {
+    CGFloat alpha = (_switchEnabled && !_switchLocked) ? 1.0f : 0.5f;
+    _titleLabel.alpha = alpha;
+    _switchView.alpha = alpha;
 }
 
 
@@ -189,7 +193,7 @@
     }
 
     CGFloat switchY = CGFloor((bounds.size.height - switchSize.height) / 2.0f);
-    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    CGFloat classicInset = [TGPresentation classicThemeStyle] ? 10.0f : 0.0f;
     _switchView.frame = CGRectMake(bounds.size.width - switchSize.width - 20.0f - self.safeAreaInset.right, switchY, switchSize.width, switchSize.height);
     CGFloat titleX = 15.0f + classicInset + self.safeAreaInset.left;
     CGFloat titleHeight = MAX(24.0f, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));

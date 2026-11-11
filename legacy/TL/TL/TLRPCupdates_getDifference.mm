@@ -122,24 +122,17 @@
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    int32_t flags = 0;
-    if (self.pts_total_limit != 0)
-        flags |= (1 << 0);
-    if (self.pts_limit != 0)
-        flags |= (1 << 1);
-    if (self.qts_limit != 0)
-        flags |= (1 << 2);
-    self.flags = flags;
+    self.flags = (self.pts_total_limit != 0 ? 1 << 0 : 0) | (self.pts_limit != 0 ? 1 << 1 : 0) | (self.qts_limit != 0 ? 1 << 2 : 0);
     
-    [os writeInt32:flags];
+    [os writeInt32:self.flags];
     [os writeInt32:self.pts];
-    if (flags & (1 << 1))
+    if (self.pts_limit != 0)
         [os writeInt32:self.pts_limit];
-    if (flags & (1 << 0))
+    if (self.pts_total_limit != 0)
         [os writeInt32:self.pts_total_limit];
     [os writeInt32:self.date];
     [os writeInt32:self.qts];
-    if (flags & (1 << 2))
+    if (self.qts_limit != 0)
         [os writeInt32:self.qts_limit];
 }
 

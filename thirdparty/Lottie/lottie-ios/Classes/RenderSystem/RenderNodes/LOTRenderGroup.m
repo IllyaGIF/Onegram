@@ -1,4 +1,4 @@
-#import "../../LOTXcode46Compat.h"
+#import "../../OGLottieCompat.h"
 //
 //  LOTRenderGroup.m
 //  Lottie
@@ -34,9 +34,9 @@
   LOTTransformInterpolator *_transformInterolator;
 }
 
-- (instancetype )initWithInputNode:(LOTAnimatorNode * )inputNode
-                                   contents:(NSArray * )contents
-                                    keyname:(NSString * )keyname {
+- (instancetype _Nonnull)initWithInputNode:(LOTAnimatorNode * _Nullable)inputNode
+                                   contents:(NSArray * _Nonnull)contents
+                                    keyname:(NSString * _Nullable)keyname {
   self = [super initWithInputNode:inputNode keyName:keyname];
   if (self) {
     _containerLayer = [CALayer layer];
@@ -138,7 +138,7 @@
 
 }
 
-- (BOOL)updateWithFrame:(NSNumber *)frame withModifierBlock:(void (^ )(LOTAnimatorNode * ))modifier forceLocalUpdate:(BOOL)forceUpdate {
+- (BOOL)updateWithFrame:(NSNumber *)frame withModifierBlock:(void (^ _Nullable)(LOTAnimatorNode * _Nonnull))modifier forceLocalUpdate:(BOOL)forceUpdate {
   indentation_level = indentation_level + 1;
   _rootNodeHasUpdate = [_rootNode updateWithFrame:frame withModifierBlock:modifier forceLocalUpdate:forceUpdate];
   indentation_level = indentation_level - 1;
@@ -184,7 +184,7 @@
   return _outputPath;
 }
 
-- (void)searchNodesForKeypath:(LOTKeypath * )keypath {
+- (void)searchNodesForKeypath:(LOTKeypath * _Nonnull)keypath {
   [self.inputNode searchNodesForKeypath:keypath];
   if ([keypath pushKey:self.keyname]) {
     // Matches self. Dig deeper.
@@ -210,8 +210,8 @@
   }
 }
 
-- (void)setValueDelegate:(id<LOTValueDelegate> )delegate
-              forKeypath:(LOTKeypath * )keypath {
+- (void)setValueDelegate:(id<LOTValueDelegate> _Nonnull)delegate
+              forKeypath:(LOTKeypath * _Nonnull)keypath {
   if ([keypath pushKey:self.keyname]) {
     // Matches self. Dig deeper.
     // Check interpolators

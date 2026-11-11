@@ -1,3 +1,6 @@
+#ifndef OG_COMPAT_SAFARISERVICES_H
+#define OG_COMPAT_SAFARISERVICES_H
+
 #import <UIKit/UIKit.h>
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
@@ -21,5 +24,7 @@
 - (instancetype)initWithURL:(NSURL *)URL entersReaderIfAvailable:(BOOL)entersReaderIfAvailable;
 - (NSArray *)previewActionItems;
 @end
+
+#endif
 
 #endif

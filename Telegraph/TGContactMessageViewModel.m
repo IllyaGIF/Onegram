@@ -180,7 +180,7 @@
             dispatch_once(&onceToken, ^
             {
                 if (iosMajorVersion() >= 7) {
-                    dateFont = TGIos6CreateCTFontFromUIFont(TGItalicSystemFontOfSize(12.0f));
+                    dateFont = OGCompatCreateCTFont(TGItalicSystemFontOfSize(12.0f));
                 } else {
                     UIFont *font = TGItalicSystemFontOfSize(12.0f);
                     dateFont = CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, nil);

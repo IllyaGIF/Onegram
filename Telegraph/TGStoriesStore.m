@@ -239,6 +239,29 @@ static const NSUInteger TGStoriesStoreMaxPages = 5;
     [self notifyChanged];
 }
 
+- (void)updateStory:(TGStoryItem *)story
+{
+    if (story == nil)
+        return;
+    NSNumber *key = @(story.peerId);
+    TGPeerStories *existing = [_peerStories objectForKey:key];
+    if (existing == nil)
+        return;
+    bool found = false;
+    for (TGStoryItem *item in existing.stories)
+    {
+        if (item.storyId == story.storyId)
+        {
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return;
+    [_peerStories setObject:[existing peerStoriesByMergingStories:@[story]] forKey:key];
+    [self notifyChanged];
+}
+
 - (void)markStory:(TGStoryItem *)story seenForPeerId:(int64_t)peerId
 {
     if (story == nil || peerId == TGTelegraphInstance.clientUserId)

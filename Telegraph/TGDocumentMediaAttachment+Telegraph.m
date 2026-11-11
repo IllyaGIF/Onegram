@@ -14,30 +14,53 @@
 
 #import "TLDocumentAttribute$documentAttributeAudio.h"
 
-static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLPhotoSize *size)
+@interface OGCompatThumbFacts : NSObject
+
+@property (nonatomic) CGSize dimensions;
+@property (nonatomic) int32_t fileSize;
+@property (nonatomic, strong) NSString *type;
+@property (nonatomic, strong) NSData *bytes;
+
++ (instancetype)factsForSize:(TLPhotoSize *)size;
+
+@end
+
+@implementation OGCompatThumbFacts
+
++ (instancetype)factsForSize:(TLPhotoSize *)size
+{
+    OGCompatThumbFacts *facts = [[OGCompatThumbFacts alloc] init];
+    if ([size isKindOfClass:[TLPhotoSize$photoSize class]])
+    {
+        TLPhotoSize$photoSize *plain = (TLPhotoSize$photoSize *)size;
+        facts.dimensions = CGSizeMake(plain.w, plain.h);
+        facts.fileSize = plain.size;
+        facts.type = plain.type;
+    }
+    else if ([size isKindOfClass:[TLPhotoSize$photoCachedSize class]])
+    {
+        TLPhotoSize$photoCachedSize *cached = (TLPhotoSize$photoCachedSize *)size;
+        facts.dimensions = CGSizeMake(cached.w, cached.h);
+        facts.bytes = cached.bytes;
+        facts.fileSize = (int32_t)cached.bytes.length;
+        facts.type = cached.type;
+    }
+    return facts;
+}
+
+@end
+
+static NSString *OGCompatDocumentThumbUrl(TLDocument$document *document, TLPhotoSize *size)
 {
     if (document == nil || size == nil || document.dc_id == 0 || document.n_id == 0)
         return nil;
     
-    NSString *thumbSize = @"";
-    int32_t fileSize = 0;
-    if ([size isKindOfClass:[TLPhotoSize$photoSize class]])
-    {
-        TLPhotoSize$photoSize *concreteSize = (TLPhotoSize$photoSize *)size;
-        thumbSize = concreteSize.type ?: @"";
-        fileSize = concreteSize.size;
-    }
-    else if ([size isKindOfClass:[TLPhotoSize$photoCachedSize class]])
-    {
-        TLPhotoSize$photoCachedSize *concreteSize = (TLPhotoSize$photoCachedSize *)size;
-        thumbSize = concreteSize.type ?: @"";
-        fileSize = (int32_t)concreteSize.bytes.length;
-    }
-    
-    if (thumbSize.length == 0)
+    OGCompatThumbFacts *facts = [OGCompatThumbFacts factsForSize:size];
+    NSString *sizeKey = facts.type ?: @"";
+    if (sizeKey.length == 0)
         return nil;
-    NSString *fileReference = document.file_reference.length == 0 ? @"" : [document.file_reference stringByEncodingInHex];
-    return [[NSString alloc] initWithFormat:@"documentthumb:%d:%lld:%lld:%d:%@:%@", document.dc_id, document.n_id, document.access_hash, fileSize, thumbSize, fileReference];
+    NSString *reference = document.file_reference.length == 0 ? @"" : [document.file_reference stringByEncodingInHex];
+    return [NSString stringWithFormat:@"documentthumb:%d:%lld:%lld:%d:%@:%@", document.dc_id, document.n_id, document.access_hash, facts.fileSize, sizeKey, reference];
 }
 
 static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttribute(TLDocument$document *document)
@@ -126,7 +149,7 @@ static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttri
         if (![cachedSize.type isEqualToString:@"i"] || cachedSize.bytes.length == 0)
             continue;
         
-        NSString *url = TGModernDocumentThumbnailUrl(concreteDocument, cachedSize);
+        NSString *url = OGCompatDocumentThumbUrl(concreteDocument, cachedSize);
         if (url != nil)
             [[TGRemoteImageView sharedCache] cacheImage:nil withData:cachedSize.bytes url:url availability:TGCacheDisk];
         return url;
@@ -192,21 +215,17 @@ static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttri
             self.mimeType = concreteDocument.mime_type;
             self.size = concreteDocument.size;
             
-            bool hasAudioAttribute = false;
-            for (id attribute in self.attributes)
+            NSUInteger audioAt = [(self.attributes ?: @[]) indexOfObjectPassingTest:^BOOL(id attribute, __unused NSUInteger idx, __unused BOOL *stop)
             {
-                if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]])
-                {
-                    hasAudioAttribute = true;
-                    break;
-                }
-            }
-            if (!hasAudioAttribute && ([self.mimeType hasPrefix:@"audio/"] || [self.mimeType isEqualToString:@"application/ogg"]))
+                return [attribute isKindOfClass:[TGDocumentAttributeAudio class]];
+            }];
+            if (audioAt == NSNotFound && ([self.mimeType hasPrefix:@"audio/"] || [self.mimeType isEqualToString:@"application/ogg"]))
             {
-                NSMutableArray *attributes = [[NSMutableArray alloc] initWithArray:self.attributes == nil ? @[] : self.attributes];
-                bool isVoice = [self.mimeType isEqualToString:@"audio/ogg"] || [self.mimeType isEqualToString:@"audio/opus"] || [self.mimeType isEqualToString:@"application/ogg"];
-                [attributes addObject:[[TGDocumentAttributeAudio alloc] initWithIsVoice:isVoice title:nil performer:nil duration:0 waveform:nil]];
-                self.attributes = attributes;
+                NSArray *voiceTypes = @[@"audio/ogg", @"audio/opus", @"application/ogg"];
+                bool voice = [voiceTypes containsObject:self.mimeType];
+                NSMutableArray *extended = [NSMutableArray arrayWithArray:self.attributes ?: @[]];
+                [extended addObject:[[TGDocumentAttributeAudio alloc] initWithIsVoice:voice title:nil performer:nil duration:0 waveform:nil]];
+                self.attributes = extended;
             }
             
             NSData *cachedData = nil;
@@ -218,33 +237,15 @@ static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttri
                 {
                     for (TLPhotoSize *thumbnail in thumbnails)
                     {
-                        CGSize dimensions = CGSizeZero;
-                        NSData *embeddedData = nil;
-                        int32_t fileSize = 0;
-                        NSString *thumbnailType = nil;
-                        if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
-                        {
-                            TLPhotoSize$photoSize *size = (TLPhotoSize$photoSize *)thumbnail;
-                            dimensions = CGSizeMake(size.w, size.h);
-                            fileSize = size.size;
-                            thumbnailType = size.type;
-                        }
-                        else if ([thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
-                        {
-                            TLPhotoSize$photoCachedSize *size = (TLPhotoSize$photoCachedSize *)thumbnail;
-                            dimensions = CGSizeMake(size.w, size.h);
-                            embeddedData = size.bytes;
-                            fileSize = (int32_t)embeddedData.length;
-                            thumbnailType = size.type;
-                        }
-                        if ([thumbnailType isEqualToString:@"i"] || dimensions.width <= 0 || dimensions.height <= 0)
+                        OGCompatThumbFacts *facts = [OGCompatThumbFacts factsForSize:thumbnail];
+                        if ([facts.type isEqualToString:@"i"] || facts.dimensions.width <= 0 || facts.dimensions.height <= 0)
                             continue;
-                        NSString *url = TGModernDocumentThumbnailUrl(concreteDocument, thumbnail);
+                        NSString *url = OGCompatDocumentThumbUrl(concreteDocument, thumbnail);
                         if (url.length == 0)
                             continue;
-                        [thumbmailInfo addImageWithSize:dimensions url:url fileSize:fileSize];
-                        if (embeddedData.length != 0)
-                            [[TGRemoteImageView sharedCache] cacheImage:nil withData:embeddedData url:url availability:TGCacheDisk];
+                        [thumbmailInfo addImageWithSize:facts.dimensions url:url fileSize:facts.fileSize];
+                        if (facts.bytes.length != 0)
+                            [[TGRemoteImageView sharedCache] cacheImage:nil withData:facts.bytes url:url availability:TGCacheDisk];
                     }
                     if ([thumbmailInfo imageUrlForPreviewWithSize:NULL].length != 0)
                         break;
@@ -255,28 +256,15 @@ static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttri
                 thumbmailInfo = [[TGImageInfo alloc] initWithTelegraphSizesDescription:@[concreteDocument.thumb] cachedData:&cachedData];
                 if (thumbmailInfo.empty || [thumbmailInfo imageUrlForLargestSize:NULL].length == 0)
                 {
-                    NSString *modernUrl = TGModernDocumentThumbnailUrl(concreteDocument, concreteDocument.thumb);
+                    NSString *modernUrl = OGCompatDocumentThumbUrl(concreteDocument, concreteDocument.thumb);
                     if (modernUrl != nil)
                     {
-                        CGSize dimensions = CGSizeZero;
-                        int32_t fileSize = 0;
-                        if ([concreteDocument.thumb isKindOfClass:[TLPhotoSize$photoSize class]])
-                        {
-                            TLPhotoSize$photoSize *size = (TLPhotoSize$photoSize *)concreteDocument.thumb;
-                            dimensions = CGSizeMake(size.w, size.h);
-                            fileSize = size.size;
-                        }
-                        else if ([concreteDocument.thumb isKindOfClass:[TLPhotoSize$photoCachedSize class]])
-                        {
-                            TLPhotoSize$photoCachedSize *size = (TLPhotoSize$photoCachedSize *)concreteDocument.thumb;
-                            dimensions = CGSizeMake(size.w, size.h);
-                            fileSize = (int32_t)size.bytes.length;
-                            if (cachedData == nil && size.bytes.length != 0)
-                                cachedData = size.bytes;
-                        }
+                        OGCompatThumbFacts *facts = [OGCompatThumbFacts factsForSize:concreteDocument.thumb];
+                        if (cachedData == nil && facts.bytes.length != 0)
+                            cachedData = facts.bytes;
                         
                         thumbmailInfo = [[TGImageInfo alloc] init];
-                        [thumbmailInfo addImageWithSize:dimensions url:modernUrl fileSize:fileSize];
+                        [thumbmailInfo addImageWithSize:facts.dimensions url:modernUrl fileSize:facts.fileSize];
                     }
                 }
             }
